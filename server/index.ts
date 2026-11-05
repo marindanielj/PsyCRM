@@ -264,7 +264,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       app.use(`/api/loc/:loc/${group}`, moduleGate(deps.db, module))
     }
   }
-  app.route('/api/loc/:loc/contacts', contactsRoute({ db: deps.db }))
+  app.route('/api/loc/:loc/contacts', contactsRoute({ db: deps.db, requireDateOfBirth: psycrm }))
   app.route(
     '/api/loc/:loc/conversations',
     conversationsRoute({ db: deps.db, claude: deps.claude, sendMessage: deps.sendMessage }),

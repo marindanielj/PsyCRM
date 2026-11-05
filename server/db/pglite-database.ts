@@ -1,5 +1,17 @@
-import type { PGlite } from '@electric-sql/pglite'
+import type { PGlite, Transaction } from '@electric-sql/pglite'
 import type { Database } from './database'
+
+/** A Database bound to an open PGlite transaction; nested transaction() joins it. */
+class PgliteTxDatabase implements Database {
+  constructor(private tx: Transaction) {}
+  async query<T = unknown>(sql: string, params: unknown[] = []): Promise<T[]> {
+    const res = await this.tx.query<T>(sql, params as unknown[])
+    return res.rows
+  }
+  transaction<T>(fn: (tx: Database) => Promise<T>): Promise<T> {
+    return fn(this)
+  }
+}
 
 /**
  * Database backed by PGlite (in-process WASM Postgres). Lets the full app run
@@ -14,5 +26,9 @@ export class PgliteDatabase implements Database {
   async query<T = unknown>(sql: string, params: unknown[] = []): Promise<T[]> {
     const res = await this.pg.query<T>(sql, params as unknown[])
     return res.rows
+  }
+
+  transaction<T>(fn: (tx: Database) => Promise<T>): Promise<T> {
+    return this.pg.transaction((tx) => fn(new PgliteTxDatabase(tx)))
   }
 }

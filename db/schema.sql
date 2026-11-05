@@ -1094,3 +1094,108 @@ CREATE UNIQUE INDEX IF NOT EXISTS push_tokens_token_unique
   ON push_tokens(token);
 CREATE INDEX IF NOT EXISTS push_tokens_by_operator
   ON push_tokens(operator_id);
+
+-- =============================================================================
+-- PsyCRM audit log (day 2). Append-only, tamper-evident record of who did what to
+-- which client and when. Enforced IN THE DATABASE, not just the app:
+--   * BEFORE INSERT chains every row to the previous one of the same location
+--     (hash of the previous row's hash + this row's content), under an advisory
+--     lock so concurrent writers cannot fork the chain, and stamps occurred_at
+--     itself (a caller can never backdate a row);
+--   * BEFORE UPDATE/DELETE/TRUNCATE are rejected;
+--   * location_id is ON DELETE RESTRICT (a location with history cannot vanish);
+--   * contact_id has no foreign key on purpose, so the log outlives any contact.
+-- The chain is ordered by chain_seq (assigned inside the lock), NOT by the bigserial
+-- id: a sequence value is taken before the trigger runs, so id order can differ
+-- from chain order under concurrency.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id           bigserial PRIMARY KEY,
+  location_id  text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  chain_seq    bigint NOT NULL DEFAULT 0,
+  occurred_at  timestamptz NOT NULL DEFAULT now(),
+  actor_type   text NOT NULL CHECK (actor_type IN ('operator','client','system','workflow')),
+  actor_id     text,
+  actor_label  text,
+  action       text NOT NULL,
+  entity_type  text NOT NULL,
+  entity_id    text,
+  contact_id   text,
+  details      jsonb NOT NULL DEFAULT '{}',
+  ip           text,
+  user_agent   text,
+  prev_hash    text,
+  row_hash     text NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS audit_chain ON audit_log(location_id, chain_seq);
+CREATE INDEX IF NOT EXISTS audit_by_time ON audit_log(location_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS audit_by_contact ON audit_log(location_id, contact_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS audit_by_entity ON audit_log(location_id, entity_type, entity_id);
+
+-- The one definition of a row's hash, shared by the trigger and the verifier.
+-- The timestamp is rendered in UTC with a fixed format so the hash never depends
+-- on a session's TimeZone setting.
+CREATE OR REPLACE FUNCTION audit_row_hash(
+  prev text, loc text, seq bigint, at timestamptz, a_type text, a_id text,
+  act text, e_type text, e_id text, c_id text, det jsonb
+) RETURNS text AS $$
+  SELECT encode(sha256(convert_to(
+    coalesce(prev, '') || '|' || loc || '|' || seq::text || '|' ||
+    to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') || '|' ||
+    a_type || '|' || coalesce(a_id, '') || '|' || act || '|' || e_type || '|' ||
+    coalesce(e_id, '') || '|' || coalesce(c_id, '') || '|' || det::text, 'UTF8')), 'hex')
+$$ LANGUAGE sql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION audit_log_chain() RETURNS trigger AS $$
+DECLARE
+  last_hash text;
+  last_seq bigint;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('audit:' || NEW.location_id));
+  SELECT row_hash, chain_seq INTO last_hash, last_seq
+    FROM audit_log WHERE location_id = NEW.location_id
+    ORDER BY chain_seq DESC LIMIT 1;
+  NEW.chain_seq   := coalesce(last_seq, 0) + 1;
+  NEW.prev_hash   := last_hash;
+  NEW.occurred_at := clock_timestamp();
+  NEW.row_hash    := audit_row_hash(NEW.prev_hash, NEW.location_id, NEW.chain_seq, NEW.occurred_at,
+                       NEW.actor_type, NEW.actor_id, NEW.action, NEW.entity_type, NEW.entity_id,
+                       NEW.contact_id, NEW.details);
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS audit_log_chain ON audit_log;
+CREATE TRIGGER audit_log_chain BEFORE INSERT ON audit_log
+  FOR EACH ROW EXECUTE FUNCTION audit_log_chain();
+
+-- Generic "this table is append-only" guard; reused by later days' tables.
+CREATE OR REPLACE FUNCTION reject_mutation() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = 'P0001';
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS audit_log_immutable ON audit_log;
+CREATE TRIGGER audit_log_immutable BEFORE UPDATE OR DELETE ON audit_log
+  FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS audit_log_no_truncate ON audit_log;
+CREATE TRIGGER audit_log_no_truncate BEFORE TRUNCATE ON audit_log
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
+
+-- Recompute the whole chain for one location. Returns NULL when intact, otherwise
+-- the chain_seq of the FIRST broken row (content changed, link broken, or a gap).
+-- Cannot detect rows removed from the very end of the log; the immutability
+-- triggers (and revoking TRUNCATE/DELETE from the app role) cover that.
+CREATE OR REPLACE FUNCTION audit_log_verify(loc text) RETURNS bigint AS $$
+  SELECT min(chain_seq) FROM (
+    SELECT chain_seq, prev_hash, row_hash,
+           lag(row_hash)  OVER w AS expected_prev,
+           lag(chain_seq) OVER w AS prev_seq,
+           audit_row_hash(prev_hash, location_id, chain_seq, occurred_at, actor_type, actor_id,
+                          action, entity_type, entity_id, contact_id, details) AS recomputed
+    FROM audit_log WHERE location_id = loc
+    WINDOW w AS (ORDER BY chain_seq)
+  ) t
+  WHERE recomputed <> row_hash
+     OR prev_hash IS DISTINCT FROM expected_prev
+     OR (prev_seq IS NOT NULL AND chain_seq <> prev_seq + 1)
+     OR (prev_seq IS NULL AND chain_seq <> 1)
+$$ LANGUAGE sql STABLE;
