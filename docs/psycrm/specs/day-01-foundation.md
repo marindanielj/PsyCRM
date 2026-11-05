@@ -93,14 +93,13 @@ Crea:
 | `emergency_contact_name` | Emergency contact | text |
 | `emergency_contact_phone` | Emergency contact phone | phone |
 | `emergency_contact_relation` | Relationship | text |
-| `is_minor` | Minor (under 21 in PR) | checkbox |
 | `guardian_name` | Guardian name | text |
 | `guardian_email` | Guardian email | email |
 | `guardian_phone` | Guardian phone | phone |
 | `referral_source` | Referral source | text |
 | `preferred_locale` | Preferred language | select (`es`, `en`) |
 
-> Nota: la mayoría de edad en PR es 21 años. Las reglas de consentimiento para menores en salud mental tienen excepciones (Ley 408-2000). **Hay que validarlo con un asesor legal.**
+> **Menor = menos de 18 años** (decisión de la terapeuta: a partir de los 18 el cliente decide por sí mismo). No se guarda un checkbox `is_minor`: la edad se **calcula** de `date_of_birth` (`ageOn(dob, today)` en `server/lib/age.ts`, zona AST) para que nunca quede desactualizada. `date_of_birth` pasa a ser **obligatoria** al crear un cliente (diálogo "Add contact") y en la reserva pública. Las reglas de consentimiento para menores (Ley 408-2000) **deben validarse con un asesor legal**.
 
 Además: cambiar el default `calendars.timezone` en `schema.sql` **no** hace falta (el seed lo fija). El `db/seed.ts` de demo sigue igual para `dev:local`.
 

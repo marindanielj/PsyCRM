@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS document_packets (
   name         text NOT NULL,
   description  text,
   family_ids   text[] NOT NULL,   -- orden de presentación; al enviar se usa la versión ACTIVA de cada familia
-  audience     text NOT NULL DEFAULT 'adult' CHECK (audience IN ('adult','adolescent')),
+  audience     text NOT NULL DEFAULT 'adult' CHECK (audience IN ('adult','adolescent')),   -- adult: 18+ · adolescent: menores de 18
   archived_at  timestamptz,
   created_at   timestamptz NOT NULL DEFAULT now(),
   updated_at   timestamptz NOT NULL DEFAULT now()

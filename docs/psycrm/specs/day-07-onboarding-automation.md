@@ -57,7 +57,7 @@ Usan los IDs guardados en `locations.settings.onboarding` (día 1) y el paquete 
 
 **Notas:**
 - **W1 y contactos creados a mano.** `contact_created` también se dispara cuando la terapeuta agrega un contacto. Si no quiere que el envío sea automático en ese caso, W1 puede limitarse con `trigger_config: { source: 'booking' }` (requiere pasar `source` en el payload de `contact_created`). **Default recomendado: automático.** El diálogo "Add contact" agrega el checkbox "Send onboarding packet now" (marcado por defecto), que pasa `payload.skipOnboarding` para que W1 lo respete.
-- **Adolescentes:** W1 no envía el paquete adolescente. Si el contacto tiene `custom.is_minor = true`, W1 marca `send_document_packet` como `skipped` y crea la tarea "Send adolescent onboarding packet (guardian required)".
+- **Adolescentes:** W1 no envía el paquete adolescente. Si el contacto es **menor de 18** (calculado de `date_of_birth`), W1 marca `send_document_packet` como `skipped` y crea la tarea "Send adolescent onboarding packet (guardian required)". Si el contacto **no tiene fecha de nacimiento**, también se salta y se crea la tarea "Add date of birth to send the onboarding packet" (nunca se envía el paquete adulto por defecto).
 - **Movimiento manual:** la terapeuta puede mover tarjetas cuando quiera (p. ej. a "Did not continue"); queda auditado (día 2). `onlyForward` evita que un workflow "regrese" a alguien que ella movió más adelante.
 
 ## 4. UI (inglés)
@@ -73,7 +73,7 @@ Usan los IDs guardados en `locations.settings.onboarding` (día 1) y el paquete 
 2. Al completar los documentos en la página pública, la tarjeta pasa a "Documents signed" y se crea la tarea "Schedule first appointment…".
 3. Agendar una cita mueve la tarjeta a "First appointment booked". Firmar la primera nota la mueve a "Active client"; firmar la segunda no hace nada (`firstOnly`).
 4. Si la terapeuta mueve a alguien a "Active client" a mano y luego se dispara W3, la tarjeta no retrocede (paso `skipped`).
-5. Un contacto marcado como menor no recibe el paquete adulto y aparece la tarea para enviar el paquete adolescente.
+5. Un contacto de 17 años (o sin fecha de nacimiento) no recibe el paquete adulto y aparece la tarea para enviar el paquete adolescente.
 6. `send_email` sin proveedor configurado aparece como `failed`, no como `done`.
 7. Un reintento del job de pg-boss no duplica el paquete enviado ni la tarea.
 8. Un workflow que se dispara a sí mismo (`pipeline_stage_changed` → `move_to_stage`) se detiene en la profundidad 3 con el audit `workflow.loop_prevented`.

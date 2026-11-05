@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS signed_documents (
   "signers": [ { "role": "client", "name": "Ana Rivera", "email": "ana@…" } ] }
 ```
 - Resuelve la versión **activa** de cada familia; si alguna falta, responde 422 `template_not_active`.
+- **Validación por edad** (`server/lib/age.ts`): si el contacto tiene fecha de nacimiento y es menor de 18, un paquete `adult` se rechaza con 422 `packet_audience_mismatch`; y si tiene 18 o más, uno `adolescent` también. Sin fecha de nacimiento no se puede enviar (422 `date_of_birth_required`). El diálogo de envío preselecciona el paquete correcto (§5).
 - Para un paquete `adolescent`: exige un firmante `guardian`. El `minor` es opcional (si se omite, las plantillas de rol `minor` se excluyen y queda una advertencia en el audit). Los datos del tutor se precargan desde `custom.guardian_*`.
 - Valida que cada plantilla del paquete tenga al menos un firmante de sus `signer_roles`.
 - Genera un token por firmante (`crypto.randomBytes(32).toString('base64url')`) y guarda solo `sha256`.
@@ -127,9 +128,36 @@ Al completar el request, para cada campo con `mapsTo`:
 - `custom:<key>` sobrescribe el campo personalizado (p. ej. `date_of_birth`, `emergency_contact_*`).
 - Audit `contact.updated_from_intake` con las keys.
 
+## 4b. Qué le aplica a quién (lo decide el sistema, no el cliente)
+
+El cliente **nunca elige** qué documentos firmar; recibe exactamente los que le tocan. La decisión se toma al enviar, en tres capas:
+
+1. **Paquete según la edad.** Se calcula la edad desde `date_of_birth`: **18 o más → "Onboarding – Adulto"**; **menos de 18 → "Onboarding – Adolescente"**. El diálogo de envío lo preselecciona y avisa si se intenta enviar el otro (ver §2).
+2. **Documentos opcionales del paquete.** La terapeuta ve la lista con checkboxes al enviar y puede excluir los que no apliquen (p. ej. quitar "Telepsicología" si las sesiones son solo presenciales, o "Honorarios" si ya se acordaron). Lo excluido ni se envía ni aparece.
+3. **Por firmante y rol.** Cada documento declara quién lo firma (`client`, `guardian`, `minor`); cada persona solo ve los suyos. Dentro de un documento, las preguntas condicionales (`showIf`) se muestran o se ocultan según las respuestas (p. ej. la lista de medicamentos solo si contesta "Sí").
+
+**Red de seguridad por edad.** El cuestionario de admisión pregunta la fecha de nacimiento y la compara con la del expediente:
+- si no coincide, o si el firmante de un paquete adulto resulta tener menos de 18, **el documento no se marca como completado**: la solicitud queda en `in_progress`, se crea la tarea "Review: date of birth mismatch for {client}" y el audit registra `packet.age_mismatch`. La terapeuta lo resuelve (corrige el dato o reenvía el paquete correcto).
+
+**Cumpleaños de los 18.** Un cliente que cumple 18 durante el tratamiento ya firmó el consentimiento del tutor. El MVP no lo trata; queda anotado para después (reconsentimiento al cumplir 18), y la lista "Clients turning 18 in 60 days" es un reporte sencillo sobre `date_of_birth`.
+
+## 4c. Cómo lo recorre el cliente (un solo link, varios pasos)
+
+Un **único enlace por persona** abre un asistente de varios pasos, no una lista suelta de formularios:
+
+1. **Verificación** con el código de 6 dígitos por email.
+2. **Pantalla de inicio (checklist)**: "Tiene 6 documentos por completar (unos 15 minutos)". Lista numerada con el estado de cada uno (○ pendiente · ◐ en progreso · ✓ firmado) y el botón **Comenzar** o **Continuar** (lleva al primero pendiente).
+3. **Un documento por pantalla**, en el orden del paquete, con la barra "Documento 2 de 6": leer → llenar sus campos → firmar → **Firmar y continuar**. Se puede **volver** a un documento ya firmado solo para leerlo (no se edita).
+4. **Guardar y salir** en cualquier momento; al volver con el mismo link (y el código) cae en la checklist, en el primer documento pendiente.
+5. **Pantalla final** con la copia para descargar.
+
+Los documentos se firman **uno por uno** (cada firma es un registro independiente), y no se puede firmar el 4 sin haber firmado el 1–3 si la plantilla marca `after: [familia]` (por ejemplo, el cuestionario de admisión va después del consentimiento). Si un firmante tiene un solo documento, se salta la checklist.
+
+En el caso adolescente, el **tutor** y el **menor** reciben cada uno su propio enlace con su checklist (el tutor firma el consentimiento, la privacidad, la cancelación y los honorarios; el menor, el asentimiento y su parte del cuestionario). La terapeuta ve el progreso de ambos juntos en la pestaña Documents.
+
 ## 5. UI del operador (inglés)
 - **Contact → pestaña Documents**:
-  - botón **Send onboarding packet**, que abre un diálogo: elegir paquete, ver la lista de documentos con checkboxes para excluir, y los firmantes (precargados desde el contacto o el tutor, editables). Botón **Send**, que muestra el resultado con **Copy link** por firmante;
+  - botón **Send onboarding packet**, que abre un diálogo: el **paquete se preselecciona según la edad** (18+ → Adult, menor de 18 → Adolescent, mostrando "Age 16 · DOB …"); si falta la fecha de nacimiento, el diálogo la pide primero. Se puede cambiar el paquete solo dentro de los de su audiencia; ver la lista de documentos con checkboxes para excluir, y los firmantes (precargados desde el contacto o el tutor, editables). Botón **Send**, que muestra el resultado con **Copy link** por firmante;
   - una tarjeta por request: estado, enviado el, vence el, y el progreso por firmante y documento (✓ firmado con fecha, 👁 visto, ○ pendiente). Acciones: Resend, Void y Copy link;
   - **Signed documents**: lista. Al abrir uno se muestra el `rendered_html` en un iframe sandbox (solo lectura), con un botón Print (audit `document.viewed_by_operator`).
 - **Documents → pestaña Sent**: todos los requests con filtros por estado. Los que están por vencer aparecen arriba.

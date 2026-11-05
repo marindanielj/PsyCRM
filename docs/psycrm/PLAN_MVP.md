@@ -274,7 +274,7 @@ Orden según el riesgo: **las notas antes que el onboarding**, porque se necesit
 2. **Las 72 h cuentan desde la creación de la nota.**
 3. **Firma:** nombre escrito + checkbox "acepto firmar electrónicamente" (requisito legal de la Ley de Transacciones Electrónicas de PR, basada en UETA, y de ESIGN) **+ firma dibujada** en pantalla, obligatoria por defecto y configurable por plantilla. La dibujada da más confianza al cliente y más peso como evidencia, y cuesta poco (un `<canvas>`). El nombre escrito sigue siendo la firma legal si alguien no puede dibujar.
 4. **Interfaz de la terapeuta en inglés. Documentos y páginas para clientes en español.** El modelo de datos queda preparado para varios idiomas (`locale` y `translation_group_id` en las plantillas).
-5. **Adolescentes: posibles.** Hay un paquete "Onboarding adolescente" con consentimiento del tutor + asentimiento del menor (varios firmantes por envío).
+5. **Adolescentes: posibles. Adulto = 18 años o más** (para efectos de terapia, decide por sí mismo). Menor = menos de 18. Hay un paquete "Onboarding adolescente" con consentimiento del tutor + asentimiento del menor (varios firmantes por envío). **El paquete se elige según la fecha de nacimiento**, que pasa a ser un dato obligatorio al crear el cliente.
 
 Los specs de cada día están en [`specs/`](specs/README.md).
 

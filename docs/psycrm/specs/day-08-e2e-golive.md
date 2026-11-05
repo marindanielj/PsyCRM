@@ -64,7 +64,7 @@ Hay que guardar las capturas de cada paso en `docs/psycrm/e2e/` (sin datos reale
 ## 5. Guía rápida para la terapeuta (`docs/psycrm/GUIA_RAPIDA.md`, en español)
 Una página con capturas:
 1. Cliente nuevo: Add contact → el paquete sale solo → seguir el progreso en la pestaña Documents.
-2. Adolescente: marcar "Minor", llenar los datos del tutor → Send onboarding packet → Adolescent.
+2. Adolescente (menor de 18): poner la fecha de nacimiento y los datos del tutor → Send onboarding packet (se preselecciona Adolescent).
 3. Día de la sesión: Calendars → Check in → Start session note.
 4. La nota: los 5 pasos; el riesgo es obligatorio; tiene 72 h para corregir; después, solo anexos.
 5. Imprimir o exportar una nota: abrir la nota → Print / Save as PDF.
