@@ -125,7 +125,17 @@ session_notes (
   -- Estado mental / emocional (MSE estructurado)
   mse jsonb,                   -- ver 3.2
   mood_rating smallint,        -- 1–10 autorreportado
-  risk jsonb,                  -- {suicidal_ideation, homicidal_ideation, self_harm: 'none'|'passive'|'active', level, safety_plan_reviewed, notes}
+  -- Evaluación de riesgo: OBLIGATORIA en toda nota (ver 3.2, paso 3).
+  -- Columnas explícitas (no jsonb) para poder exigirlas con CHECK y consultarlas.
+  risk_suicidal       text,    -- 'denied'|'passive'|'active_no_plan'|'active_plan'|'active_plan_intent'
+  risk_self_harm      text,    -- 'denied'|'history'|'urges'|'recent'|'current'
+  risk_harm_others    text,    -- 'denied'|'ideation'|'ideation_plan'|'intent'
+  risk_level          text,    -- 'low'|'moderate'|'high'|'imminent' (juicio clínico global)
+  risk_factors        text[],  -- acceso a medios, intento previo, aislamiento, consumo...
+  protective_factors  text[],  -- red de apoyo, hijos, fe, tratamiento, planes a futuro...
+  risk_actions        text[],  -- 'none'|'safety_plan_created'|'safety_plan_reviewed'|'means_restriction'
+                               -- |'increased_frequency'|'emergency_contact'|'crisis_line'|'er_referral'|'duty_to_warn'
+  risk_notes          text,    -- justificación clínica del nivel asignado
   interventions text[],        -- TCC, DBT, mindfulness, psicoeducación...
   diagnosis_codes text[],      -- opcional (ICD-10 / DSM-5-TR)
   status ('draft'|'signed'),
@@ -144,25 +154,43 @@ session_note_addenda (        -- después de las 72 h: anexos en vez de editar (
 )
 ```
 
+**Restricciones de riesgo (CHECK en Postgres + validación Zod en la API):**
+- Una nota con `status='signed'` **debe** tener `risk_suicidal`, `risk_self_harm`, `risk_harm_others` y `risk_level` no nulos. Un borrador puede guardarse incompleto; firmarlo, no.
+- No existe la opción "no evaluado": el riesgo negado se registra como `'denied'` (respuesta explícita).
+- Si `risk_level` es `moderate`, `high` o `imminent`, entonces `risk_notes` y al menos un `risk_actions` distinto de `'none'` son obligatorios.
+- Si alguna dimensión es distinta de `'denied'`, `risk_level` no puede ser `low` sin justificación en `risk_notes`.
+
 **Triggers de Postgres:**
 - `BEFORE UPDATE OR DELETE ON session_notes`: si `now() > OLD.locks_at`, se lanza `RAISE EXCEPTION 'note locked'`. No hay `DELETE` físico nunca: borrar = `deleted_at`, solo permitido antes del bloqueo.
 - `BEFORE UPDATE OR DELETE` en `session_note_revisions`, `session_note_addenda` y `audit_log`: siempre se rechaza.
 
 ### 3.2 Formulario guiado (crear y editar)
 
-Wizard de 4 pasos con autoguardado (borrador) cada ~10 s:
+Wizard de 5 pasos con autoguardado (borrador) cada ~10 s:
 
 1. **Contexto**: cliente, cita (precargada si se abre desde la cita), fecha, duración, modalidad, tipo.
 2. **Estado mental y emocional**: campos de selección rápida con chips (multi-select) y texto libre opcional:
    - Apariencia · Conducta/actitud · Habla · **Ánimo** (en palabras del cliente) · **Afecto** (congruente, restringido, plano, lábil...) · Proceso del pensamiento · Contenido del pensamiento · Percepción · Orientación/cognición · Insight · Juicio
-   - **Ánimo 1–10** (slider) · **Riesgo** (IS/IH/autolesión + nivel + "plan de seguridad revisado"). Si el riesgo es ≥ moderado, el campo de notas de riesgo se vuelve obligatorio y se muestra una alerta.
-3. **DAP**: tres áreas de texto, cada una con preguntas guía colapsables ("¿Qué reportó el cliente?", "¿Qué observaste?", "¿Cómo se relaciona con las metas?", "¿Qué sigue?") y la lista de intervenciones usadas.
-4. **Revisar y firmar**: vista previa en formato reporte, luego "Firmar nota" (`status=signed`). Firmar **no** bloquea: lo que bloquea es el reloj de 72 h. Mientras faltan horas se muestra "Editable por 2 d 14 h más".
+   - **Ánimo 1–10** (slider).
+3. **Evaluación de riesgo (obligatoria, en toda sesión)**: paso propio que no se puede saltar. El botón "Firmar" queda deshabilitado mientras falte algo.
+   - **Daño a sí mismo**: ideación suicida (niega / pasiva / activa sin plan / activa con plan / con plan e intención) y autolesión (niega / historial / impulsos / reciente / actual).
+   - **Daño a otros**: ideación homicida o de violencia (niega / ideación / con plan / con intención).
+   - **Factores de riesgo y protectores** (chips) y **nivel de riesgo global** (bajo / moderado / alto / inminente) según su juicio clínico.
+   - **Acciones tomadas** (plan de seguridad creado o revisado, restricción de medios, más frecuencia de sesiones, contacto de emergencia, línea de crisis 988, referido a sala de emergencias, deber de advertir).
+   - **Nunca se precarga** con las respuestas de la sesión anterior: cada sesión se contesta activamente. Así una nota copiada no aparenta una evaluación que no se hizo. Sí se muestra, como referencia, "Nivel en la sesión anterior: Bajo (12/oct)".
+   - Si el nivel es ≥ moderado o alguna dimensión no es "niega": se exige la justificación y al menos una acción, se muestra un recordatorio del protocolo de crisis y, al firmar, se crea una tarea de seguimiento.
+4. **DAP**: tres áreas de texto, cada una con preguntas guía colapsables ("¿Qué reportó el cliente?", "¿Qué observaste?", "¿Cómo se relaciona con las metas?", "¿Qué sigue?") y la lista de intervenciones usadas. La "A" muestra el resumen de riesgo del paso 3 para que la evaluación clínica lo integre.
+5. **Revisar y firmar**: vista previa en formato reporte, luego "Firmar nota" (`status=signed`). Firmar **no** bloquea: lo que bloquea es el reloj de 72 h. Mientras faltan horas se muestra "Editable por 2 d 14 h más".
+
+**Riesgo visible fuera de la nota (MVP):**
+- **Bandera en el expediente** del cliente con el nivel de su última nota firmada (verde / ámbar / rojo) y la fecha.
+- **Lista "Clientes con riesgo ≥ moderado"** en el panel de inicio.
+- **Auditoría**: cada cambio de `risk_level` entre sesiones se registra como `risk.level_changed` (de → a).
 
 ### 3.3 Ver = reporte (imprimir / PDF)
 
 - La ruta `/contacts/:id/session-notes/:noteId` **siempre** abre en modo reporte (solo lectura). "Editar" aparece solo si `now() < locks_at`.
-- Reporte con CSS `@media print`: membrete de la práctica, "CONFIDENCIAL – Información de salud protegida", datos del cliente (nombre, fecha de nacimiento, ID), datos de la sesión, MSE en tabla, D/A/P, riesgo, firma digital ("Firmado electrónicamente por ___, Lic. #___, fecha y hora"), anexos y un pie con el hash/ID de la nota.
+- Reporte con CSS `@media print`: membrete de la práctica, "CONFIDENCIAL – Información de salud protegida", datos del cliente (nombre, fecha de nacimiento, ID), datos de la sesión, MSE en tabla, **sección de evaluación de riesgo siempre presente** (cada dimensión, factores, nivel, acciones y justificación), D/A/P, firma digital ("Firmado electrónicamente por ___, Lic. #___, fecha y hora"), anexos y un pie con el hash/ID de la nota.
 - **MVP**: el botón "Imprimir / Guardar PDF" usa `window.print()` (sin dependencias).
 - **Post-MVP**: PDF generado en el servidor con `puppeteer-core` (ya está en devDependencies) para exportar el expediente completo de un cliente en un solo PDF.
 
@@ -200,7 +228,7 @@ audit_log (
 
 - **Acceso**: `auth.login`, `auth.login_failed`, `auth.logout`.
 - **Clientes**: `contact.created`, `contact.updated` (diff), `contact.archived`, `contact.restored`, `contact.viewed`.
-- **Notas**: `note.created`, `note.updated` (diff por campo), `note.signed`, `note.viewed`, `note.printed`, `note.deleted`, `note.addendum_added`, `note.edit_rejected_locked`.
+- **Notas**: `note.created`, `note.updated` (diff por campo), `note.signed`, `note.viewed`, `note.printed`, `note.deleted`, `note.addendum_added`, `note.edit_rejected_locked`, `risk.level_changed`.
 - **Documentos**: `packet.sent`, `document.viewed`, `document.signed`, `packet.completed`, `document.downloaded`.
 - **Pipeline y automatizaciones**: `opportunity.created`, `pipeline.stage_changed` (from/to), `workflow.run_started`, `workflow.step_executed`, `workflow.run_finished`.
 - **Citas**: `appointment.booked`, `appointment.checked_in`, `appointment.status_changed`.
@@ -232,7 +260,7 @@ Orden según el riesgo: **las notas antes que el onboarding**, porque se necesit
 | 1 | Deploy en hosting con BAA, módulos ocultos, IA y Chatwoot apagados, timeout de inactividad, seed de la práctica (pipeline "Onboarding" y campos personalizados clínicos) | `db/schema.sql`, `db/seed.ts`, `AppShell.tsx`, `lib/session.ts` |
 | 2 | `audit_log` + `lib/audit.ts` + instrumentación de auth, contactos, citas y pipeline (incluido el arreglo de stage-change → timeline/dispatch) + UI de auditoría | `routes/auth.ts`, `routes/contacts.ts`, `routes/opportunities.ts`, `routes/calendars.ts` |
 | 3 | `session_notes`, revisiones y anexos + triggers de BD + repo + rutas CRUD con regla de 72 h + tests | `repos/session-notes-repo.ts`, `routes/session-notes.ts` |
-| 4 | Wizard de nota (DAP + MSE + riesgo) + vista reporte imprimible + check-in en citas | `src/features/session-notes/*`, `NewAppointmentDialog.tsx` |
+| 4 | Wizard de nota (contexto + MSE + **riesgo obligatorio** + DAP) + bandera de riesgo en el expediente + vista reporte imprimible + check-in en citas | `src/features/session-notes/*`, `NewAppointmentDialog.tsx` |
 | 5 | Plantillas de documentos, paquetes y editor simple (markdown + campos) | `repos/document-*`, `src/features/documents/*` |
 | 6 | Página pública de firma (verificación, pasos, firma, hash, snapshot) + email con link + copia para el cliente | `lib/document-page.ts`, `routes/public-documents.ts`, `lib/sending/*` |
 | 7 | Workflows: triggers y acciones nuevas, `send_email` real, workflow de onboarding sembrado | `lib/automation-vocab.ts`, `jobs/workflow-runner.ts` |
@@ -272,7 +300,7 @@ Orden según el riesgo: **las notas antes que el onboarding**, porque se necesit
 | # | Feature | Valor |
 |---|---|---|
 | B1 | **Plan de tratamiento** (problemas → metas → objetivos medibles → intervenciones → fecha de revisión), vinculado a la "A" de cada nota DAP | Es el eje clínico y lo exigen las aseguradoras |
-| B2 | **Plan de seguridad (Stanley-Brown)** + bandera de riesgo visible en el expediente y alerta cuando una nota marca riesgo | Gestión del riesgo suicida |
+| B2 | **Plan de seguridad (Stanley-Brown)** como documento estructurado, versionado y compartible con el cliente, enlazado desde la evaluación de riesgo de la nota. Opcional: escalas validadas (C-SSRS) dentro del paso de riesgo. La bandera y la evaluación obligatoria ya entran en el MVP | Gestión del riesgo suicida |
 | B3 | **Autorizaciones de divulgación (ROI)** con vigencia y revocación + **registro de divulgaciones** (HIPAA §164.528) | Cumplimiento al compartir información con médicos, escuelas o tribunales |
 | B4 | **Portal seguro del cliente** (documentos, citas, pagos, mensajes). Según D-46, como producto **separado** de OpenLevel | Autoservicio y menos carga administrativa |
 | B5 | **Telesalud** con integración de video con BAA (Zoom for Healthcare, Doxy.me) y link automático en la cita | Sesiones remotas |
