@@ -89,4 +89,51 @@ export class AppointmentsRepo extends LocationScopedRepo {
     )
     return rows[0]
   }
+
+  /**
+   * reschedule() that also reports the time it moved FROM, read in the same
+   * statement (a CTE snapshots the row before the UPDATE), so the audit log can
+   * say "from X to Y" without a second round trip or a race.
+   */
+  async rescheduleWithPrev(
+    id: string,
+    startsAt: string,
+    endsAt: string,
+  ): Promise<{ appointment: Appointment; prevStartsAt: string | null } | undefined> {
+    const rows = await this.scopedWrite<Appointment & { prev_starts_at?: string | null }>(
+      `WITH old AS (SELECT starts_at FROM appointments WHERE location_id=$1 AND id=$4)
+       UPDATE appointments SET starts_at=$2, ends_at=$3, updated_at=now()
+       WHERE location_id=$1 AND id=$4
+       RETURNING *, (SELECT starts_at FROM old) AS prev_starts_at`,
+      [startsAt, endsAt, id],
+    )
+    const r = splitPrev(rows[0], 'prev_starts_at')
+    return r && { appointment: r.appointment, prevStartsAt: r.prev }
+  }
+
+  /** setStatus() that also reports the status it changed FROM (same CTE trick). */
+  async setStatusWithPrev(
+    id: string,
+    status: string,
+  ): Promise<{ appointment: Appointment; prevStatus: string | null } | undefined> {
+    const rows = await this.scopedWrite<Appointment & { prev_status?: string | null }>(
+      `WITH old AS (SELECT status FROM appointments WHERE location_id=$1 AND id=$3)
+       UPDATE appointments SET status=$2, updated_at=now()
+       WHERE location_id=$1 AND id=$3
+       RETURNING *, (SELECT status FROM old) AS prev_status`,
+      [status, id],
+    )
+    const r = splitPrev(rows[0], 'prev_status')
+    return r && { appointment: r.appointment, prevStatus: r.prev }
+  }
+}
+
+/** Peel a `prev_*` column off a RETURNING row so it never leaks into the API body. */
+function splitPrev(
+  row: object | undefined,
+  column: string,
+): { appointment: Appointment; prev: string | null } | undefined {
+  if (!row) return undefined
+  const { [column]: prev, ...appointment } = row as Record<string, unknown>
+  return { appointment: appointment as unknown as Appointment, prev: (prev as string | null | undefined) ?? null }
 }

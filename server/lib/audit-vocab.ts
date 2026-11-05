@@ -36,6 +36,7 @@ export const AUDIT_ACTIONS = {
   'appointment.deleted': 'Appointment deleted',
   // pipeline
   'opportunity.created': 'Pipeline card created',
+  'opportunity.updated': 'Pipeline card edited',
   'opportunity.status_changed': 'Pipeline card status changed',
   'opportunity.deleted': 'Pipeline card deleted',
   'pipeline.stage_changed': 'Moved to another pipeline stage',

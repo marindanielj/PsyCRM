@@ -4,6 +4,8 @@ import { z } from 'zod'
 import type { AppEnv } from '../app-env'
 import type { Database } from '../db/database'
 import type { WorkflowDispatch } from '../jobs/workflow-dispatcher'
+import { isValidIsoDate, todayIn } from '../lib/age'
+import { audit, clientAuditContext } from '../lib/audit'
 import { bookableDates, parseYmd, slotsForDate, zonedYmd } from '../lib/availability'
 import { calendarBusyFor, toConfig } from '../lib/booking-availability'
 import { renderBookingNotFound, renderBookingPage } from '../lib/booking-page'
@@ -21,6 +23,8 @@ const bookSchema = z.object({
   email: z.string().trim().email(),
   phone: z.string().trim().optional().nullable(),
   notes: z.string().trim().optional().nullable(),
+  // YYYY-MM-DD; required when the deployment asks for it (PsyCRM).
+  dateOfBirth: z.string().trim().optional().nullable(),
 })
 
 /**
@@ -43,6 +47,8 @@ export function publicBookingRoute(deps: {
   dispatch?: WorkflowDispatch
   /** Injectable clock — defaults to wall-clock; tests pin it for determinism. */
   now?: () => Date
+  /** PsyCRM: a booking must carry a valid date of birth (the page asks for it). */
+  requireDateOfBirth?: boolean
 }): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
   const clock = () => deps.now?.() ?? new Date()
@@ -72,6 +78,7 @@ export function publicBookingRoute(deps: {
         actionBase: `/api/public/booking/${loc}/${slug}`,
         dates,
         brandColor: await brandColor(loc),
+        requireDateOfBirth: deps.requireDateOfBirth,
       }),
     )
   })
@@ -109,21 +116,63 @@ export function publicBookingRoute(deps: {
     const match = slotsForDate(config, ymd, busy, clock()).find((s) => s.start === input.start)
     if (!match) return c.json({ error: 'slot taken' }, 409)
 
+    const dob = input.dateOfBirth?.trim() || undefined
+    if (dob !== undefined && (!isValidIsoDate(dob) || dob > todayIn(undefined, clock()))) {
+      return c.json({ error: 'invalid date of birth' }, 400)
+    }
+    if (deps.requireDateOfBirth && dob === undefined) return c.json({ error: 'date of birth required' }, 400)
+
     const phone = input.phone?.trim() || undefined
-    const contact = await new ContactsRepo(deps.db, loc).upsertByMatch(
-      { name: input.name, email: input.email, phone },
-      `booking:${slug}`,
-    )
-    const apptRepo = new AppointmentsRepo(deps.db, loc)
-    let appointment: Awaited<ReturnType<typeof apptRepo.create>>
+    // One unit: the client, the appointment, the timeline entry and the audit rows
+    // commit together. Losing the double-book race (a 23505 on the appointment)
+    // now also undoes the client row, instead of leaving a booking-less contact.
+    let booked: { appointment: Awaited<ReturnType<AppointmentsRepo['create']>>; contactId: string }
     try {
-      appointment = await apptRepo.create({
-        calendarId: cal.id,
-        title: `${cal.name} — ${input.name}`,
-        startsAt: match.start,
-        endsAt: match.end,
-        contactId: contact.id,
-        notes: input.notes?.trim() || null,
+      booked = await deps.db.transaction(async (tx) => {
+        const contacts = new ContactsRepo(tx, loc)
+        const upserted = await contacts.upsertByMatchFlagged(
+          { name: input.name, email: input.email, phone },
+          `booking:${slug}`,
+        )
+        let contact = upserted.contact
+        if (dob !== undefined && !contact.custom_fields?.date_of_birth) {
+          contact = (await contacts.setCustomField(contact.id, 'date_of_birth', dob)) ?? contact
+        }
+        const appointment = await new AppointmentsRepo(tx, loc).create({
+          calendarId: cal.id,
+          title: `${cal.name} — ${input.name}`,
+          startsAt: match.start,
+          endsAt: match.end,
+          contactId: contact.id,
+          notes: input.notes?.trim() || null,
+        })
+        await new TimelineRepo(tx, loc).add({
+          contactId: contact.id,
+          type: 'appointment_booked',
+          refTable: 'appointments',
+          refId: appointment.id,
+          payload: { calendar: cal.name, start: match.start },
+        })
+        const who = clientAuditContext(c, 'Client (public booking page)')
+        if (upserted.created) {
+          await audit(tx, loc, {
+            action: 'contact.created',
+            entityType: 'contact',
+            entityId: contact.id,
+            contactId: contact.id,
+            details: { source: `booking:${slug}`, fields: ['name', 'email', phone && 'phone', dob && 'date_of_birth'].filter(Boolean) },
+            ...who,
+          })
+        }
+        await audit(tx, loc, {
+          action: 'appointment.booked',
+          entityType: 'appointment',
+          entityId: appointment.id,
+          contactId: contact.id,
+          details: { calendarId: cal.id, startsAt: match.start },
+          ...who,
+        })
+        return { appointment, contactId: contact.id }
       })
     } catch (err) {
       // We lost the write race: between our slot snapshot above and this INSERT,
@@ -133,13 +182,8 @@ export function publicBookingRoute(deps: {
       if (isUniqueViolation(err)) return c.json({ error: 'slot taken' }, 409)
       throw err
     }
-    await new TimelineRepo(deps.db, loc).add({
-      contactId: contact.id,
-      type: 'appointment_booked',
-      refTable: 'appointments',
-      refId: appointment.id,
-      payload: { calendar: cal.name, start: match.start },
-    })
+    const { appointment } = booked
+    const contact = { id: booked.contactId }
 
     // Drive the capture → automation loop: a live appointment_booked workflow runs.
     await deps.dispatch?.({ locationId: loc, triggerType: 'appointment_booked', contactId: contact.id })

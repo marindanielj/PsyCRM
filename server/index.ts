@@ -245,7 +245,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   }
   // Hosted booking pages: pick a day + time, leave details. A booking creates a
   // contact + appointment and fires appointment_booked into live automations.
-  app.route('/api/public/booking', publicBookingRoute({ db: deps.db, dispatch: deps.dispatch }))
+  app.route('/api/public/booking', publicBookingRoute({ db: deps.db, dispatch: deps.dispatch, requireDateOfBirth: psycrm }))
 
   app.use('/api/locations', auth())
   app.route('/api/locations', locationsRoute({ db: deps.db, psycrmMode: psycrm }))

@@ -1,4 +1,5 @@
 import type { Database } from '../db/database'
+import { type AuditEntry, audit } from '../lib/audit'
 import { renderTemplate } from '../lib/merge-fields'
 import { type Contact, ContactsRepo } from '../repos/contacts-repo'
 import { CustomValuesRepo } from '../repos/custom-values-repo'
@@ -141,6 +142,34 @@ async function executeAction(
 }
 
 /**
+ * Record a workflow event in the audit log WITHOUT letting a logging failure break
+ * the run. The job queue retries a failed job, and a retry would repeat steps that
+ * already had real effects (a tag added, an email sent). The run's own record
+ * (workflow_runs.steps) is the durable execution log and is written regardless; the
+ * effects that matter clinically (a stage change, an appointment) are audited
+ * where they happen, in the same transaction as the change. So this is best-effort
+ * by design — the failure is reported by code only, never with client data.
+ */
+async function auditRun(
+  db: Database,
+  locationId: string,
+  entry: Pick<AuditEntry, 'action' | 'entityId' | 'contactId' | 'details'> & { workflowId: string; workflowName: string },
+): Promise<void> {
+  try {
+    await audit(db, locationId, {
+      action: entry.action,
+      entityType: 'workflow_run',
+      entityId: entry.entityId,
+      contactId: entry.contactId,
+      details: { workflowId: entry.workflowId, ...entry.details },
+      actor: { type: 'workflow', id: entry.workflowId, label: `Workflow: ${entry.workflowName}` },
+    })
+  } catch (err) {
+    console.error('workflow audit write failed', (err as { code?: string } | null)?.code ?? 'unknown')
+  }
+}
+
+/**
  * Run a workflow's steps for one contact, recording an honest execution record in
  * workflow_runs. Status-agnostic: the dispatcher decides which workflows are live;
  * a manual test run drives a draft too. On a `wait`, the run is left `waiting` and
@@ -194,6 +223,17 @@ export async function runWorkflow(
         triggerType: payload.triggerType,
       })
 
+  const auditCtx = { workflowId: workflow.id, workflowName: workflow.name }
+  if (!opts.runId) {
+    await auditRun(db, locationId, {
+      ...auditCtx,
+      action: 'workflow.run_started',
+      entityId: run.id,
+      contactId: payload.contactId,
+      details: { trigger: payload.triggerType },
+    })
+  }
+
   for (let i = opts.fromPosition ?? 0; i < actions.length; i++) {
     const action = actions[i]!
 
@@ -205,6 +245,13 @@ export async function runWorkflow(
         detail: describeWait(action.config),
       }
       run = (await runsRepo.appendStep(run.id, waiting, 'waiting')) ?? run
+      await auditRun(db, locationId, {
+        ...auditCtx,
+        action: 'workflow.step_executed',
+        entityId: run.id,
+        contactId: payload.contactId,
+        details: { position: i, type: 'wait', status: 'waiting' },
+      })
       const resumeId = run.id
       const next = i + 1
       schedule(() => runWorkflow(deps, payload, { runId: resumeId, fromPosition: next }), waitMs(action.config))
@@ -213,7 +260,23 @@ export async function runWorkflow(
 
     const step = await executeAction(db, locationId, action, contact, i, customValues)
     run = (await runsRepo.appendStep(run.id, step, 'running')) ?? run
+    await auditRun(db, locationId, {
+      ...auditCtx,
+      action: 'workflow.step_executed',
+      entityId: run.id,
+      contactId: payload.contactId,
+      // Type and outcome only: the step's `detail` can quote message text.
+      details: { position: i, type: action.type, status: step.status },
+    })
   }
 
-  return (await runsRepo.finish(run.id, 'completed')) ?? run
+  const finished = (await runsRepo.finish(run.id, 'completed')) ?? run
+  await auditRun(db, locationId, {
+    ...auditCtx,
+    action: 'workflow.run_finished',
+    entityId: run.id,
+    contactId: payload.contactId,
+    details: { status: finished.status },
+  })
+  return finished
 }

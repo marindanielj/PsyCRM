@@ -178,3 +178,55 @@ test('timeoutChunks splits a multi-week wait into setTimeout-safe pieces', () =>
   // Zero / unparseable wait fires on the next tick.
   expect(timeoutChunks(0)).toEqual([0])
 })
+
+// --- audit ---------------------------------------------------------------------
+
+test('a run is audited as a workflow actor: started, each step (type + outcome only), finished', async () => {
+  const { db, loc, contactId, workflowId } = await harness([
+    { type: 'send_sms', config: { body: 'Hi {{first_name}}, your private details here' } },
+    { type: 'add_tag', config: { tag: 'new-lead' } },
+  ])
+  const run = await runWorkflow({ db }, { locationId: loc, workflowId, contactId, triggerType: 'contact_created' })
+  const rows = await db.query<{ action: string; actor_type: string; actor_id: string; actor_label: string; entity_id: string; contact_id: string; details: Record<string, unknown> }>(
+    'SELECT action, actor_type, actor_id, actor_label, entity_id, contact_id, details FROM audit_log ORDER BY chain_seq',
+  )
+  expect(rows.map((r) => r.action)).toEqual(['workflow.run_started', 'workflow.step_executed', 'workflow.step_executed', 'workflow.run_finished'])
+  expect(rows.every((r) => r.actor_type === 'workflow' && r.actor_id === workflowId && r.entity_id === run.id && r.contact_id === contactId)).toBe(true)
+  expect(rows[0]!.actor_label).toBe('Workflow: Test wf')
+  expect(rows[0]!.details).toMatchObject({ trigger: 'contact_created' })
+  expect(rows[1]!.details).toMatchObject({ position: 0, type: 'send_sms', status: 'done' })
+  expect(rows[2]!.details).toMatchObject({ position: 1, type: 'add_tag', status: 'done' })
+  expect(rows[3]!.details).toMatchObject({ status: 'completed' })
+  expect(JSON.stringify(rows)).not.toContain('private details') // message text never reaches the log
+  expect((await db.query<{ v: string | number | null }>('SELECT audit_log_verify($1) AS v', [loc]))[0]!.v).toBeNull()
+})
+
+test('a wait is audited as waiting, and the resumed run does not log a second "started"', async () => {
+  const scheduled: Array<() => Promise<unknown>> = []
+  const { db, loc, contactId, workflowId } = await harness([
+    { type: 'add_tag', config: { tag: 'a' } },
+    { type: 'wait', config: { minutes: 5 } },
+    { type: 'add_tag', config: { tag: 'b' } },
+  ])
+  await runWorkflow({ db, schedule: (thunk) => void scheduled.push(thunk) }, { locationId: loc, workflowId, contactId, triggerType: 'contact_created' })
+  await scheduled[0]!()
+  const actions = (await db.query<{ action: string; details: Record<string, unknown> }>('SELECT action, details FROM audit_log ORDER BY chain_seq')).map((r) => [r.action, r.details.status ?? r.details.type])
+  expect(actions.filter(([a]) => a === 'workflow.run_started')).toHaveLength(1)
+  expect(actions).toContainEqual(['workflow.step_executed', 'waiting'])
+  expect(actions.at(-1)).toEqual(['workflow.run_finished', 'completed'])
+})
+
+test('a failure writing the audit log never aborts the run (the queue would retry and repeat real effects)', async () => {
+  const { db, loc, contactId, workflowId } = await harness([{ type: 'add_tag', config: { tag: 'still-applied' } }])
+  const realQuery = db.query.bind(db)
+  db.query = (async (sql: string, params?: unknown[]) => {
+    if (/INSERT INTO audit_log/.test(sql)) throw Object.assign(new Error('audit down'), { code: 'XX000' })
+    return realQuery(sql, params)
+  }) as typeof db.query
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const run = await runWorkflow({ db }, { locationId: loc, workflowId, contactId, triggerType: 'contact_created' })
+  expect(run.status).toBe('completed')
+  expect(((await db.query<{ tags: string[] }>('SELECT tags FROM contacts WHERE id=$1', [contactId]))[0]!).tags).toContain('still-applied')
+  expect(spy).toHaveBeenCalledWith('workflow audit write failed', 'XX000')
+  spy.mockRestore()
+})

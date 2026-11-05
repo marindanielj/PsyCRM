@@ -6,6 +6,7 @@ import { isUniqueViolation } from '../lib/db-errors'
 import { AppointmentsRepo } from '../repos/appointments-repo'
 import { CalendarsRepo } from '../repos/calendars-repo'
 import type { Database } from '../db/database'
+import { audit, auditContext } from '../lib/audit'
 
 const APPOINTMENT_STATUS = ['scheduled', 'confirmed', 'completed', 'cancelled', 'no_show'] as const
 
@@ -141,7 +142,18 @@ export function calendarsRoute(deps: { db: Database }): Hono<AppEnv> {
     const calendar = await new CalendarsRepo(deps.db, loc).get(input.calendarId)
     if (!calendar) return c.json({ error: 'unknown calendar' }, 400)
     try {
-      const appointment = await new AppointmentsRepo(deps.db, loc).create(input)
+      const appointment = await deps.db.transaction(async (tx) => {
+        const created = await new AppointmentsRepo(tx, loc).create(input)
+        await audit(tx, loc, {
+          action: 'appointment.created',
+          entityType: 'appointment',
+          entityId: created.id,
+          contactId: created.contact_id ?? null,
+          details: { calendarId: input.calendarId, startsAt: created.starts_at },
+          ...auditContext(c),
+        })
+        return created
+      })
       return c.json({ ok: true, appointment }, 201)
     } catch (err) {
       // The no-double-book index refused this calendar+instant. An honest 409,
@@ -155,20 +167,45 @@ export function calendarsRoute(deps: { db: Database }): Hono<AppEnv> {
     const loc = c.get('locationId')
     const id = c.req.param('id')
     const body = c.req.valid('json')
-    const repo = new AppointmentsRepo(deps.db, loc)
 
     // One concern per call: reschedule (needs both timestamps) > status change.
     let appointment
     if (body.startsAt !== undefined && body.endsAt !== undefined) {
+      const { startsAt, endsAt } = body
       try {
-        appointment = await repo.reschedule(id, body.startsAt, body.endsAt)
+        appointment = await deps.db.transaction(async (tx) => {
+          const r = await new AppointmentsRepo(tx, loc).rescheduleWithPrev(id, startsAt, endsAt)
+          if (!r) return undefined
+          await audit(tx, loc, {
+            action: 'appointment.rescheduled',
+            entityType: 'appointment',
+            entityId: r.appointment.id,
+            contactId: r.appointment.contact_id ?? null,
+            details: { from: r.prevStartsAt, to: r.appointment.starts_at },
+            ...auditContext(c),
+          })
+          return r.appointment
+        })
       } catch (err) {
         // Moving onto a slot another live appointment already holds → 409.
         if (isUniqueViolation(err)) return c.json({ error: 'time already booked' }, 409)
         throw err
       }
     } else if (body.status !== undefined) {
-      appointment = await repo.setStatus(id, body.status)
+      const status = body.status
+      appointment = await deps.db.transaction(async (tx) => {
+        const r = await new AppointmentsRepo(tx, loc).setStatusWithPrev(id, status)
+        if (!r) return undefined
+        await audit(tx, loc, {
+          action: 'appointment.status_changed',
+          entityType: 'appointment',
+          entityId: r.appointment.id,
+          contactId: r.appointment.contact_id ?? null,
+          details: { from: r.prevStatus, to: status },
+          ...auditContext(c),
+        })
+        return r.appointment
+      })
     } else {
       return c.json({ error: 'startsAt+endsAt or status required' }, 400)
     }

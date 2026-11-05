@@ -38,6 +38,13 @@ test('sanitizeDetails drops clinical/secret keys at any depth and truncates long
   expect(clean.fields).toEqual(['name'])
 })
 
+test('sanitizeDetails keeps Date values (pg returns timestamptz as Date) as ISO strings', () => {
+  const clean = sanitizeDetails({ at: new Date('2026-11-10T14:00:00Z'), nested: [new Date('2026-01-01T00:00:00Z')], bad: new Date('nope') }) as Record<string, any>
+  expect(clean.at).toBe('2026-11-10T14:00:00.000Z')
+  expect(clean.nested).toEqual(['2026-01-01T00:00:00.000Z'])
+  expect(clean.bad).toBeNull()
+})
+
 test('diff lists only changed listed fields, as [from, to]', () => {
   expect(diff({ name: 'A', state: 'PR' }, { name: 'B', state: 'PR', other: 1 }, ['name', 'state'])).toEqual({ name: ['A', 'B'] })
   expect(diff(null, { name: 'B' }, ['name'])).toEqual({ name: [null, 'B'] })

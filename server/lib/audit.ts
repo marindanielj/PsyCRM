@@ -51,6 +51,9 @@ const MAX_DEPTH = 4
  */
 export function sanitizeDetails(value: unknown, depth = 0): unknown {
   if (value === null || typeof value === 'number' || typeof value === 'boolean') return value
+  // node-postgres hands timestamptz columns back as Date objects; without this a
+  // time would be flattened to {} by the object branch below.
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString()
   if (typeof value === 'string') return value.length > MAX_STRING ? `${value.slice(0, MAX_STRING)}…` : value
   if (depth >= MAX_DEPTH) return '[…]'
   if (Array.isArray(value)) return value.slice(0, 50).map((v) => sanitizeDetails(v, depth + 1))
