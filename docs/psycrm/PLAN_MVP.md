@@ -244,7 +244,7 @@ audit_log (
 
 ## 5. Seguridad mínima antes de meter PHI real (no negociable)
 
-1. **Hosting con BAA** (Business Associate Agreement): decisión: **AWS** (RDS PostgreSQL + App Runner, en una cuenta dedicada), con el BAA aceptado en AWS Artifact. Requisitos: cifrado en reposo, HTTPS y backups diarios con prueba de restauración.
+1. **Hosting con BAA** (Business Associate Agreement): decisión: **AWS** (RDS PostgreSQL + ECS Fargate detrás de un balanceador, en una cuenta dedicada dentro de su organización de AWS), con el BAA aceptado en AWS Artifact. Requisitos: cifrado en reposo, HTTPS y backups diarios con prueba de restauración.
 2. **Email**: no poner PHI en el cuerpo, solo links. Con SES el BAA de AWS ya cubre el envío.
 3. **Sesión**: cierre por inactividad de 15–30 min (hoy la sesión es de 8 h absolutas). **MFA con TOTP** en la semana 2 a más tardar.
 4. **Quitar las integraciones de IA y mensajería** (sección 1, punto 3) hasta tener un BAA.

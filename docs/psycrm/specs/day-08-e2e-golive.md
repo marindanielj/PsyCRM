@@ -44,7 +44,7 @@ Hay que guardar las capturas de cada paso en `docs/psycrm/e2e/` (sin datos reale
 
 - **Backups**: hacer una **prueba de restauración** de RDS a una instancia temporal, verificar que `audit/verify` da `ok` en la copia y luego borrar la instancia. Documentar la fecha.
 - **Monitoreo**: un chequeo de CloudWatch (Route 53 health check o canary) sobre `/health` con alerta por email a la terapeuta y al admin. Alerta si llegan jobs a la DLQ de pg-boss (`workflow_dispatch_dlq`).
-- **Deploy**: `npm run migrate` y luego desplegar la nueva imagen en App Runner (`aws apprunner start-deployment`). Rollback = desplegar la revisión anterior (el esquema es aditivo e idempotente, así que no hace falta revertir la BD).
+- **Deploy**: la imagen se construye y sube a ECR; la migración corre como **tarea única de ECS** (`aws ecs run-task` con el comando `npm run migrate`, esperar que termine con éxito); luego `aws ecs update-service --force-new-deployment`. Rollback = apuntar el servicio a la definición de tarea anterior (el esquema es aditivo e idempotente, así que no hace falta revertir la BD). Configurar el *circuit breaker* del despliegue para que revierta solo si la nueva tarea no pasa `/health`.
 - **Cuenta**: la contraseña de la terapeuta (larga, en un gestor de contraseñas), con la recuperación documentada. **MFA es lo primero de la semana 2.**
 
 ## 4. Lista de salida a producción (go / no-go)
