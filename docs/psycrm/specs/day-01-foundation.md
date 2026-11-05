@@ -9,17 +9,22 @@ Una instancia de PsyCRM **en producción y apta para PHI**, con un solo usuario 
 
 ---
 
-## 1. Hosting (decisión: Google Cloud)
+## 1. Hosting (decisión: AWS)
+
+Cuenta de AWS **nueva o dedicada a PsyCRM** (no la misma donde viven otros proyectos), región `us-east-1`. Las otras apps de la dueña siguen en Vercel y no se tocan: no manejan PHI.
 
 | Pieza | Servicio | Notas |
 |---|---|---|
-| BAA | Google Cloud BAA (se acepta en la consola, sin costo) | Cloud Run, Cloud SQL y Secret Manager están cubiertos por el BAA |
-| App | **Cloud Run**, `us-east1`, `min-instances=1`, CPU siempre asignada | `pg-boss` necesita un proceso vivo |
-| BD | **Cloud SQL Postgres 16**, `db-f1-micro` o `db-g1-small` | Cifrado en reposo (por defecto), backups diarios con retención de 30 días y **PITR** activado |
-| Secretos | Secret Manager | `DATABASE_URL`, `SESSION_SECRET` (≥ 32 caracteres), `CHATWOOT_WEBHOOK_SECRET` (requerido por `config.ts` aunque no se use), credenciales de email |
-| Dominio | Mapeo de dominio de Cloud Run (TLS administrado) | p. ej. `app.<practica>.com` |
+| BAA | **AWS BAA**, aceptado en AWS Artifact (sin costo, es a nivel de cuenta) | Solo se pueden guardar PHI en servicios de la lista oficial *HIPAA Eligible Services*. **Verificar en esa lista, el día de montar, que cada servicio de esta tabla siga incluido** |
+| App | **AWS App Runner** (alternativa: ECS Fargate si App Runner no está en la lista o hace falta más control) | 1 instancia mínima siempre encendida: `pg-boss` necesita un proceso vivo. Imagen en **ECR** |
+| BD | **RDS PostgreSQL 16**, `db.t4g.micro` o `db.t4g.small`, **instancia nueva solo para PsyCRM** | Cifrado en reposo (KMS) **desde la creación**, no accesible desde internet, backups automáticos con retención de 30 días (permite restauración a un punto en el tiempo), protección contra borrado, SSL obligatorio (`rds.force_ssl=1`). Si se quiere reusar el RDS existente, antes cumple los mismos requisitos; si no, se crea uno nuevo |
+| Red | VPC con subredes privadas para RDS; App Runner entra por un VPC connector | El grupo de seguridad de RDS solo acepta tráfico del connector |
+| Secretos | **AWS Secrets Manager** | `DATABASE_URL`, `SESSION_SECRET` (≥ 32 caracteres), `CHATWOOT_WEBHOOK_SECRET` (requerido por `config.ts` aunque no se use), credenciales de email |
+| Email | **Amazon SES** (cubierto por el BAA) | Requiere verificar el dominio (DKIM/SPF). Hasta que haya dominio, se prueba con el sender falso del dev-server. Hay que escribir un adaptador `lib/sending/ses-adapter.ts` con la misma interfaz `EmailSender` que el de Brevo, y sacar de la cuenta de SES el modo *sandbox* |
+| Dominio y TLS | **Route 53 + certificado de ACM**, asociados al servicio de App Runner | **Pendiente de definir.** Hasta entonces se usa la URL que da App Runner. **Debe estar listo antes del primer cliente real** (enlaces de firma y verificación de SES) |
+| Logs | CloudWatch Logs (retención 90 días), CloudTrail activo en la cuenta | Sin PHI en los logs (ver Día 8) |
 
-Costo estimado: unos USD 20–40 al mes. Una alternativa equivalente es AWS (App Runner + RDS, con BAA vía AWS Artifact). **Prohibido**: usar PGlite en memoria en producción.
+Costo estimado, sin cotizar: unos USD 30–60 al mes entre RDS, App Runner, Secrets Manager y SES. Si se cierra el RDS viejo, parte se compensa. **Prohibido**: usar PGlite en memoria en producción.
 
 ### Imagen única
 - `Dockerfile` multi-stage: `npm ci` → `npm run build` (genera `dist/`) → imagen runtime `node:22-slim` con `server/`, `db/` y `dist/`.
@@ -111,7 +116,7 @@ Además: cambiar el default `calendars.timezone` en `schema.sql` **no** hace fal
 3. `GET /api/loc/:loc/campaigns` (u otro módulo apagado) devuelve 404. `POST /api/public/chatwoot/...` devuelve 404 en `PSYCRM_MODE`.
 4. Tras 30 min de inactividad, cualquier llamada a la API devuelve 401 y el SPA vuelve a `/login`. Con actividad continua la sesión dura hasta 8 h y luego expira.
 5. El pipeline "Onboarding" existe con 6 etapas; el calendario está en AST.
-6. Los backups de Cloud SQL están activos (verificado en la consola) y el BAA está aceptado (captura de pantalla guardada fuera del repo).
+6. Los backups de RDS están activos (verificado en la consola) y el BAA de AWS está aceptado en Artifact (captura de pantalla guardada fuera del repo).
 7. Las respuestas de `/api/loc/*` tienen `Cache-Control: no-store` y las cabeceras de seguridad.
 
 ## Tests

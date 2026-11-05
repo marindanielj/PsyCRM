@@ -78,7 +78,7 @@ signed_documents (
 
 1. Ella crea un contacto (o este llega por la reserva pública, `public-booking.ts`, que ya crea contacto + cita).
 2. En el perfil del contacto pulsa **"Enviar paquete de onboarding"**: se crea un `document_request`, se genera el link `/{loc}/docs/{token}` y:
-   - se envía por email con el adaptador real (Brevo, ya existe en `lib/sending/brevo-adapter.ts`), **sin PHI en el cuerpo**: solo "Tiene documentos pendientes" + el link;
+   - se envía por email con el adaptador real (**Amazon SES**, con BAA; hay que escribir `lib/sending/ses-adapter.ts` sobre la interfaz de `lib/sending/provider.ts`, como el de Brevo), **sin PHI en el cuerpo**: solo "Tiene documentos pendientes" + el link;
    - o se copia el link para mandarlo por WhatsApp o SMS.
 3. **Página pública** (render server-side, el mismo patrón de `proposal-page.ts` y `form-page.ts`):
    - paso 0: verificar identidad con la fecha de nacimiento o un código de 6 dígitos por email (barato y evita que un link reenviado exponga datos);
@@ -244,8 +244,8 @@ audit_log (
 
 ## 5. Seguridad mínima antes de meter PHI real (no negociable)
 
-1. **Hosting con BAA** (Business Associate Agreement): por ejemplo, Postgres administrado (AWS RDS, Google Cloud SQL o Supabase en un plan con BAA) y la app en el mismo proveedor. Requisitos: cifrado en reposo, HTTPS y backups diarios con prueba de restauración.
-2. **Email**: no poner PHI en el cuerpo, solo links. Verificar si el proveedor de email firma un BAA; si no, usar uno que lo firme (por ejemplo, Google Workspace con BAA).
+1. **Hosting con BAA** (Business Associate Agreement): decisión: **AWS** (RDS PostgreSQL + App Runner, en una cuenta dedicada), con el BAA aceptado en AWS Artifact. Requisitos: cifrado en reposo, HTTPS y backups diarios con prueba de restauración.
+2. **Email**: no poner PHI en el cuerpo, solo links. Con SES el BAA de AWS ya cubre el envío.
 3. **Sesión**: cierre por inactividad de 15–30 min (hoy la sesión es de 8 h absolutas). **MFA con TOTP** en la semana 2 a más tardar.
 4. **Quitar las integraciones de IA y mensajería** (sección 1, punto 3) hasta tener un BAA.
 5. **Política documentada** (una página): quién accede, retención de expedientes (según la ley del estado o país donde ejerce), qué hacer ante una brecha.

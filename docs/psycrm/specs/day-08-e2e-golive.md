@@ -35,23 +35,23 @@ Hay que guardar las capturas de cada paso en `docs/psycrm/e2e/` (sin datos reale
 - [ ] **Sin PHI en `localStorage` ni `sessionStorage`** en el SPA (grep).
 - [ ] **Cabeceras**: CSP, HSTS, `no-store` y `X-Frame-Options` verificadas con `curl -I` en producción.
 - [ ] **Rate limit**: login (existe), OTP, verify y sign.
-- [ ] **Secretos**: `SESSION_SECRET` ≥ 32 caracteres en Secret Manager; ningún `.env` en el repo.
+- [ ] **Secretos**: `SESSION_SECRET` ≥ 32 caracteres en AWS Secrets Manager; ningún `.env` en el repo.
 - [ ] **Integraciones apagadas** en `PSYCRM_MODE`: assistant, Chatwoot, voice, social, federation y SMS (rutas en 404 y workers sin registrar).
 - [ ] **Dependencias**: `npm audit --omit=dev` sin vulnerabilidades altas ni críticas.
 - [ ] Correr el skill `/security-review` sobre la rama antes del merge.
 
 ## 3. Operación
 
-- **Backups**: hacer una **prueba de restauración** de Cloud SQL a una instancia temporal, verificar que `audit/verify` da `ok` en la copia y luego borrar la instancia. Documentar la fecha.
-- **Monitoreo**: un uptime check de Cloud Monitoring sobre `/health` con alerta por email a la terapeuta y al admin. Alerta si llegan jobs a la DLQ de pg-boss (`workflow_dispatch_dlq`).
-- **Deploy**: `npm run migrate` y luego `gcloud run deploy`. Rollback = desplegar la revisión anterior (el esquema es aditivo e idempotente, así que no hace falta revertir la BD).
+- **Backups**: hacer una **prueba de restauración** de RDS a una instancia temporal, verificar que `audit/verify` da `ok` en la copia y luego borrar la instancia. Documentar la fecha.
+- **Monitoreo**: un chequeo de CloudWatch (Route 53 health check o canary) sobre `/health` con alerta por email a la terapeuta y al admin. Alerta si llegan jobs a la DLQ de pg-boss (`workflow_dispatch_dlq`).
+- **Deploy**: `npm run migrate` y luego desplegar la nueva imagen en App Runner (`aws apprunner start-deployment`). Rollback = desplegar la revisión anterior (el esquema es aditivo e idempotente, así que no hace falta revertir la BD).
 - **Cuenta**: la contraseña de la terapeuta (larga, en un gestor de contraseñas), con la recuperación documentada. **MFA es lo primero de la semana 2.**
 
 ## 4. Lista de salida a producción (go / no-go)
 
 | # | Ítem | Responsable |
 |---|---|---|
-| 1 | BAA de Google Cloud aceptado y guardado | Admin |
+| 1 | BAA de AWS aceptado en Artifact y guardado, y servicios verificados contra la lista HIPAA Eligible Services | Admin |
 | 2 | Si se usa un proveedor de email: BAA firmado, o confirmación de que los emails no contienen PHI (solo links) y la política de riesgo aceptada por escrito | Admin + terapeuta |
 | 3 | **Plantillas revisadas por la terapeuta y por un asesor legal en PR** (consentimiento informado, límites de confidencialidad, Ley 408-2000 para menores, retención de expedientes) y **activadas** | Terapeuta |
 | 4 | Datos de la práctica, la licencia, los honorarios y la política de cancelación cargados en Settings → Practice | Terapeuta |
