@@ -127,3 +127,31 @@ Además: cambiar el default `calendars.timezone` en `schema.sql` **no** hace fal
 
 ## Archivos
 `Dockerfile` (nuevo), `server/index.ts`, `server/lib/config.ts`, `server/lib/session.ts`, `server/middleware/auth.ts`, `server/lib/modules.ts` (nuevo), `server/middleware/module-gate.ts` (nuevo), `server/routes/locations.ts`, `db/seed-practice.ts` (nuevo), `package.json` (script), `src/App.tsx`, `src/features/shell/AppShell.tsx`, `src/state/auth.tsx`, `src/features/settings/*` (Practice), `src/lib/api.ts`.
+
+---
+
+## Estado de implementación (día 1)
+
+**Hecho y verificado** (typecheck limpio, tests del día en verde, recorrido en navegador con una base PGlite y el seed):
+- `PSYCRM_MODE` (`server/lib/config.ts`): módulos por práctica con 404 en la API (`server/lib/modules.ts`, `server/middleware/module-gate.ts`), integraciones con datos de clientes **sin montar** (Chatwoot, voz, pagos, federación, páginas públicas de marketing, tokens push, agente de IA y su worker), cabeceras de seguridad (CSP estricta, HSTS, `X-Frame-Options`, `no-referrer`) y `Cache-Control: no-store` en `/api/*`.
+- Cierre por inactividad de **30 min** para sesiones web (`operatorAuth` con ventana deslizante) y aviso en pantalla a los 25 min (`IdleTimeout.tsx`). Las sesiones por `Authorization: Bearer` (app móvil) no se deslizan y quedan exentas.
+- Un 401 en cualquier llamada devuelve al login (antes cada pantalla mostraba un error).
+- Navegación y rutas filtradas por módulos activos; la página de inicio es **Calendars**; Settings muestra solo Practice, Email & SMS, Pipelines, Custom Fields y Custom Values.
+- **Settings → Practice** (`/api/loc/:loc/practice`): nombre, terapeuta, licencia, dirección, honorarios y horas de cancelación.
+- `npm run seed:practice` (`db/seed-practice.ts`, idempotente, no pisa lo editado): práctica, dueña, pipeline "Onboarding" con 6 etapas (IDs en `settings.onboarding`), calendario "Individual session" (50 min, AST) y los 11 campos clínicos.
+- `Dockerfile` (ARM64, certificado raíz de RDS), `.dockerignore`, `.gitignore`, `server/index.ts` sirviendo `dist/` con respaldo de la SPA.
+- La conexión a la base verifica SSL por la propia URL (`sslmode=verify-full&sslrootcert=…`); con `PSYCRM_MODE` en producción el servidor no arranca sin eso.
+- Se quitó la carga de Google Fonts: la app no hace solicitudes a terceros.
+
+**Diferencias respecto a lo escrito arriba**
+- Los campos `phone`/`email` del contacto son de tipo `text` (el sistema de campos solo soporta text, textarea, number, date, dropdown y checkbox). `is_minor` se eliminó (la edad se calcula).
+- Las dos funciones de edad quedan para después: `server/lib/age.ts` y la **fecha de nacimiento obligatoria** al crear un contacto y en la reserva pública (hoy es un campo personalizado opcional). Se hacen el día 2 junto con la instrumentación de contactos.
+- El módulo `moduleGate` solo se aplica en modo PsyCRM; fuera de él el producto se comporta como antes.
+
+**Sin verificar**
+- El build de la imagen Docker (no hay Docker en este entorno) y el despliegue en AWS.
+- `npm ci` con el `package-lock.json` actual **falla** (ver abajo).
+
+**Problema encontrado: `package-lock.json` corrupto.** 18 de los 276 hashes de integridad no coinciden con los del registro de npm (entre ellos `zod`, `react`, `postcss`, `tslib`, `xtend`). En los 18 la única diferencia es `JF`→`AL` (cualquier combinación de mayúsculas), señal de un reemplazo de texto global sobre el repositorio. Los otros 258 coinciden. Hay que corregir esas 18 líneas antes de que `npm ci` (y el `Dockerfile`) funcionen. No se modificó el lockfile del repositorio.
+
+**Pruebas que ya fallaban antes de este trabajo:** `server/lib/vault.test.ts` (el código pone el nombre en mayúsculas, `ALEX_…`; el test define `Alex_…`). Es el mismo tipo de daño por reemplazo de texto.

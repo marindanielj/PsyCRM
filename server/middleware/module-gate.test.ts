@@ -3,7 +3,7 @@ import type { AppEnv } from '../app-env'
 import { FakeDatabase } from '../db/fake-database'
 import { moduleGate } from './module-gate'
 
-function harness(db: FakeDatabase, locationId: string | undefined = 'locA', now?: () => number) {
+function harness(db: FakeDatabase, locationId: string | null = 'locA', now?: () => number) {
   const app = new Hono<AppEnv>()
   app.use('*', async (c, next) => {
     if (locationId) c.set('locationId', locationId)
@@ -36,7 +36,7 @@ test('uses the PsyCRM default when the location has no list (documents is on by 
 
 test('404s without a resolved location', async () => {
   const db = new FakeDatabase()
-  expect((await harness(db, undefined).request('/x/ping')).status).toBe(404)
+  expect((await harness(db, null).request('/x/ping')).status).toBe(404)
 })
 
 test('caches the lookup briefly, then re-reads', async () => {
