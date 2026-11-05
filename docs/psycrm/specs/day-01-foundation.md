@@ -150,8 +150,8 @@ Además: cambiar el default `calendars.timezone` en `schema.sql` **no** hace fal
 
 **Sin verificar**
 - El build de la imagen Docker (no hay Docker en este entorno) y el despliegue en AWS.
-- `npm ci` con el `package-lock.json` actual **falla** (ver abajo).
+- (El `npm ci` ya funciona: ver abajo el lockfile corregido.)
 
-**Problema encontrado: `package-lock.json` corrupto.** 18 de los 276 hashes de integridad no coinciden con los del registro de npm (entre ellos `zod`, `react`, `postcss`, `tslib`, `xtend`). En los 18 la única diferencia es `JF`→`AL` (cualquier combinación de mayúsculas), señal de un reemplazo de texto global sobre el repositorio. Los otros 258 coinciden. Hay que corregir esas 18 líneas antes de que `npm ci` (y el `Dockerfile`) funcionen. No se modificó el lockfile del repositorio.
+**Problema encontrado: `package-lock.json` corrupto.** 18 de los 276 hashes de integridad no coinciden con los del registro de npm (entre ellos `zod`, `react`, `postcss`, `tslib`, `xtend`). En los 18 la única diferencia es `JF`→`AL` (cualquier combinación de mayúsculas), señal de un reemplazo de texto global sobre el repositorio. Los otros 258 coinciden. **Corregido** en un commit aparte (`fix: repair 18 corrupted integrity hashes`): cada valor se restauró al que publica el registro y `npm ci` funciona desde un directorio limpio.
 
 **Pruebas que ya fallaban antes de este trabajo:** `server/lib/vault.test.ts` (el código pone el nombre en mayúsculas, `ALEX_…`; el test define `Alex_…`). Es el mismo tipo de daño por reemplazo de texto.
