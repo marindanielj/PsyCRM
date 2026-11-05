@@ -67,7 +67,7 @@ signed_documents (
   rendered_html,                           -- snapshot exacto de lo que el cliente vio
   field_values jsonb,                      -- respuestas
   content_sha256,                          -- hash de rendered_html + field_values
-  signer_name, signature_image,            -- nombre escrito (+ opcional: firma dibujada en PNG)
+  signer_name, signature_image,            -- nombre escrito + firma dibujada (PNG), ver Decisiones §6
   consent_esign boolean,                   -- "acepto hacer negocios electrónicamente"
   signer_ip, signer_user_agent, signed_at
 )
@@ -141,7 +141,8 @@ session_notes (
   status ('draft'|'signed'),
   signed_at, signed_by,
   created_by, created_at, updated_at,
-  locks_at timestamptz GENERATED ALWAYS AS (created_at + interval '72 hours') STORED,
+  locks_at timestamptz NOT NULL DEFAULT now() + interval '72 hours', -- un trigger impide modificarla
+                               -- (no puede ser GENERATED: timestamptz + interval no es IMMUTABLE en Postgres)
   deleted_at                   -- soft delete, solo dentro de las 72 h
 )
 
@@ -268,12 +269,14 @@ Orden según el riesgo: **las notas antes que el onboarding**, porque se necesit
 
 **Recorte de emergencia**: si el día 6 no está listo, la primera semana se envían los documentos como PDF por un canal seguro y se suben al expediente. Las notas y el audit **sí** tienen que estar listos.
 
-### Preguntas que hay que decidir antes de empezar
-1. ¿En qué jurisdicción ejerce (estado de EE. UU. o Puerto Rico)? Esto define la retención de expedientes y los requisitos de los consentimientos.
-2. ¿Las 72 h cuentan desde que se **crea** la nota (recomendado) o desde la **hora de la sesión**?
-3. ¿La firma es con nombre escrito o también dibujada? (Recomendado: escrita + checkbox, y la dibujada opcional.)
-4. ¿La interfaz va en español, en inglés o bilingüe? ¿Y los documentos para clientes?
-5. ¿Atiende a menores? En ese caso hacen falta la firma del tutor y un paquete separado.
+### Decisiones tomadas (2026-11-05)
+1. **Jurisdicción: Puerto Rico.** Zona horaria `America/Puerto_Rico` (AST, sin horario de verano). Líneas de crisis: 988 y Línea PAS (ASSMCA). La retención de expedientes y el consentimiento de menores se rigen por la ley local (Ley 408-2000 de Salud Mental, reglamentos de la Junta Examinadora de Psicólogos). **Hay que validarlo con un asesor legal antes de usar las plantillas.**
+2. **Las 72 h cuentan desde la creación de la nota.**
+3. **Firma:** nombre escrito + checkbox "acepto firmar electrónicamente" (requisito legal de la Ley de Transacciones Electrónicas de PR, basada en UETA, y de ESIGN) **+ firma dibujada** en pantalla, obligatoria por defecto y configurable por plantilla. La dibujada da más confianza al cliente y más peso como evidencia, y cuesta poco (un `<canvas>`). El nombre escrito sigue siendo la firma legal si alguien no puede dibujar.
+4. **Interfaz de la terapeuta en inglés. Documentos y páginas para clientes en español.** El modelo de datos queda preparado para varios idiomas (`locale` y `translation_group_id` en las plantillas).
+5. **Adolescentes: posibles.** Hay un paquete "Onboarding adolescente" con consentimiento del tutor + asentimiento del menor (varios firmantes por envío).
+
+Los specs de cada día están en [`specs/`](specs/README.md).
 
 ---
 
@@ -310,4 +313,13 @@ Orden según el riesgo: **las notas antes que el onboarding**, porque se necesit
 | B9 | **Multiusuario con roles** (terapeuta, asistente administrativo sin acceso a notas, supervisor con co-firma de internos) | Crecimiento de la práctica |
 | B10 | **Cifrado a nivel de campo** de notas y MSE (claves en KMS) + MFA obligatorio + alertas de acceso inusual | Defensa en profundidad para PHI |
 
-**Prioridad sugerida después del MVP:** A1 → B1 → A2 → A4/A5 → B2 → B3 → A6 → el resto.
+### C. Expansión futura: todo bilingüe (español / inglés)
+
+| # | Fase | Alcance |
+|---|---|---|
+| C1 | **Documentos y formularios del onboarding** (primera prioridad) | Cada plantilla con versión ES y EN (`translation_group_id`). El cliente elige el idioma en la página de firma; se guarda qué idioma firmó |
+| C2 | Páginas públicas y emails al cliente | Reserva, recordatorios, verificación por OTP y copias firmadas en el idioma preferido del cliente (`contacts.preferred_locale`) |
+| C3 | Interfaz de la terapeuta | i18n del SPA (`react-i18next` o similar), con selector de idioma por usuario |
+| C4 | Reportes clínicos | Etiquetas del reporte de notas, MSE y riesgo en ES/EN (lo que se escribe en la nota queda en el idioma original) |
+
+**Prioridad sugerida después del MVP:** A1 → C1 → B1 → A2 → A4/A5 → B2 → B3 → A6 → el resto.
