@@ -22,6 +22,7 @@ Cada spec se puede implementar por sí solo y en orden. Parte de [`../PLAN_MVP.m
   - lógica de rutas y repos con `FakeDatabase`, siguiendo el patrón de `server/routes/contacts.test.ts`;
   - **triggers y CHECK de Postgres con PGlite** cargando `db/schema.sql`: helper nuevo `server/test-utils/pglite.ts` (se crea el día 2).
 - **Auditoría:** desde el día 2, toda feature nueva escribe en `audit_log` con `audit()` (`server/lib/audit.ts`).
+- **Infraestructura:** ver [`../INFRA_AWS.md`](../INFRA_AWS.md) (diagrama, piezas y tareas).
 - **Zona horaria:** `America/Puerto_Rico` para mostrar fechas. Se guarda siempre en `timestamptz` (UTC).
 - **PHI:** nunca en logs (`console.log`), en URLs ni en el cuerpo de emails o SMS.
 - **Definition of done** de cada día:
