@@ -16,7 +16,9 @@
     "shoot": "node scripts/shoot.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "seed:practice": "tsx db/seed-practice.ts",
+    "start": "tsx server/index.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.1",

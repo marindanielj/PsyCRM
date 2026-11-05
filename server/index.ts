@@ -1,6 +1,9 @@
+import { relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { serve } from '@hono/node-server'
+import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
+import { secureHeaders } from 'hono/secure-headers'
 import { Pool } from 'pg'
 import type { AppEnv } from './app-env'
 import { PgDatabase } from './db/database'
@@ -17,6 +20,10 @@ import type { WorkflowDispatch } from './jobs/workflow-dispatcher'
 import { createAnthropicClient } from './lib/anthropic'
 import type { sendChatwootMessage } from './lib/chatwoot-client'
 import { loadConfig } from './lib/config'
+import { IDLE_TTL_MS } from './lib/session'
+import type { Module } from './lib/modules'
+import { moduleGate } from './middleware/module-gate'
+import { practiceRoute } from './routes/practice'
 import { notifyPush } from './lib/notify-push'
 import type { SendTextFn } from './lib/operator-tools'
 import { makeHttpSendText } from './lib/send-text-rail'
@@ -92,6 +99,50 @@ export interface AppDeps {
   sendText?: SendTextFn
   /** The hub gateway's shared bearer for /federation/*. Unset => surface is 503. */
   federationServiceToken?: string
+  /** PsyCRM mode (single therapy practice). Gates modules per location, adds
+   *  security headers + no-store, and leaves every third-party-PHI integration
+   *  unmounted. Off = the original OpenLevel surface, unchanged. */
+  psycrmMode?: boolean
+  /** Sign a web session out after this much inactivity (PsyCRM mode defaults to
+   *  IDLE_TTL_MS). Unset in plain OpenLevel mode. */
+  idleTtlMs?: number
+  /** Directory of the built web app to serve (vite build output). Unset = none. */
+  staticDir?: string
+}
+
+/** Route-group -> module key, for PsyCRM-mode gating. Groups missing here
+ *  (custom-fields, custom-values, settings, practice) are infrastructure that
+ *  is always available. */
+const ROUTE_MODULE: Record<string, Module> = {
+  contacts: 'contacts',
+  conversations: 'conversations',
+  assistant: 'assistant',
+  opportunities: 'opportunities',
+  pipelines: 'opportunities',
+  calendars: 'calendars',
+  campaigns: 'marketing',
+  workflows: 'automations',
+  reporting: 'reporting',
+  funnels: 'sites',
+  forms: 'forms',
+  invoices: 'payments',
+  products: 'payments',
+  subscriptions: 'payments',
+  coupons: 'payments',
+  transactions: 'payments',
+  calls: 'calls',
+  reviews: 'reputation',
+  courses: 'memberships',
+  blog: 'blog',
+  communities: 'communities',
+  social: 'social',
+  surveys: 'surveys',
+  proposals: 'proposals',
+  'trigger-links': 'trigger_links',
+  affiliates: 'affiliates',
+  tasks: 'tasks',
+  templates: 'templates',
+  tags: 'tags',
 }
 
 /**
@@ -103,65 +154,116 @@ export interface AppDeps {
  */
 export function createApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
+  const psycrm = deps.psycrmMode === true
+  const idleTtlMs = psycrm ? (deps.idleTtlMs ?? IDLE_TTL_MS) : deps.idleTtlMs
+  const auth = () => operatorAuth(deps.sessionSecret, { idleTtlMs, secure: deps.secure })
 
-  app.get('/health', (c) => c.json({ ok: true, service: 'openlevel' }))
+  if (psycrm) {
+    // Clinical data: nothing cacheable, nothing embeddable, no referrer leakage
+    // (public signing links carry a token in the path), HTTPS pinned. The CSP is
+    // strict for the app + API; the server-rendered public pages (which inline a
+    // small script/style) get the same headers minus CSP until they use nonces.
+    const baseHeaders = {
+      xFrameOptions: 'DENY',
+      referrerPolicy: 'no-referrer',
+      strictTransportSecurity: 'max-age=31536000; includeSubDomains',
+      crossOriginEmbedderPolicy: false,
+    } as const
+    const csp = {
+      defaultSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:'],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    }
+    const strict = secureHeaders({ ...baseHeaders, contentSecurityPolicy: csp })
+    const relaxed = secureHeaders({ ...baseHeaders, contentSecurityPolicy: undefined })
+    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') ? relaxed(c, next) : strict(c, next)))
+    app.use('/api/*', async (c, next) => {
+      await next()
+      c.header('Cache-Control', 'no-store')
+      if (c.req.path.startsWith('/api/public/')) c.header('X-Robots-Tag', 'noindex')
+    })
+  }
 
-  app.route('/api/auth', authRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure }))
-  app.route(
-    '/api/webhooks/chatwoot',
-    chatwootWebhookRoute({ db: deps.db, webhookSecret: deps.webhookSecret, onInbound: deps.onInbound }),
-  )
-  // Public hosted funnel + form pages — unauthenticated, read location from the
-  // URL. Mounted before the operatorAuth boundary so visitors never hit a login.
-  app.route('/api/public/f', publicFunnelsRoute({ db: deps.db, dispatch: deps.dispatch }))
-  app.route('/api/public/forms', publicFormsRoute({ db: deps.db, dispatch: deps.dispatch }))
-  app.route('/api/public/reviews', publicReviewsRoute({ db: deps.db }))
-  app.route('/api/public/courses', publicCoursesRoute({ db: deps.db }))
-  app.route('/api/public/blog', publicBlogRoute({ db: deps.db }))
-  // Public hosted community space — read-only feed of published communities.
-  app.route('/api/public/communities', publicCommunitiesRoute({ db: deps.db }))
-  app.route('/api/public/surveys', publicSurveysRoute({ db: deps.db, dispatch: deps.dispatch }))
-  // Public signable proposal pages — render, sign, decline; a signature fires the
-  // proposal_signed trigger so an accepted proposal can start an automation.
-  app.route('/api/public/proposals', publicProposalsRoute({ db: deps.db, dispatch: deps.dispatch }))
-  // Trigger links redirect + record a click, then fire trigger_link_clicked, so
-  // the public hop carries the dispatch like funnels/forms do.
-  app.route('/api/public/l', publicTriggerLinksRoute({ db: deps.db, dispatch: deps.dispatch }))
-  // Affiliate referral links: record the visit (attributed when ?c= names a real
-  // contact), then 302 to the program landing URL. Self-contained — no dispatch.
-  app.route('/api/public/ref', publicAffiliatesRoute({ db: deps.db }))
+  app.notFound((c) => c.json({ error: 'not found' }, 404))
+
+  app.get('/health', (c) => c.json({ ok: true, service: psycrm ? 'psycrm' : 'openlevel' }))
+
+  app.route('/api/auth', authRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure, idleTtlMs }))
+  // Integrations that carry client data to third parties (Chatwoot relay, payment
+  // and voice webhooks, public marketing pages, the AI hub federation, push
+  // tokens) are not mounted at all in PsyCRM mode. Only the public booking page
+  // stays (its calendars are off until the practice turns booking on).
+  if (!psycrm) {
+    app.route(
+      '/api/webhooks/chatwoot',
+      chatwootWebhookRoute({ db: deps.db, webhookSecret: deps.webhookSecret, onInbound: deps.onInbound }),
+    )
+    // Public hosted funnel + form pages — unauthenticated, read location from the
+    // URL. Mounted before the operatorAuth boundary so visitors never hit a login.
+    app.route('/api/public/f', publicFunnelsRoute({ db: deps.db, dispatch: deps.dispatch }))
+    app.route('/api/public/forms', publicFormsRoute({ db: deps.db, dispatch: deps.dispatch }))
+    app.route('/api/public/reviews', publicReviewsRoute({ db: deps.db }))
+    app.route('/api/public/courses', publicCoursesRoute({ db: deps.db }))
+    app.route('/api/public/blog', publicBlogRoute({ db: deps.db }))
+    // Public hosted community space — read-only feed of published communities.
+    app.route('/api/public/communities', publicCommunitiesRoute({ db: deps.db }))
+    app.route('/api/public/surveys', publicSurveysRoute({ db: deps.db, dispatch: deps.dispatch }))
+    // Public signable proposal pages — render, sign, decline; a signature fires the
+    // proposal_signed trigger so an accepted proposal can start an automation.
+    app.route('/api/public/proposals', publicProposalsRoute({ db: deps.db, dispatch: deps.dispatch }))
+    // Trigger links redirect + record a click, then fire trigger_link_clicked, so
+    // the public hop carries the dispatch like funnels/forms do.
+    app.route('/api/public/l', publicTriggerLinksRoute({ db: deps.db, dispatch: deps.dispatch }))
+    // Affiliate referral links: record the visit (attributed when ?c= names a real
+    // contact), then 302 to the program landing URL. Self-contained — no dispatch.
+    app.route('/api/public/ref', publicAffiliatesRoute({ db: deps.db }))
+    // Payment-processor webhooks + the post-checkout landing page. Signature-
+    // verified per location; a completed checkout marks the invoice paid.
+    app.route('/api/public/pay', paymentsWebhookRoute({ db: deps.db }))
+    // Voice-provider webhooks (Twilio status callbacks / Vapi call reports).
+    // Signature-verified per location; events keep the call log honest.
+    app.route('/api/public/voice', voiceWebhookRoute({ db: deps.db }))
+
+    // The Acme Hub federation surface. Mounted OUTSIDE the operator-session
+    // boundary because it carries its own bearer gate (the hub gateway's shared
+    // service token); it is inert (503) until federationServiceToken is set. The
+    // tenant rides in the trusted X-Federation-Tenant header, never the body.
+    app.route(
+      '/',
+      federationRoute({
+        db: deps.db,
+        federationServiceToken: deps.federationServiceToken,
+        claude: deps.claude,
+        sendText: deps.sendText,
+      }),
+    )
+  }
   // Hosted booking pages: pick a day + time, leave details. A booking creates a
   // contact + appointment and fires appointment_booked into live automations.
   app.route('/api/public/booking', publicBookingRoute({ db: deps.db, dispatch: deps.dispatch }))
-  // Payment-processor webhooks + the post-checkout landing page. Signature-
-  // verified per location; a completed checkout marks the invoice paid.
-  app.route('/api/public/pay', paymentsWebhookRoute({ db: deps.db }))
-  // Voice-provider webhooks (Twilio status callbacks / Vapi call reports).
-  // Signature-verified per location; events keep the call log honest.
-  app.route('/api/public/voice', voiceWebhookRoute({ db: deps.db }))
 
-  // The Acme Hub federation surface. Mounted OUTSIDE the operator-session
-  // boundary because it carries its own bearer gate (the hub gateway's shared
-  // service token); it is inert (503) until federationServiceToken is set. The
-  // tenant rides in the trusted X-Federation-Tenant header, never the body.
-  app.route(
-    '/',
-    federationRoute({
-      db: deps.db,
-      federationServiceToken: deps.federationServiceToken,
-      claude: deps.claude,
-      sendText: deps.sendText,
-    }),
-  )
+  app.use('/api/locations', auth())
+  app.route('/api/locations', locationsRoute({ db: deps.db, psycrmMode: psycrm }))
 
-  app.use('/api/locations', operatorAuth(deps.sessionSecret))
-  app.route('/api/locations', locationsRoute({ db: deps.db }))
+  if (!psycrm) {
+    app.use('/api/push-tokens', auth())
+    app.route('/api/push-tokens', pushTokensRoute({ db: deps.db }))
+  }
 
-  app.use('/api/push-tokens', operatorAuth(deps.sessionSecret))
-  app.route('/api/push-tokens', pushTokensRoute({ db: deps.db }))
-
-  app.use('/api/loc/:loc/*', operatorAuth(deps.sessionSecret))
+  app.use('/api/loc/:loc/*', auth())
   app.use('/api/loc/:loc/*', locationAccess(deps.db))
+  if (psycrm) {
+    // 404 any route group whose module this location has not enabled.
+    for (const [group, module] of Object.entries(ROUTE_MODULE)) {
+      app.use(`/api/loc/:loc/${group}/*`, moduleGate(deps.db, module))
+      app.use(`/api/loc/:loc/${group}`, moduleGate(deps.db, module))
+    }
+  }
   app.route('/api/loc/:loc/contacts', contactsRoute({ db: deps.db }))
   app.route(
     '/api/loc/:loc/conversations',
@@ -232,32 +334,40 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // AI Agent settings (the "AI Agent" settings area): reply mode (approve-first /
   // autonomous) + the agent's persona, instructions, and knowledge-base facts.
   app.route('/api/loc/:loc/settings', settingsRoute({ db: deps.db }))
+  // The practice profile (name, license, fees, cancellation policy).
+  app.route('/api/loc/:loc/practice', practiceRoute({ db: deps.db }))
+
+  // Serve the built web app from this process (production container). Registered
+  // last so every /api route wins; unknown non-API GETs fall back to index.html
+  // for client-side routing.
+  if (deps.staticDir) {
+    const root = relative(process.cwd(), resolve(deps.staticDir)) || '.'
+    const index = `${root}/index.html`
+    app.use('/assets/*', async (c, next) => {
+      await next()
+      c.header('Cache-Control', 'public, max-age=31536000, immutable')
+    })
+    app.use('*', serveStatic({ root }))
+    app.get('*', async (c, next) => {
+      if (c.req.path.startsWith('/api/') || c.req.path === '/health') return next()
+      c.header('Cache-Control', 'no-store')
+      return serveStatic({ path: index })(c, next)
+    })
+  }
 
   return app
 }
 
-async function bootstrap() {
-  const config = loadConfig()
-  if (!config.DATABASE_URL) throw new Error('DATABASE_URL is required to boot the server')
-  const pool = new Pool({ connectionString: config.DATABASE_URL })
-  const db = new PgDatabase(pool)
-
-  // Jobs: pg-boss runs the agent-reply + workflow-dispatch workers; routes and
-  // the webhook enqueue onto them.
-  const boss = await startBoss(config.DATABASE_URL)
-  const dispatch: WorkflowDispatch = (e) => enqueueWorkflowEvent(boss, e)
-  // The autonomous agent books/tags through real tools; thread the dispatcher so
-  // an agent-booked appointment fires appointment_booked like the public page.
-  await registerAgentReplyWorker(boss, { db, claude: createAnthropicClient(), dispatch })
-  await registerWorkflowDispatchWorker(boss, { db })
-
-  const app = createApp({
-    db,
-    sessionSecret: config.SESSION_SECRET,
-    webhookSecret: config.CHATWOOT_WEBHOOK_SECRET,
-    secure: config.NODE_ENV === 'production',
-    claude: createAnthropicClient(),
-    dispatch,
+/**
+ * The original OpenLevel integrations (text rail, hub federation, inbound-message
+ * relay + push). Only wired when PsyCRM mode is off: they carry client data to
+ * third parties that have no BAA with the practice.
+ */
+function openLevelIntegrations(
+  config: ReturnType<typeof loadConfig>,
+  boss: Awaited<ReturnType<typeof startBoss>>,
+): Pick<AppDeps, 'sendText' | 'federationServiceToken' | 'onInbound'> {
+  return {
     // The approve-first text rail. Injected unconditionally — the env vars are the
     // deployment control, NOT a feature flag (no dormant texting toggle). When
     // GATEWAY_TEXT_URL/INTERNAL_PUSH_SECRET are unset, the rail honestly reports
@@ -295,6 +405,41 @@ async function bootstrap() {
         },
       )
     },
+  }
+}
+
+async function bootstrap() {
+  const config = loadConfig()
+  if (!config.DATABASE_URL) throw new Error('DATABASE_URL is required to boot the server')
+  const pool = new Pool({ connectionString: config.DATABASE_URL })
+  const db = new PgDatabase(pool)
+
+  const psycrm = config.PSYCRM_MODE
+
+  // Jobs: pg-boss runs the workflow-dispatch worker (and, outside PsyCRM mode, the
+  // agent-reply worker); routes enqueue onto them.
+  const boss = await startBoss(config.DATABASE_URL)
+  const dispatch: WorkflowDispatch = (e) => enqueueWorkflowEvent(boss, e)
+  // PsyCRM never sends client data to an AI provider: no Claude client, no agent
+  // worker, no text rail, no federation token, no inbound-message relay.
+  const claude = psycrm ? undefined : createAnthropicClient()
+  if (!psycrm) {
+    // The autonomous agent books/tags through real tools; thread the dispatcher so
+    // an agent-booked appointment fires appointment_booked like the public page.
+    await registerAgentReplyWorker(boss, { db, claude: claude as ClaudeClient, dispatch })
+  }
+  await registerWorkflowDispatchWorker(boss, { db })
+
+  const app = createApp({
+    db,
+    sessionSecret: config.SESSION_SECRET,
+    webhookSecret: config.CHATWOOT_WEBHOOK_SECRET,
+    secure: config.NODE_ENV === 'production',
+    psycrmMode: psycrm,
+    staticDir: config.STATIC_DIR,
+    claude,
+    dispatch,
+    ...(psycrm ? {} : openLevelIntegrations(config, boss)),
   })
   serve({ fetch: app.fetch, port: config.PORT })
   console.log(`openlevel api listening on :${config.PORT}`)

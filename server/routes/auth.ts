@@ -22,6 +22,8 @@ export interface AuthDeps {
   secure?: boolean
   /** Injectable clock for deterministic rate-limit tests. */
   now?: () => number
+  /** Idle sign-out window for web sessions (PsyCRM mode). Unset = none. */
+  idleTtlMs?: number
   /** Override the login throttle (tests pin small limits). */
   loginRateLimit?: { max: number; windowMs: number }
 }
@@ -78,7 +80,7 @@ export function authRoute(deps: AuthDeps): Hono<AppEnv> {
     return c.json({ ok: true })
   })
 
-  app.get('/me', operatorAuth(deps.sessionSecret), async (c) => {
+  app.get('/me', operatorAuth(deps.sessionSecret, { idleTtlMs: deps.idleTtlMs, secure: deps.secure, now: deps.now }), async (c) => {
     const operator = await operators.getById(c.get('operatorId'))
     if (!operator) return c.json({ error: 'not found' }, 404)
     return c.json({ operator: publicOperator(operator) })

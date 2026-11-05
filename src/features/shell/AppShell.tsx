@@ -32,7 +32,9 @@ import {
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Avatar } from '../../components/ui/avatar'
+import { type ModuleKey, moduleEnabled } from '../../lib/modules'
 import { cn } from '../../lib/utils'
+import { useTenant } from '../../state/location'
 import { useAuth } from '../../state/auth'
 import { LocationSwitcher } from './LocationSwitcher'
 
@@ -41,35 +43,37 @@ interface NavItem {
   label: string
   icon: LucideIcon
   soon?: boolean
+  /** Hidden when the current location has this module off. Settings has none: always shown. */
+  module?: ModuleKey
 }
 
 // Conversations + Contacts are live in slice 1; the rest are the GHL surface
 // area we're building toward, shown with a "soon" tag (never as working links).
 const NAV: NavItem[] = [
-  { to: '/assistant', label: 'Assistant', icon: Sparkles },
-  { to: '/conversations', label: 'Conversations', icon: MessageSquare },
-  { to: '/contacts', label: 'Contacts', icon: Users },
-  { to: '/tags', label: 'Tags', icon: Tags },
-  { to: '/opportunities', label: 'Opportunities', icon: Target },
-  { to: '/tasks', label: 'Tasks', icon: ListTodo },
-  { to: '/calendars', label: 'Calendars', icon: CalendarDays },
-  { to: '/calls', label: 'Calls', icon: Phone },
-  { to: '/marketing', label: 'Marketing', icon: Megaphone },
-  { to: '/templates', label: 'Templates', icon: LayoutTemplate },
-  { to: '/social', label: 'Social Planner', icon: Share2 },
-  { to: '/automations', label: 'Automations', icon: Workflow },
-  { to: '/reporting', label: 'Dashboard', icon: BarChart3 },
-  { to: '/sites', label: 'Sites & Funnels', icon: Globe },
-  { to: '/forms', label: 'Forms', icon: ClipboardList },
-  { to: '/surveys', label: 'Surveys', icon: ListChecks },
-  { to: '/payments', label: 'Payments', icon: Receipt },
-  { to: '/proposals', label: 'Proposals', icon: FileSignature },
-  { to: '/reputation', label: 'Reputation', icon: Star },
-  { to: '/memberships', label: 'Memberships', icon: GraduationCap },
-  { to: '/communities', label: 'Communities', icon: MessagesSquare },
-  { to: '/blog', label: 'Blog', icon: Newspaper },
-  { to: '/trigger-links', label: 'Trigger Links', icon: Link2 },
-  { to: '/affiliates', label: 'Affiliates', icon: Handshake },
+  { to: '/assistant', label: 'Assistant', icon: Sparkles, module: 'assistant' },
+  { to: '/conversations', label: 'Conversations', icon: MessageSquare, module: 'conversations' },
+  { to: '/contacts', label: 'Contacts', icon: Users, module: 'contacts' },
+  { to: '/tags', label: 'Tags', icon: Tags, module: 'tags' },
+  { to: '/opportunities', label: 'Opportunities', icon: Target, module: 'opportunities' },
+  { to: '/tasks', label: 'Tasks', icon: ListTodo, module: 'tasks' },
+  { to: '/calendars', label: 'Calendars', icon: CalendarDays, module: 'calendars' },
+  { to: '/calls', label: 'Calls', icon: Phone, module: 'calls' },
+  { to: '/marketing', label: 'Marketing', icon: Megaphone, module: 'marketing' },
+  { to: '/templates', label: 'Templates', icon: LayoutTemplate, module: 'templates' },
+  { to: '/social', label: 'Social Planner', icon: Share2, module: 'social' },
+  { to: '/automations', label: 'Automations', icon: Workflow, module: 'automations' },
+  { to: '/reporting', label: 'Dashboard', icon: BarChart3, module: 'reporting' },
+  { to: '/sites', label: 'Sites & Funnels', icon: Globe, module: 'sites' },
+  { to: '/forms', label: 'Forms', icon: ClipboardList, module: 'forms' },
+  { to: '/surveys', label: 'Surveys', icon: ListChecks, module: 'surveys' },
+  { to: '/payments', label: 'Payments', icon: Receipt, module: 'payments' },
+  { to: '/proposals', label: 'Proposals', icon: FileSignature, module: 'proposals' },
+  { to: '/reputation', label: 'Reputation', icon: Star, module: 'reputation' },
+  { to: '/memberships', label: 'Memberships', icon: GraduationCap, module: 'memberships' },
+  { to: '/communities', label: 'Communities', icon: MessagesSquare, module: 'communities' },
+  { to: '/blog', label: 'Blog', icon: Newspaper, module: 'blog' },
+  { to: '/trigger-links', label: 'Trigger Links', icon: Link2, module: 'trigger_links' },
+  { to: '/affiliates', label: 'Affiliates', icon: Handshake, module: 'affiliates' },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
 
@@ -117,6 +121,8 @@ function NavRow({ item }: { item: NavItem }) {
  *  a permanently-visible w-64 aside would cover most of a phone screen. */
 export function AppShell() {
   const { operator, logout } = useAuth()
+  const { current } = useTenant()
+  const nav = NAV.filter((item) => !item.module || moduleEnabled(current, item.module))
   const [navOpen, setNavOpen] = useState(false)
   const { pathname } = useLocation()
 
@@ -161,7 +167,7 @@ export function AppShell() {
         </div>
 
         <nav className="ol-scroll flex-1 space-y-0.5 overflow-y-auto px-3 py-2">
-          {NAV.map((item) => (
+          {nav.map((item) => (
             <NavRow key={item.to} item={item} />
           ))}
         </nav>

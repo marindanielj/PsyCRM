@@ -127,7 +127,7 @@ Esto es parte de la protección del log de auditoría (día 2): el rol de la app
 |---|---|
 | Repositorio ECR | `psycrm-app`, **inmutabilidad de etiquetas** activada, escaneo de vulnerabilidades al subir, cifrado KMS, política de ciclo de vida (conservar las últimas 20 imágenes) |
 | Clúster ECS | `psycrm` (Fargate) |
-| Definición de tarea | 0.5 vCPU, 1 GB RAM, Linux ARM64 (más barato; construir la imagen para `linux/arm64`), puerto 8790, usuario no root, sistema de archivos raíz de solo lectura |
+| Definición de tarea | 0.5 vCPU, 1 GB RAM, Linux ARM64 (más barato; construir la imagen para `linux/arm64`), puerto 8790, usuario no root, sistema de archivos raíz de solo lectura **con un volumen efímero montado en `/tmp`** (el servidor lo usa para su caché de ejecución) |
 | Servicio | `psycrm-app`, **`desiredCount = 1`**, mínimo de salud 100 % y máximo 200 % (despliegue sin corte), *circuit breaker* con reversión automática |
 | Verificación de salud | ALB → `GET /health` (200). Contenedor: el mismo |
 | Escalado | **Ninguno** en el MVP. Con una sola tarea, las esperas en memoria del motor de workflows funcionan como hoy (ver día 7) |
@@ -140,14 +140,16 @@ Esto es parte de la protección del log de auditoría (día 2): el rol de la app
 | `NODE_ENV` | texto | `production` |
 | `PORT` | texto | `8790` |
 | `PSYCRM_MODE` | texto | `true` (apaga IA, Chatwoot, voz, social, federation y SMS; día 1) |
-| `DATABASE_URL` | **Secrets Manager** | `postgres://psycrm_app:…@<endpoint-rds>:5432/psycrm?sslmode=verify-full` |
+| `DATABASE_URL` | **Secrets Manager** | `postgres://psycrm_app:…@<endpoint-rds>:5432/psycrm?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem` |
 | `SESSION_SECRET` | **Secrets Manager** | ≥ 32 caracteres aleatorios |
 | `CHATWOOT_WEBHOOK_SECRET` | **Secrets Manager** | Cualquier valor largo; `config.ts` lo exige aunque no se use |
+| `STATIC_DIR` | imagen | `/app/dist` (ya viene en el `Dockerfile`; el servidor sirve la app web desde ahí) |
+| `TMPDIR` | imagen | `/tmp` (ya viene en el `Dockerfile`) |
 | `AWS_REGION` | texto | `us-east-1` |
 | `SES_FROM_ADDRESS` | texto | Remitente verificado, p. ej. `no-reply@<dominio>` (día 6) |
 | `PUBLIC_BASE_URL` | texto | URL pública (dominio o DNS del ALB), para los enlaces de los emails |
 
-> **Dependencia de código (día 1):** el servidor crea el `Pool` de `pg` con solo `connectionString` (`server/index.ts`). Como RDS exige SSL, hay que pasarle el certificado raíz de RDS (incluirlo en la imagen) y usar `sslmode=verify-full`. Lo mismo vale para `pg-boss`, que recibe la misma URL. Agregar esto a las tareas del día 1.
+> **SSL a la base (resuelto en el día 1):** `pg` y `pg-boss` leen `sslmode` y `sslrootcert` de la propia `DATABASE_URL`, así que no hizo falta cambiar la conexión. El `Dockerfile` descarga el certificado raíz de RDS a `/app/certs/rds-global-bundle.pem`, y la URL del secreto debe terminar en `?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem`. Con `PSYCRM_MODE=true` en producción, el servidor **se niega a arrancar** si la URL no usa `sslmode=verify-full` (o `verify-ca`).
 
 ### 3.5 Entrada: ALB, certificado y DNS
 | Elemento | Configuración |
@@ -292,7 +294,7 @@ Leyenda: **[Tú]** = acción en la consola o la cuenta de AWS (requiere ser due�
 - [ ] **3.7 [Tú]** Crear los secretos (§3.7): `database-url` (con `psycrm_app`), `session-secret` (generar con `openssl rand -base64 48`) y `chatwoot-webhook-secret`. Guardar también la URL del migrador en un secreto aparte (`psycrm/database-url-migrator`) que solo la tarea de migración puede leer.
 
 ### Fase 4: contenedor, servidor y entrada  (≈ 2–3 h)
-- [ ] **4.1 [Claude]** `Dockerfile` multi-stage para ARM64 (incluye el certificado raíz de RDS), `.dockerignore`, y `server/index.ts` sirviendo `dist/` con fallback de la SPA (día 1).
+- [x] **4.1 [Claude]** *(hecho en el día 1)* `Dockerfile` multi-stage para ARM64 con el certificado raíz de RDS, `.dockerignore`, y `server/index.ts` sirviendo `dist/` con fallback de la SPA. **Sin probar el build de la imagen aún** (hace falta Docker; se prueba en el primer despliegue).
 - [ ] **4.2 [Tú]** Crear el repositorio ECR `psycrm-app` (§3.4).
 - [ ] **4.3 [Tú]** Crear los roles IAM `psycrm-task-execution` y `psycrm-task` (§3.8).
 - [ ] **4.4 [Tú]** Crear el clúster ECS, el grupo de logs `/psycrm/app` y las dos definiciones de tarea: `psycrm-app` (servidor) y `psycrm-migrate` (misma imagen, comando `npm run migrate`, usa el secreto del migrador).
@@ -312,7 +314,7 @@ Leyenda: **[Tú]** = acción en la consola o la cuenta de AWS (requiere ser due�
 - [ ] **6.1 [Tú]** Crear el proveedor OIDC de GitHub en IAM y el rol `psycrm-github-deploy` (§3.8), limitado al repositorio `marindanielj/PsyCRM` y la rama `main`.
 - [ ] **6.2 [Claude]** Workflow de GitHub Actions (`.github/workflows/deploy.yml`): pruebas → imagen → ECR → tarea de migración → actualización del servicio (§4).
 - [ ] **6.3 [Tú]** Configurar en GitHub el entorno `production` con aprobación manual.
-- [ ] **6.4 [Claude]** Conexión a la base con SSL verificado (`server/index.ts`, `db/migrate.ts`, `pg-boss`) y variables de entorno nuevas en `config.ts` (`PSYCRM_MODE`, `PUBLIC_BASE_URL`, `SES_FROM_ADDRESS`).
+- [x] **6.4 [Claude]** *(hecho en el día 1)* SSL verificado por la URL de la base y variables nuevas en `config.ts` (`PSYCRM_MODE`, `PUBLIC_BASE_URL`, `STATIC_DIR`). Falta `SES_FROM_ADDRESS` (día 6).
 - [ ] **6.5 [Claude]** `lib/sending/ses-adapter.ts` y su registro en `lib/sending/resolve.ts` (día 6). Prueba de envío real a una dirección verificada.
 - [ ] **6.6 [Ambos]** Ejecutar `npm run seed:practice` una vez en producción (tarea única) para crear la práctica, el usuario de la terapeuta y el pipeline (día 1).
 - [ ] **6.7 [Ambos]** Cerrar o conservar el RDS viejo: **no apagarlo** hasta confirmar que no depende nada de él; entonces crear una instantánea final y eliminarlo.

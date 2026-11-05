@@ -67,3 +67,23 @@ test('a too-short FEDERATION_SERVICE_TOKEN is rejected in production', () => {
     }),
   ).toThrow(/FEDERATION_SERVICE_TOKEN/)
 })
+
+const SSL_URL = 'postgres://u:p@h:5432/db?sslmode=verify-full&sslrootcert=/app/certs/rds.pem'
+const prod = { NODE_ENV: 'production', SESSION_SECRET: STRONG, CHATWOOT_WEBHOOK_SECRET: STRONG }
+
+test('PSYCRM_MODE defaults to off and parses true/false', () => {
+  expect(loadConfig({}).PSYCRM_MODE).toBe(false)
+  expect(loadConfig({ PSYCRM_MODE: 'true' }).PSYCRM_MODE).toBe(true)
+  expect(() => loadConfig({ PSYCRM_MODE: 'yes' })).toThrow()
+})
+
+test('PSYCRM_MODE in production requires a verified-SSL database URL', () => {
+  expect(() => loadConfig({ ...prod, PSYCRM_MODE: 'true', DATABASE_URL: 'postgres://u:p@h/db' })).toThrow(/sslmode=verify-full/)
+  expect(() => loadConfig({ ...prod, PSYCRM_MODE: 'true', DATABASE_URL: 'postgres://u:p@h/db?sslmode=require' })).toThrow(/sslmode=verify-full/)
+  expect(loadConfig({ ...prod, PSYCRM_MODE: 'true', DATABASE_URL: SSL_URL }).PSYCRM_MODE).toBe(true)
+})
+
+test('the SSL requirement only applies to PSYCRM_MODE in production', () => {
+  expect(loadConfig({ ...prod, DATABASE_URL: 'postgres://u:p@h/db' }).DATABASE_URL).toBe('postgres://u:p@h/db')
+  expect(loadConfig({ PSYCRM_MODE: 'true', DATABASE_URL: 'postgres://u:p@h/db' }).PSYCRM_MODE).toBe(true)
+})

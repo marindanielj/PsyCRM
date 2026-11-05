@@ -17,6 +17,9 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
     ...init,
   })
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    window.dispatchEvent(new Event('ol:unauthorized'))
+  }
   if (!res.ok) {
     let message = `request failed (${res.status})`
     try {
@@ -47,6 +50,19 @@ export interface Location {
   client_slug: string | null
   branding: Record<string, unknown>
   settings: Record<string, unknown>
+  /** Modules turned on for this location (nav + route gating). */
+  enabledModules?: string[]
+}
+
+export interface PracticeProfile {
+  name: string
+  therapist: string
+  license: string
+  address: string
+  phone: string
+  email: string
+  fees: { session: string; intake: string; late_cancel: string }
+  policy: { cancel_hours: string }
 }
 
 export interface Contact {
@@ -1817,6 +1833,13 @@ export const api = {
   me: () => req<{ operator: Operator }>('/auth/me'),
 
   locations: () => req<{ locations: Location[] }>('/locations'),
+
+  practice: (loc: string) => req<{ practice: PracticeProfile }>(`/loc/${loc}/practice`),
+  savePractice: (loc: string, practice: PracticeProfile) =>
+    req<{ ok: true; practice: PracticeProfile }>(`/loc/${loc}/practice`, {
+      method: 'PUT',
+      body: JSON.stringify(practice),
+    }),
 
   contacts: (loc: string) => req<{ contacts: Contact[] }>(`/loc/${loc}/contacts`),
   // Operator adds a contact by hand. A phone/email that already belongs to a

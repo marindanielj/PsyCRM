@@ -37,6 +37,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // api.ts raises this when a signed-in request comes back 401 (session expired
+  // or idled out server-side): drop to the login screen instead of leaving every
+  // page showing a confusing error.
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setOperator(null)
+      setStatus('anon')
+    }
+    window.addEventListener('ol:unauthorized', onUnauthorized)
+    return () => window.removeEventListener('ol:unauthorized', onUnauthorized)
+  }, [])
+
   const login = useCallback(async (email: string, password: string) => {
     const r = await api.login(email, password)
     setOperator(r.operator)
