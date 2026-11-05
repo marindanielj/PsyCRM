@@ -322,4 +322,6 @@ Los specs de cada día están en [`specs/`](specs/README.md).
 | C3 | Interfaz de la terapeuta | i18n del SPA (`react-i18next` o similar), con selector de idioma por usuario |
 | C4 | Reportes clínicos | Etiquetas del reporte de notas, MSE y riesgo en ES/EN (lo que se escribe en la nota queda en el idioma original) |
 
+**Semana 2 (ya definida en los specs, día 8 §6):** MFA → esperas durables en workflows → **reconsentimiento al cumplir 18** → versiones en inglés del onboarding (C1) → PDF del expediente.
+
 **Prioridad sugerida después del MVP:** A1 → C1 → B1 → A2 → A4/A5 → B2 → B3 → A6 → el resto.

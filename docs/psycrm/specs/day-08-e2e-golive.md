@@ -75,7 +75,12 @@ Una página con capturas:
 1. **MFA (TOTP)** para el login de la terapeuta.
 2. Esperas durables en workflows (base para **A1: recordatorios de citas**).
 3. **C1**: versiones en inglés de los documentos de onboarding (selector de idioma en la página pública).
-4. PDF del lado del servidor (Puppeteer) para exportar el expediente completo.
+4. **Reconsentimiento al cumplir 18**: un cliente que empezó como menor (con el consentimiento del tutor) y cumple 18 debe firmar por sí mismo.
+   - Reporte **"Clients turning 18 in 60 days"**, calculado de `date_of_birth`, en el panel de inicio.
+   - Paquete sembrado **"Re-consent – turned 18"** (consentimiento informado, privacidad y honorarios a nombre del cliente), con `audience = adult`.
+   - Un trigger de workflow `client_turned_18` (job diario) que crea la tarea "Send re-consent packet to {client}" y, si ella lo activa, envía el paquete solo.
+   - A partir de los 18, el tutor deja de tener acceso a la información: el sistema desactiva sus enlaces pendientes y lo registra en el audit.
+5. PDF del lado del servidor (Puppeteer) para exportar el expediente completo.
 
 ---
 
