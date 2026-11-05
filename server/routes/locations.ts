@@ -19,6 +19,8 @@ export function locationsRoute(deps: { db: Database; psycrmMode?: boolean }): Ho
       locations: locations.map((l) => ({
         ...l,
         enabledModules: deps.psycrmMode ? enabledModules(l.settings) : [...ALL_MODULES],
+        // PsyCRM-only behaviors the UI must mirror (e.g. date of birth is required).
+        psycrm: deps.psycrmMode === true,
       })),
     })
   })

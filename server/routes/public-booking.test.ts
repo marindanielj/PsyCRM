@@ -313,11 +313,17 @@ test('PsyCRM: a booking stores the date of birth and audits the new client and t
   const rows = await db.query<{ action: string; actor_type: string; entity_id: string; contact_id: string; details: Record<string, unknown> }>(
     'SELECT action, actor_type, entity_id, contact_id, details FROM audit_log ORDER BY chain_seq',
   )
+  // The test calendar has a live appointment_booked workflow, so the booking is
+  // followed by that run's start, step and finish — as the workflow, not the client.
   expect(rows.map((r) => [r.action, r.actor_type, r.contact_id])).toEqual([
     ['contact.created', 'client', contactId],
     ['appointment.booked', 'client', contactId],
+    ['workflow.run_started', 'workflow', contactId],
+    ['workflow.step_executed', 'workflow', contactId],
+    ['workflow.run_finished', 'workflow', contactId],
   ])
   expect(rows[1]!.entity_id).toBe(appointmentId)
+  expect(await db.query("SELECT 1 FROM audit_log WHERE action='workflow.step_executed' AND details->>'type'='add_tag'")).toHaveLength(1)
   const logged = JSON.stringify(rows)
   for (const phi of ['1990-05-17', 'olivia@example.com', 'Olivia', '5125550148']) expect(logged).not.toContain(phi)
 })

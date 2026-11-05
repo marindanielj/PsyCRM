@@ -155,3 +155,30 @@ Ruta `server/routes/audit.ts`, montada en `/api/loc/:loc/audit` (módulo `audit`
 
 ## Archivos
 `db/schema.sql`, `server/db/database.ts`, `server/db/pglite-database.ts`, `server/db/fake-database.ts`, `server/lib/audit.ts` (nuevo), `server/lib/audit-vocab.ts` (nuevo), `server/lib/client-ip.ts` (nuevo), `server/routes/audit.ts` (nuevo), `server/routes/{auth,contacts,calendars,opportunities,tasks,public-booking}.ts`, `server/jobs/workflow-runner.ts`, `server/lib/automation-vocab.ts`, `server/test-utils/pglite.ts` (nuevo), `src/features/audit/*` (nuevo), `src/features/contacts/ContactDetail.tsx`, `src/features/settings/SettingsLayout.tsx`, `src/lib/api.ts`.
+
+---
+
+## Estado de implementación (día 2)
+
+**Hecho y verificado** (typecheck limpio; suite completa en verde; recorrido en navegador con PGlite + seed):
+- **Esquema** (`db/schema.sql`): `audit_log` con cadena de hashes por práctica, `occurred_at` fijado por la base, `UPDATE`/`DELETE`/`TRUNCATE` rechazados, `audit_log_verify()`. `reject_mutation()` queda reutilizable para los días 3 y 6.
+- **Transacciones** (`Database.transaction`, en pg, PGlite y el doble de pruebas) y `audit()` en la **misma transacción** que el cambio. Probado contra una base real: si no se puede escribir el log, el cambio se revierte (cliente, cita, cambio de etapa).
+- **Instrumentado:** login / login fallido / logout; clientes (crear, ver, archivar, restaurar, estado, etiquetas, campos personalizados, notas libres); tareas; citas del operador (crear, reprogramar con *desde→hacia* reales, cambio de estado); reserva pública (cliente + cita + línea de tiempo + auditoría en una transacción); tarjetas del pipeline (crear, editar, estado) y **cambio de etapa** (servicio `lib/pipeline-moves.ts`: auditoría + línea de tiempo del cliente + disparo de `pipeline_stage_changed` solo después de confirmar; mover a la misma etapa no escribe nada); ejecuciones de automatizaciones (inicio, cada paso con tipo y resultado, fin).
+- **API** `/api/loc/:loc/audit`: listado con filtros y paginación por cursor, `/verify`, `/export.csv` (BOM UTF-8, protegido contra inyección de fórmulas, la exportación queda registrada). Solo lectura.
+- **UI:** Settings → Audit log (filtros por fechas, categoría, cliente y quién; verificar integridad; exportar CSV) y el panel "Access & change history" en la ficha de cada cliente.
+- **Fecha de nacimiento obligatoria** al crear un cliente y al reservar en la página pública (en modo PsyCRM), con `server/lib/age.ts` (18 o más = adulto, día de cumpleaños exacto, "hoy" en hora de Puerto Rico).
+
+**Diferencias respecto a lo escrito arriba**
+- **`chain_seq`:** la cadena se ordena por una columna propia asignada dentro del bloqueo, no por el `id` serial (el serial se toma antes del trigger y, con escrituras simultáneas, no coincide con el orden de la cadena).
+- **Login fallido de un correo desconocido no se registra:** no hay práctica a la que asociarlo (la tabla exige `location_id`); solo lo cubre el límite de intentos. El de un usuario real se registra en cada una de sus prácticas.
+- **Las automatizaciones registran en modo "mejor esfuerzo":** si falla escribir el log, la ejecución sigue (un fallo haría que la cola reintente y repita efectos reales, como un email). Los efectos clínicamente relevantes (cambio de etapa, citas) se auditan en su origen y sí hacen fallar la operación.
+- **`clientIp` ahora toma la dirección que añadió nuestro balanceador (la última de `X-Forwarded-For`)**, no la primera, que la puede falsificar el cliente. También endurece el límite de intentos de login.
+- **Los detalles nunca llevan valores clínicos:** `sanitizeDetails` descarta claves prohibidas y trunca texto; las fechas se guardan como texto ISO (un test con base real encontró que `pg` devuelve `Date` y se perdían).
+- **`operator-tools.ts` (asistente de IA) no se instrumentó:** está apagado en modo PsyCRM. Si se reactiva, debe usar `moveOpportunityToStage`.
+- `contact.viewed` se registra en **cada** apertura de la ficha (no hay deduplicación).
+- `calendars` (editar configuración de reserva), borrado de tarjetas y alta/baja de etapas aún no se auditan.
+
+**Para tener en cuenta**
+- La página pública de reservas sigue en **inglés**; los textos para clientes en español (decisión 4) se tratan junto con el resto de páginas públicas (día 6).
+- Las **notas libres del contacto** (`contact_notes`) siguen existiendo y se pueden editar y borrar para siempre: sirven para recordatorios, no para notas clínicas. Quedan auditadas (sin su texto), pero conviene **ocultarlas** cuando el módulo de notas de sesión (día 3-4) esté activo.
+- **Concurrencia:** PGlite atiende una consulta a la vez, así que el bloqueo que evita bifurcar la cadena entre conexiones simultáneas solo se puede probar contra un Postgres real (pendiente para el día 8).

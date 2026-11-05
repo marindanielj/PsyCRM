@@ -11,6 +11,16 @@ export class ApiError extends Error {
   }
 }
 
+/** `?a=1&b=2` from the defined, non-empty entries (or ''). */
+function qs(params: object): string {
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(params as Record<string, unknown>)) {
+    if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
+  }
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     credentials: 'include',
@@ -52,6 +62,8 @@ export interface Location {
   settings: Record<string, unknown>
   /** Modules turned on for this location (nav + route gating). */
   enabledModules?: string[]
+  /** True in a PsyCRM deployment (e.g. a date of birth is required for new clients). */
+  psycrm?: boolean
 }
 
 export interface PracticeProfile {
@@ -63,6 +75,35 @@ export interface PracticeProfile {
   email: string
   fees: { session: string; intake: string; late_cancel: string }
   policy: { cancel_hours: string }
+}
+
+export interface AuditEntry {
+  seq: number
+  occurredAt: string
+  actorType: 'operator' | 'client' | 'system' | 'workflow'
+  actorId: string | null
+  actorName: string | null
+  action: string
+  entityType: string
+  entityId: string | null
+  contactId: string | null
+  contactName: string | null
+  details: Record<string, unknown>
+  ip: string | null
+}
+
+export interface AuditFilters {
+  from?: string
+  to?: string
+  contactId?: string
+  category?: string
+  actorType?: string
+}
+
+export interface AuditVerification {
+  ok: boolean
+  count: number
+  brokenAtSeq: number | null
 }
 
 export interface Contact {
@@ -1834,6 +1875,12 @@ export const api = {
 
   locations: () => req<{ locations: Location[] }>('/locations'),
 
+  auditLog: (loc: string, filters: AuditFilters & { before?: number; limit?: number } = {}) =>
+    req<{ entries: AuditEntry[]; nextBefore: number | null }>(`/loc/${loc}/audit${qs(filters)}`),
+  auditVerify: (loc: string) => req<AuditVerification>(`/loc/${loc}/audit/verify`),
+  /** A same-origin URL the browser can navigate to (it carries the session cookie). */
+  auditExportUrl: (loc: string, filters: AuditFilters = {}) => `/api/loc/${loc}/audit/export.csv${qs(filters)}`,
+
   practice: (loc: string) => req<{ practice: PracticeProfile }>(`/loc/${loc}/practice`),
   savePractice: (loc: string, practice: PracticeProfile) =>
     req<{ ok: true; practice: PracticeProfile }>(`/loc/${loc}/practice`, {
@@ -1845,7 +1892,10 @@ export const api = {
   // Operator adds a contact by hand. A phone/email that already belongs to a
   // contact resolves to THAT record (no duplicate), so the caller navigates to
   // whatever comes back rather than assuming a brand-new row.
-  createContact: (loc: string, input: { name?: string; phone?: string; email?: string }) =>
+  createContact: (
+    loc: string,
+    input: { name?: string; phone?: string; email?: string; dateOfBirth?: string },
+  ) =>
     req<{ ok: true; contact: Contact }>(`/loc/${loc}/contacts`, {
       method: 'POST',
       body: JSON.stringify(input),

@@ -5,6 +5,7 @@ import { Button } from '../../components/ui/button'
 import { PageSpinner } from '../../components/ui/spinner'
 import { type Contact, type TimelineEvent, api } from '../../lib/api'
 import { formatPhone } from '../../lib/utils'
+import { ContactAudit } from '../audit/ContactAudit'
 import { ConfirmDeleteContactDialog } from './ConfirmDeleteContactDialog'
 import { ContactCustomFields } from './ContactCustomFields'
 import { ContactState } from './ContactState'
@@ -132,6 +133,10 @@ export function ContactDetail({
         <div className="mt-8">
           <h3 className="mb-3 text-sm font-semibold text-slate-900">Activity</h3>
           <Timeline events={timeline} />
+        </div>
+
+        <div className="mt-8">
+          <ContactAudit locationId={locationId} contactId={contactId} />
         </div>
       </div>
     </div>

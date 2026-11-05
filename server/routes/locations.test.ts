@@ -28,7 +28,7 @@ test('lists only the locations the operator belongs to, scoped by operator id', 
   db.enqueue([Alex]) // listLocations join result
   const res = await harness(db).request('/')
   expect(res.status).toBe(200)
-  expect(await res.json()).toEqual({ locations: [{ ...Alex, enabledModules: [...ALL_MODULES] }] })
+  expect(await res.json()).toEqual({ locations: [{ ...Alex, enabledModules: [...ALL_MODULES], psycrm: false }] })
   expect(db.calls[0]?.params).toEqual(['op1'])
 })
 

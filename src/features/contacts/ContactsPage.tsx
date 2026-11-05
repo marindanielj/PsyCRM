@@ -30,7 +30,7 @@ export function ContactsPage() {
   // Save a hand-entered contact, then open its record. A phone/email that
   // matched an existing contact comes back as that same row, so we de-dup the
   // list by id rather than blindly prepending a second card for one person.
-  async function handleCreate(input: { name?: string; phone?: string; email?: string }) {
+  async function handleCreate(input: { name?: string; phone?: string; email?: string; dateOfBirth?: string }) {
     if (!loc) return
     const { contact } = await api.createContact(loc, input)
     setContacts((prev) => (prev.some((c) => c.id === contact.id) ? prev : [contact, ...prev]))
@@ -123,7 +123,11 @@ export function ContactsPage() {
         </Button>
       </header>
 
-      {adding && <AddContactDialog onCancel={() => setAdding(false)} onCreate={handleCreate} />}
+      {adding && <AddContactDialog
+          onCancel={() => setAdding(false)}
+          onCreate={handleCreate}
+          requireDateOfBirth={current?.psycrm === true}
+        />}
 
       <div className="flex min-h-0 flex-1">
         {/* Contact list. On phones the list and the profile share the screen:

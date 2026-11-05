@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { Spinner } from './components/ui/spinner'
 import { AffiliatesPage } from './features/affiliates/AffiliatesPage'
 import { AssistantPage } from './features/assistant/AssistantPage'
+import { AuditLogPage } from './features/audit/AuditLogPage'
 import { AutomationsPage } from './features/automations/AutomationsPage'
 import { IdleTimeout } from './features/auth/IdleTimeout'
 import { LoginPage } from './features/auth/LoginPage'
@@ -91,6 +92,7 @@ export default function App() {
           <Route path="settings" element={<SettingsLayout />}>
             <Route index element={<Navigate to="/settings/practice" replace />} />
             <Route path="practice" element={<PracticeSettingsPage />} />
+            <Route path="audit" element={<RequireModule module="audit"><AuditLogPage /></RequireModule>} />
             <Route path="pipelines" element={<PipelinesSettingsPage />} />
             <Route path="custom-fields" element={<CustomFieldsPage />} />
             <Route path="custom-values" element={<CustomValuesPage />} />

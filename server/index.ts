@@ -23,6 +23,7 @@ import { loadConfig } from './lib/config'
 import { IDLE_TTL_MS } from './lib/session'
 import type { Module } from './lib/modules'
 import { moduleGate } from './middleware/module-gate'
+import { auditRoute } from './routes/audit'
 import { practiceRoute } from './routes/practice'
 import { notifyPush } from './lib/notify-push'
 import type { SendTextFn } from './lib/operator-tools'
@@ -143,6 +144,7 @@ const ROUTE_MODULE: Record<string, Module> = {
   tasks: 'tasks',
   templates: 'templates',
   tags: 'tags',
+  audit: 'audit',
 }
 
 /**
@@ -334,6 +336,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // AI Agent settings (the "AI Agent" settings area): reply mode (approve-first /
   // autonomous) + the agent's persona, instructions, and knowledge-base facts.
   app.route('/api/loc/:loc/settings', settingsRoute({ db: deps.db }))
+  // The audit log (read-only) + its integrity check and CSV export.
+  app.route('/api/loc/:loc/audit', auditRoute({ db: deps.db }))
   // The practice profile (name, license, fees, cancellation policy).
   app.route('/api/loc/:loc/practice', practiceRoute({ db: deps.db }))
 

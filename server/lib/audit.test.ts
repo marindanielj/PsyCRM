@@ -73,3 +73,13 @@ test('against a real database the row lands chained, and an invalid actor type i
   expect(rows[1]!.prev_hash).toMatch(/^[0-9a-f]{64}$/)
   await expect(audit(db, loc, { action: 'auth.login', entityType: 'auth', actor: { type: 'bogus' as never } })).rejects.toThrow()
 })
+
+import { auditSummary } from '../../src/lib/audit-vocab'
+
+test('the UI summary of an entry shows field names and from→to, never needs a value', () => {
+  expect(auditSummary('contact.updated', { fields: ['name', 'state'] })).toBe('fields: name, state')
+  expect(auditSummary('appointment.status_changed', { from: 'scheduled', to: 'no_show' })).toBe('scheduled → no_show')
+  expect(auditSummary('pipeline.stage_changed', { toStage: 'Documents signed', origin: 'workflow' })).toBe('to “Documents signed” (by automation)')
+  expect(auditSummary('workflow.step_executed', { position: 0, type: 'add_tag', status: 'done' })).toBe('step 1: add_tag — done')
+  expect(auditSummary('auth.login', {})).toBe('')
+})
