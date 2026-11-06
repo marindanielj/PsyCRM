@@ -227,3 +227,32 @@ class SessionNotesRepo extends LocationScopedRepo {
 
 ## Archivos
 `db/schema.sql`, `server/lib/clinical-vocab.ts` (nuevo), `server/repos/session-notes-repo.ts` (nuevo), `server/routes/session-notes.ts` (nuevo), `server/index.ts`, `server/lib/db-errors.ts`, `server/lib/audit-vocab.ts`, `server/lib/automation-vocab.ts` (trigger `session_note_signed`), `src/lib/api.ts`.
+
+---
+
+## Estado de implementación (día 3)
+
+**Hecho y verificado** (typecheck limpio; pruebas contra una base real PGlite; ver el resumen en [`../RESULTADOS_DIA_3.md`](../RESULTADOS_DIA_3.md)):
+- **Esquema** (`db/schema.sql`): `session_notes`, `session_note_revisions`, `session_note_addenda` y sus triggers. El bloqueo a las 72 h, el riesgo obligatorio, la ausencia de borrado físico, las revisiones y los anexos inmutables los impone la base de datos.
+- **Vocabulario clínico** (`server/lib/clinical-vocab.ts`): enums, dominios del examen mental, etiquetas en inglés y `validateRiskForSign`, con una prueba que obliga a que las listas de las restricciones SQL coincidan exactamente con el vocabulario.
+- **Repositorio y rutas** (`server/repos/session-notes-repo.ts`, `server/routes/session-notes.ts`, módulo `session_notes`): crear, editar, firmar, borrar (suave), anexos, revisiones, impresión, lista de riesgo elevado y de notas por bloquearse. Cada escritura es una sola transacción: cambio + revisión + auditoría.
+- **Disparador** `session_note_signed` (en `automation-vocab.ts`) tras confirmar la firma, y un evento sin contenido clínico en la línea de tiempo del cliente.
+- **Cliente web** (`src/lib/api.ts`): tipos y `api.sessionNotes.*`; `ApiError` ahora conserva el cuerpo de la respuesta (para el 422 `risk_incomplete` con `missing`).
+
+**Diferencias respecto a lo escrito arriba**
+- **Las revisiones las escribe un trigger, no el repositorio.** Cualquier cambio a una nota, venga de donde venga, deja una copia completa; y **un cambio sin persona atribuida se rechaza** (`session_note_actor_required`). La persona se indica con `SELECT set_config('psycrm.actor', …, true)` dentro de la transacción (también `psycrm.change_kind` y `psycrm.change_reason`).
+- **`appointment_id` es `ON DELETE RESTRICT`**, no `SET NULL`: un `SET NULL` intentaría modificar una nota que puede estar congelada, y una cita ligada a una nota clínica no debe desaparecer.
+- **Un borrador sin firmar puede firmarse tarde** (`signed_late`), pero solo si lo único que cambia es la firma y el riesgo está completo.
+- **Una nota firmada se puede editar dentro de la ventana** solo con motivo (`changeReason`); la firma se renueva y no se puede dejar sin evaluación de riesgo. **Nunca vuelve a borrador** (`session_note_unsign`).
+- **`GET /:id` de una nota borrada responde 410 sin contenido**; su historia sigue disponible (y auditada) por `/revisions`.
+- **El motivo de un borrado y los textos nunca van al log de auditoría**: solo nombres de campos, ids y estados (`risk.level_changed` lleva de→a, que es metadato). El autosave se audita solo cuando el trigger de verdad creó una revisión (una por autor cada 5 min).
+- **Un intento de editar o borrar una nota bloqueada queda registrado** (`note.edit_rejected_locked`) en la misma transacción que lo rechaza.
+- **La fecha de la sesión no puede ser futura** (hora de Puerto Rico) → 422 `session_date_in_future`.
+- **Las columnas `date`/`time` se devuelven como texto.** Un test con base real mostró que `pg` entrega `date` como un `Date` a medianoche local, y la fecha del evento de línea de tiempo salía como `"Thu Nov 05"`.
+
+**Pendiente / sin verificar**
+- **Concurrencia real:** `SELECT … FOR UPDATE` serializa ediciones simultáneas de una misma nota, pero PGlite atiende una consulta a la vez; solo se prueba contra un Postgres real (día 8).
+- **Conexiones agrupadas (PgBouncer, RDS Proxy):** el actor se pasa con `set_config(…, true)` (local a la transacción), que es compatible con el modo transacción; conviene probarlo si se añade un *proxy*.
+- **El payload del disparador** `session_note_signed` (`isFirst`, `sessionType`) se calcula pero `WorkflowEvent` aún no lo transporta (día 7).
+- **Retención:** una nota "borrada" conserva su contenido en la fila y en las revisiones (a propósito: es el expediente). Falta una política de retención y una exportación del expediente (post-MVP).
+- **La interfaz** (formulario en 5 pasos, reporte, bandera de riesgo) es el día 4. El espejo web del vocabulario clínico se crea entonces.

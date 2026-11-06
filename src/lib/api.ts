@@ -5,6 +5,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** The parsed JSON error body, when there was one (e.g. `{ error: 'risk_incomplete', missing: [...] }`). */
+    public body?: unknown,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -32,13 +34,15 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     let message = `request failed (${res.status})`
+    let body: unknown
     try {
       const data = (await res.json()) as { error?: string }
+      body = data
       if (data.error) message = data.error
     } catch {
       /* non-JSON error body — keep the status message */
     }
-    throw new ApiError(res.status, message)
+    throw new ApiError(res.status, message, body)
   }
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
@@ -102,6 +106,125 @@ export interface AuditVerification {
   ok: boolean
   count: number
   brokenAtSeq: number | null
+}
+
+export type RiskIssue = 'risk_suicidal' | 'risk_self_harm' | 'risk_harm_others' | 'risk_level' | 'risk_notes' | 'risk_actions'
+
+export interface NoteLock {
+  locked: boolean
+  locksAt: string
+  /** Time left in the 72 h edit window, by the database clock. */
+  msRemaining: number
+}
+
+export interface SessionNote {
+  id: string
+  contact_id: string
+  appointment_id: string | null
+  /** YYYY-MM-DD */
+  session_date: string
+  start_time: string | null
+  duration_min: number | null
+  modality: string
+  session_type: string
+  data_subjective: string | null
+  data_objective: string | null
+  assessment: string | null
+  plan: string | null
+  mse: Record<string, { values: string[]; note?: string } | string>
+  mood_rating: number | null
+  risk_suicidal: string | null
+  risk_self_harm: string | null
+  risk_harm_others: string | null
+  risk_level: string | null
+  risk_factors: string[]
+  protective_factors: string[]
+  risk_actions: string[]
+  risk_notes: string | null
+  interventions: string[]
+  diagnosis_codes: string[]
+  status: 'draft' | 'signed'
+  signed_at: string | null
+  signed_by: string | null
+  signed_late: boolean
+  created_by: string
+  created_at: string
+  updated_at: string
+  locks_at: string
+  deleted_at: string | null
+  lock: NoteLock
+}
+
+/** A note without its clinical text (lists, risk summary, "locking soon"). */
+export interface SessionNoteSummary {
+  id: string
+  contact_id: string
+  contact_name: string | null
+  appointment_id: string | null
+  session_date: string
+  session_type: string
+  modality: string
+  status: 'draft' | 'signed'
+  signed_late: boolean
+  risk_level: string | null
+  created_at: string
+  updated_at: string
+  locks_at: string
+  deleted_at: string | null
+  delete_reason: string | null
+  lock: NoteLock
+}
+
+export interface NoteAddendum {
+  id: string
+  note_id: string
+  body: string
+  author: string
+  author_name: string | null
+  created_at: string
+}
+
+export interface NoteRevisionMeta {
+  revision: number
+  kind: 'create' | 'update' | 'autosave' | 'sign' | 'delete'
+  changed_by: string
+  changed_by_name: string | null
+  changed_at: string
+  change_reason: string | null
+}
+
+/** Editable fields of a note (request body, camelCase). All optional on update. */
+export interface SessionNoteInput {
+  appointmentId?: string | null
+  sessionDate?: string
+  startTime?: string | null
+  durationMin?: number | null
+  modality?: string
+  sessionType?: string
+  dataSubjective?: string | null
+  dataObjective?: string | null
+  assessment?: string | null
+  plan?: string | null
+  mse?: Record<string, unknown>
+  moodRating?: number | null
+  riskSuicidal?: string | null
+  riskSelfHarm?: string | null
+  riskHarmOthers?: string | null
+  riskLevel?: string | null
+  riskFactors?: string[]
+  protectiveFactors?: string[]
+  riskActions?: string[]
+  riskNotes?: string | null
+  interventions?: string[]
+  diagnosisCodes?: string[]
+}
+
+export interface ElevatedRiskClient {
+  contact_id: string
+  contact_name: string | null
+  risk_level: string
+  session_date: string
+  note_id: string
 }
 
 export interface Contact {
@@ -1878,6 +2001,30 @@ export const api = {
   auditVerify: (loc: string) => req<AuditVerification>(`/loc/${loc}/audit/verify`),
   /** A same-origin URL the browser can navigate to (it carries the session cookie). */
   auditExportUrl: (loc: string, filters: AuditFilters = {}) => `/api/loc/${loc}/audit/export.csv${qs(filters)}`,
+
+  sessionNotes: {
+    list: (loc: string, contactId: string, includeDeleted = false) =>
+      req<{ notes: SessionNoteSummary[] }>(`/loc/${loc}/session-notes${qs({ contactId, includeDeleted: includeDeleted ? 'true' : undefined })}`),
+    get: (loc: string, id: string) =>
+      req<{ note: SessionNote; addenda: NoteAddendum[]; revisionCount: number; lock: NoteLock }>(`/loc/${loc}/session-notes/${id}`),
+    create: (loc: string, input: SessionNoteInput & { contactId: string; sessionDate: string }) =>
+      req<{ ok: true; note: SessionNote }>(`/loc/${loc}/session-notes`, { method: 'POST', body: JSON.stringify(input) }),
+    /** `autosave` for the editor's background save (drafts only); `changeReason` is required once the note is signed. */
+    update: (loc: string, id: string, input: SessionNoteInput & { autosave?: boolean; changeReason?: string }) =>
+      req<{ ok: true; note: SessionNote; changed: string[] }>(`/loc/${loc}/session-notes/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    /** A 422 `risk_incomplete` carries `missing` (see ApiError.body). */
+    sign: (loc: string, id: string) => req<{ ok: true; note: SessionNote; late: boolean }>(`/loc/${loc}/session-notes/${id}/sign`, { method: 'POST' }),
+    remove: (loc: string, id: string, reason: string) =>
+      req<void>(`/loc/${loc}/session-notes/${id}`, { method: 'DELETE', body: JSON.stringify({ reason }) }),
+    addAddendum: (loc: string, id: string, body: string) =>
+      req<{ ok: true; addendum: NoteAddendum }>(`/loc/${loc}/session-notes/${id}/addenda`, { method: 'POST', body: JSON.stringify({ body }) }),
+    revisions: (loc: string, id: string) => req<{ revisions: NoteRevisionMeta[] }>(`/loc/${loc}/session-notes/${id}/revisions`),
+    revision: (loc: string, id: string, revision: number) =>
+      req<{ revision: NoteRevisionMeta & { snapshot: Record<string, unknown> } }>(`/loc/${loc}/session-notes/${id}/revisions/${revision}`),
+    printed: (loc: string, id: string) => req<void>(`/loc/${loc}/session-notes/${id}/printed`, { method: 'POST' }),
+    elevatedRisk: (loc: string) => req<{ elevated: ElevatedRiskClient[] }>(`/loc/${loc}/session-notes/risk/summary`),
+    lockingSoon: (loc: string, hours = 24) => req<{ notes: SessionNoteSummary[] }>(`/loc/${loc}/session-notes/locking-soon${qs({ hours })}`),
+  },
 
   practice: (loc: string) => req<{ practice: PracticeProfile }>(`/loc/${loc}/practice`),
   savePractice: (loc: string, practice: PracticeProfile) =>

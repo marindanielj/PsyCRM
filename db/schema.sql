@@ -1199,3 +1199,235 @@ CREATE OR REPLACE FUNCTION audit_log_verify(loc text) RETURNS bigint AS $$
      OR (prev_seq IS NOT NULL AND chain_seq <> prev_seq + 1)
      OR (prev_seq IS NULL AND chain_seq <> 1)
 $$ LANGUAGE sql STABLE;
+
+-- =============================================================================
+-- PsyCRM session notes (day 3): DAP progress notes with a mental status exam and a
+-- MANDATORY risk assessment. The rules that protect a clinical record live in the
+-- database, so a bug in the app (or a hand-run SQL statement) cannot bypass them:
+--   * a note is editable for 72 h from creation, then frozen: no edit, no delete;
+--   * a note is never physically deleted — "delete" is a soft delete with a reason,
+--     allowed only inside the 72 h window;
+--   * a note cannot be signed without a complete risk assessment (CHECKs below);
+--   * EVERY change (create, edit, autosave, sign, delete) leaves a full snapshot in
+--     session_note_revisions, written by a trigger, attributed to the person who
+--     made it (a change with no attributed actor is rejected);
+--   * after the window the only way to add to a note is an addendum, append-only.
+-- Callers must run each write inside a transaction that first sets the actor:
+--   SELECT set_config('psycrm.actor', '<operator id>', true);
+-- and may set 'psycrm.change_kind' ('update' | 'autosave') and
+-- 'psycrm.change_reason' the same way.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS session_notes (
+  id              text PRIMARY KEY,
+  location_id     text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id      text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  -- RESTRICT (not SET NULL): an appointment tied to a clinical note must not vanish,
+  -- and a SET NULL would try to UPDATE a possibly frozen note.
+  appointment_id  text REFERENCES appointments(id) ON DELETE RESTRICT,
+  session_date    date NOT NULL,
+  start_time      time,
+  duration_min    int CHECK (duration_min BETWEEN 1 AND 600),
+  modality        text NOT NULL DEFAULT 'in_person'
+                  CONSTRAINT session_notes_modality CHECK (modality IN ('in_person','telehealth_video','phone')),
+  session_type    text NOT NULL DEFAULT 'individual'
+                  CONSTRAINT session_notes_type CHECK (session_type IN ('intake','individual','couple','family','crisis','collateral')),
+  -- DAP
+  data_subjective text,
+  data_objective  text,
+  assessment      text,
+  plan            text,
+  -- mental status exam (validated against the vocabulary by the API)
+  mse             jsonb NOT NULL DEFAULT '{}',
+  mood_rating     smallint CHECK (mood_rating BETWEEN 1 AND 10),
+  -- risk assessment: three dimensions + overall level, each an explicit answer
+  risk_suicidal       text CONSTRAINT session_notes_risk_si CHECK (risk_suicidal IS NULL OR risk_suicidal IN ('denied','passive','active_no_plan','active_plan','active_plan_intent')),
+  risk_self_harm      text CONSTRAINT session_notes_risk_sh CHECK (risk_self_harm IS NULL OR risk_self_harm IN ('denied','history','urges','recent','current')),
+  risk_harm_others    text CONSTRAINT session_notes_risk_hi CHECK (risk_harm_others IS NULL OR risk_harm_others IN ('denied','ideation','ideation_plan','intent')),
+  risk_level          text CONSTRAINT session_notes_risk_level CHECK (risk_level IS NULL OR risk_level IN ('low','moderate','high','imminent')),
+  risk_factors        text[] NOT NULL DEFAULT '{}'
+                      CONSTRAINT session_notes_risk_factors CHECK (risk_factors <@ ARRAY['prior_attempt','access_to_means','substance_use','isolation','recent_loss','chronic_pain_illness','impulsivity','hopelessness','family_history','legal_financial_stress','abuse_history']::text[]),
+  protective_factors  text[] NOT NULL DEFAULT '{}'
+                      CONSTRAINT session_notes_protective CHECK (protective_factors <@ ARRAY['social_support','children_dependents','religious_beliefs','engaged_in_treatment','future_plans','coping_skills','pets','employment_school']::text[]),
+  risk_actions        text[] NOT NULL DEFAULT '{}'
+                      CONSTRAINT session_notes_risk_actions CHECK (risk_actions <@ ARRAY['none','safety_plan_created','safety_plan_reviewed','means_restriction_counseling','increased_session_frequency','emergency_contact_notified','crisis_line_provided','er_referral','duty_to_warn','consultation']::text[]),
+  risk_notes          text,
+  interventions   text[] NOT NULL DEFAULT '{}'
+                  CONSTRAINT session_notes_interventions CHECK (interventions <@ ARRAY['cbt','dbt_skills','act','mindfulness','psychoeducation','motivational_interviewing','emdr','supportive','behavioral_activation','exposure','problem_solving','relaxation_training']::text[]),
+  diagnosis_codes text[] NOT NULL DEFAULT '{}',
+  status          text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','signed')),
+  signed_at       timestamptz,
+  signed_by       text,
+  signed_late     boolean NOT NULL DEFAULT false,
+  created_by      text NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  locks_at        timestamptz NOT NULL DEFAULT now() + interval '72 hours',
+  deleted_at      timestamptz,
+  deleted_by      text,
+  delete_reason   text,
+
+  -- Risk is mandatory to sign: all three dimensions and the overall level answered.
+  CONSTRAINT session_notes_risk_required CHECK (status = 'draft' OR (
+    risk_suicidal IS NOT NULL AND risk_self_harm IS NOT NULL AND risk_harm_others IS NOT NULL AND risk_level IS NOT NULL)),
+  -- Moderate or worse: a written rationale and at least one action actually taken.
+  CONSTRAINT session_notes_risk_elevated CHECK (status = 'draft' OR risk_level = 'low' OR (
+    coalesce(length(trim(risk_notes)), 0) > 0 AND cardinality(array_remove(risk_actions, 'none')) > 0)),
+  -- "Low" with any positive dimension needs a rationale (self-harm "history" alone is a past fact).
+  CONSTRAINT session_notes_risk_low_justified CHECK (status = 'draft' OR risk_level <> 'low' OR
+    (risk_suicidal = 'denied' AND risk_self_harm IN ('denied','history') AND risk_harm_others = 'denied') OR
+    coalesce(length(trim(risk_notes)), 0) > 0),
+  -- "none" means no action was needed, so it cannot sit next to a real action.
+  CONSTRAINT session_notes_actions_none_alone CHECK (NOT ('none' = ANY(risk_actions) AND cardinality(risk_actions) > 1)),
+  CONSTRAINT session_notes_signed_fields CHECK (status = 'draft' OR (signed_at IS NOT NULL AND signed_by IS NOT NULL)),
+  CONSTRAINT session_notes_delete_reason CHECK (deleted_at IS NULL OR coalesce(length(trim(delete_reason)), 0) > 0)
+);
+CREATE INDEX IF NOT EXISTS session_notes_by_contact
+  ON session_notes(location_id, contact_id, session_date DESC, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS session_notes_locking
+  ON session_notes(location_id, locks_at) WHERE status = 'draft' AND deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS session_note_revisions (
+  id            text PRIMARY KEY,
+  location_id   text NOT NULL,
+  note_id       text NOT NULL REFERENCES session_notes(id) ON DELETE RESTRICT,
+  revision      int NOT NULL,
+  kind          text NOT NULL CHECK (kind IN ('create','update','autosave','sign','delete')),
+  snapshot      jsonb NOT NULL,
+  changed_by    text NOT NULL,
+  changed_at    timestamptz NOT NULL DEFAULT now(),
+  change_reason text,
+  UNIQUE (note_id, revision)
+);
+
+CREATE TABLE IF NOT EXISTS session_note_addenda (
+  id          text PRIMARY KEY,
+  location_id text NOT NULL,
+  note_id     text NOT NULL REFERENCES session_notes(id) ON DELETE RESTRICT,
+  body        text NOT NULL CHECK (length(trim(body)) > 0),
+  author      text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS session_note_addenda_by_note ON session_note_addenda(note_id, created_at);
+
+-- A new note is always a fresh draft with the clock started by the database: the
+-- caller cannot pre-sign it, backdate it, or shorten/lengthen the edit window.
+CREATE OR REPLACE FUNCTION session_note_before_insert() RETURNS trigger AS $$
+BEGIN
+  NEW.created_at     := now();
+  NEW.updated_at     := now();
+  NEW.locks_at       := now() + interval '72 hours';
+  NEW.status         := 'draft';
+  NEW.signed_at      := NULL;
+  NEW.signed_by      := NULL;
+  NEW.signed_late    := false;
+  NEW.deleted_at     := NULL;
+  NEW.deleted_by     := NULL;
+  NEW.delete_reason  := NULL;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS session_note_before_insert ON session_notes;
+CREATE TRIGGER session_note_before_insert BEFORE INSERT ON session_notes
+  FOR EACH ROW EXECUTE FUNCTION session_note_before_insert();
+
+CREATE OR REPLACE FUNCTION session_note_guard() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'session_note_no_delete' USING ERRCODE = 'P0001';
+  END IF;
+  -- columns that never change, whatever the statement says
+  NEW.id := OLD.id; NEW.location_id := OLD.location_id; NEW.contact_id := OLD.contact_id;
+  NEW.created_at := OLD.created_at; NEW.created_by := OLD.created_by; NEW.locks_at := OLD.locks_at;
+  IF OLD.deleted_at IS NOT NULL THEN
+    RAISE EXCEPTION 'session_note_deleted' USING ERRCODE = 'P0001';
+  END IF;
+  IF OLD.status = 'signed' AND NEW.status = 'draft' THEN
+    RAISE EXCEPTION 'session_note_unsign' USING ERRCODE = 'P0001';
+  END IF;
+  IF now() >= OLD.locks_at THEN
+    -- The single exception once the window has closed: a DRAFT that was never signed
+    -- may still be signed (late), provided nothing but the signature columns changes.
+    IF OLD.status = 'draft' AND NEW.status = 'signed'
+       AND (to_jsonb(NEW) - ARRAY['status','signed_at','signed_by','signed_late','updated_at'])
+         = (to_jsonb(OLD) - ARRAY['status','signed_at','signed_by','signed_late','updated_at']) THEN
+      NEW.signed_late := true;
+      NEW.updated_at  := now();
+      RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'session_note_locked' USING ERRCODE = 'P0001';
+  END IF;
+  NEW.updated_at := now();
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS session_note_guard ON session_notes;
+CREATE TRIGGER session_note_guard BEFORE UPDATE OR DELETE ON session_notes
+  FOR EACH ROW EXECUTE FUNCTION session_note_guard();
+
+-- Every change leaves a full snapshot, attributed to whoever made it. Runs AFTER the
+-- guard, so only changes that were actually allowed are recorded. A write with no
+-- actor set is refused: nothing may change a clinical note anonymously.
+CREATE OR REPLACE FUNCTION session_note_record_revision() RETURNS trigger AS $$
+DECLARE
+  who text := nullif(current_setting('psycrm.actor', true), '');
+  why text := nullif(current_setting('psycrm.change_reason', true), '');
+  what text := nullif(current_setting('psycrm.change_kind', true), '');
+  rev int;
+BEGIN
+  IF who IS NULL THEN
+    RAISE EXCEPTION 'session_note_actor_required' USING ERRCODE = 'P0001';
+  END IF;
+  IF TG_OP = 'INSERT' THEN what := 'create';
+  ELSIF NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL THEN what := 'delete';
+  ELSIF OLD.status = 'draft' AND NEW.status = 'signed' THEN what := 'sign';
+  ELSIF what IS DISTINCT FROM 'autosave' THEN what := 'update';
+  END IF;
+  -- Autosave fires every few seconds while typing: keep one revision per author per 5 minutes.
+  IF what = 'autosave' AND EXISTS (
+       SELECT 1 FROM session_note_revisions
+       WHERE note_id = NEW.id AND changed_by = who AND kind IN ('create','autosave')
+         AND changed_at > now() - interval '5 minutes') THEN
+    RETURN NEW;
+  END IF;
+  SELECT coalesce(max(revision), 0) + 1 INTO rev FROM session_note_revisions WHERE note_id = NEW.id;
+  INSERT INTO session_note_revisions (id, location_id, note_id, revision, kind, snapshot, changed_by, change_reason)
+  VALUES (gen_random_uuid()::text, NEW.location_id, NEW.id, rev, what, to_jsonb(NEW), who, why);
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS session_note_record_revision ON session_notes;
+CREATE TRIGGER session_note_record_revision AFTER INSERT OR UPDATE ON session_notes
+  FOR EACH ROW EXECUTE FUNCTION session_note_record_revision();
+
+-- An addendum belongs to a live note of the same practice, and is stamped by the database.
+CREATE OR REPLACE FUNCTION session_note_addendum_guard() RETURNS trigger AS $$
+DECLARE n record;
+BEGIN
+  SELECT location_id, deleted_at INTO n FROM session_notes WHERE id = NEW.note_id;
+  IF NOT FOUND OR n.location_id <> NEW.location_id THEN
+    RAISE EXCEPTION 'session_note_not_found' USING ERRCODE = 'P0001';
+  END IF;
+  IF n.deleted_at IS NOT NULL THEN
+    RAISE EXCEPTION 'session_note_deleted' USING ERRCODE = 'P0001';
+  END IF;
+  NEW.created_at := now();
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS session_note_addendum_guard ON session_note_addenda;
+CREATE TRIGGER session_note_addendum_guard BEFORE INSERT ON session_note_addenda
+  FOR EACH ROW EXECUTE FUNCTION session_note_addendum_guard();
+
+-- Revisions and addenda are append-only (reject_mutation() is defined with the audit log).
+DROP TRIGGER IF EXISTS session_note_revisions_immutable ON session_note_revisions;
+CREATE TRIGGER session_note_revisions_immutable BEFORE UPDATE OR DELETE ON session_note_revisions
+  FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS session_note_revisions_no_truncate ON session_note_revisions;
+CREATE TRIGGER session_note_revisions_no_truncate BEFORE TRUNCATE ON session_note_revisions
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS session_note_addenda_immutable ON session_note_addenda;
+CREATE TRIGGER session_note_addenda_immutable BEFORE UPDATE OR DELETE ON session_note_addenda
+  FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS session_note_addenda_no_truncate ON session_note_addenda;
+CREATE TRIGGER session_note_addenda_no_truncate BEFORE TRUNCATE ON session_note_addenda
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS session_notes_no_truncate ON session_notes;
+CREATE TRIGGER session_notes_no_truncate BEFORE TRUNCATE ON session_notes
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();

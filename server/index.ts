@@ -26,6 +26,7 @@ import type { Module } from './lib/modules'
 import { moduleGate } from './middleware/module-gate'
 import { auditRoute } from './routes/audit'
 import { practiceRoute } from './routes/practice'
+import { sessionNotesRoute } from './routes/session-notes'
 import { notifyPush } from './lib/notify-push'
 import type { SendTextFn } from './lib/operator-tools'
 import { makeHttpSendText } from './lib/send-text-rail'
@@ -144,6 +145,7 @@ const ROUTE_MODULE: Record<string, Module> = {
   templates: 'templates',
   tags: 'tags',
   audit: 'audit',
+  'session-notes': 'session_notes',
 }
 
 /**
@@ -345,6 +347,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // AI Agent settings (the "AI Agent" settings area): reply mode (approve-first /
   // autonomous) + the agent's persona, instructions, and knowledge-base facts.
   app.route('/api/loc/:loc/settings', settingsRoute({ db: deps.db }))
+  // Clinical session notes: DAP + mental status + mandatory risk assessment, locked after 72 h.
+  app.route('/api/loc/:loc/session-notes', sessionNotesRoute({ db: deps.db, dispatch: deps.dispatch }))
   // The audit log (read-only) + its integrity check and CSV export.
   app.route('/api/loc/:loc/audit', auditRoute({ db: deps.db }))
   // The practice profile (name, license, fees, cancellation policy).
