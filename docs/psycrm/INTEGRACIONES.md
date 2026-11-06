@@ -56,7 +56,33 @@ Estos módulos están **apagados por defecto** (no están en la lista de arriba 
 | `social` | Facebook, Instagram, LinkedIn, X | — | No debe llevar datos de clientes; revisar el contenido que se publica |
 | `reputation` | Google y Facebook (reseñas) | — | Las reseñas son públicas; no responder con datos clínicos |
 | `sites`, `forms`, `surveys`, `proposals`, `blog`, `communities`, `memberships`, `trigger_links`, `affiliates` | Páginas públicas sin sesión | `public_pages` | Revisar qué datos personales recogen y añadir el texto de privacidad; las páginas públicas llevan un script en línea, por lo que hoy salen **sin** política CSP |
+| `calendar_sync` (semana 2, **por construir**) | Calendarios del teléfono de la terapeuta (Google o iCloud) por URL `.ics`, **sin OAuth** | `calendar_sync` | Sin BAA: solo cruzan bloques de tiempo, nunca datos de clientes (ver §3.1) |
 | `documents` (día 5-6) | Correo de Amazon SES para enviar los enlaces | — | Cubierto por el BAA de AWS **si** SES figura en la lista de servicios elegibles (tarea 1.4 de `INFRA_AWS.md`) |
+
+### 3.1 Sincronización de calendario por `.ics` (semana 2)
+
+**Por qué:** la terapeuta no tiene horario fijo; su calendario de referencia es el del teléfono y las citas se acomodan alrededor de su vida personal. Se necesita ver todo en un solo calendario, sin enviar datos de clientes a Google o Apple.
+
+**Regla de oro: solo se intercambian bloques "ocupado". Nunca títulos, nombres, motivos ni notas, en ninguna dirección.**
+
+| Dirección | Qué hace | Qué cruza |
+|---|---|---|
+| **Salida** (PsyCRM → teléfono) | Feed `.ics` por URL con token secreto (regenerable y revocable). Ella lo suscribe en su teléfono. | Inicio, fin y el título genérico "Cita" (o "Ocupado"). Sin nombre, sin motivo, sin enlace a la nota. |
+| **Entrada** (teléfono → PsyCRM) | Ella pega en Settings la dirección `.ics` secreta de su calendario (Google: "dirección secreta en formato iCal"; iCloud: calendario compartido por enlace). PsyCRM la lee cada pocos minutos. | Se guardan **solo inicio y fin**; el título y la descripción se descartan al leer. Se muestran como bloques grises "Busy"; restan a los espacios ofrecidos y avisan si se agenda encima. |
+
+**Controles:**
+- Auditoría: feed generado/consultado, token regenerado o revocado, calendario conectado o desconectado (sin la URL en el log; la URL entrante es un secreto).
+- Seguridad de la lectura: solo `https`, bloquear IPs privadas y de enlace local (SSRF), límite de tamaño y de tiempo, redirecciones limitadas.
+- El token de salida y la URL de entrada se guardan como secretos, no se imprimen en logs.
+- Pantalla de configuración con la advertencia de latencia (abajo).
+
+**Limitaciones que se le deben explicar a la usuaria:**
+- **No es tiempo real.** Google puede tardar horas en refrescar un feed suscrito; Apple permite intervalos más cortos. Un cambio hecho en PsyCRM puede tardar en verse en el teléfono.
+- **Solo funciona con calendarios en la nube** (Google o iCloud). Un calendario guardado únicamente en el aparato no tiene URL.
+- **Pendiente de decidir:** su modelo de disponibilidad hoy son horas semanales fijas. Para ella puede convenir "abierto por defecto, bloqueado por su calendario", lo que cambia el cálculo en `server/lib/availability.ts`.
+- **Por confirmar con ella:** ¿su calendario de referencia está en iCloud o en Google?
+
+Sigue el procedimiento del §4 (aunque no requiere BAA, deben cumplirse los pasos 3 a 7).
 
 ---
 
