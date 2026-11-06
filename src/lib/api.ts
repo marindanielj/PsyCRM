@@ -2113,6 +2113,20 @@ export interface SignedDocSummary {
 }
 export interface SignedDoc extends SignedDocSummary { renderedHtml: string; fieldValues: Record<string, unknown>; signerIp: string; verifiedVia: string; intact: boolean }
 
+export interface ClientInvite {
+  id: string
+  kind: 'adult' | 'guardian'
+  name: string
+  email: string
+  status: 'sent' | 'completed' | 'expired' | 'voided'
+  sentAt: string
+  expiresAt: string
+  openedAt: string | null
+  completedAt: string | null
+  contactId: string | null
+}
+export interface InviteSendResult { ok: true; invite: ClientInvite; link: string; emailed: boolean; emailIssue: string | null }
+
 export const api = {
   login: (email: string, password: string) =>
     req<{ ok: true; operator: Operator }>('/auth/login', {
@@ -2129,6 +2143,14 @@ export const api = {
   auditVerify: (loc: string) => req<AuditVerification>(`/loc/${loc}/audit/verify`),
   /** A same-origin URL the browser can navigate to (it carries the session cookie). */
   auditExportUrl: (loc: string, filters: AuditFilters = {}) => `/api/loc/${loc}/audit/export.csv${qs(filters)}`,
+
+  invites: {
+    list: (loc: string) => req<{ invites: ClientInvite[] }>(`/loc/${loc}/invites`),
+    create: (loc: string, input: { name: string; email: string; kind: 'adult' | 'guardian' }) =>
+      req<InviteSendResult>(`/loc/${loc}/invites`, { method: 'POST', body: JSON.stringify(input) }),
+    resend: (loc: string, id: string) => req<InviteSendResult>(`/loc/${loc}/invites/${id}/resend`, { method: 'POST' }),
+    void: (loc: string, id: string) => req<{ ok: true }>(`/loc/${loc}/invites/${id}/void`, { method: 'POST' }),
+  },
 
   documents: {
     meta: (loc: string) => req<DocMeta>(`/loc/${loc}/documents/meta`),

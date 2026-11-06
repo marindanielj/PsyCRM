@@ -99,6 +99,10 @@ test('"only if the step before completed": a step after a skipped one is skipped
 test('send_document_packet is skipped, with a reason, when there is nothing safe to send', async () => {
   const h = await harness([{ type: 'send_document_packet', config: {} }])
   expect((await h.run()).steps[0]).toMatchObject({ status: 'skipped', detail: 'No packet configured' })
+  const noDob = await harness([{ type: 'send_document_packet', config: { packetId: 'nope' } }])
+  expect((await noDob.run()).steps[0]).toMatchObject({ status: 'skipped', detail: 'No date of birth on the record' }) // nothing is sent before the age is known
+  expect((await noDob.db.query<{ title: string }>('SELECT title FROM contact_tasks'))[0]!.title).toBe('Add date of birth to send the onboarding packet')
   const gone = await harness([{ type: 'send_document_packet', config: { packetId: 'nope' } }])
+  await gone.db.query(`UPDATE contacts SET custom_fields = '{"date_of_birth":"1990-04-12"}' WHERE id='c1'`)
   expect((await gone.run()).steps[0]).toMatchObject({ status: 'failed', detail: 'The packet no longer exists' })
 })

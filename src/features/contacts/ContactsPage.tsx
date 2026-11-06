@@ -1,5 +1,5 @@
-import { ArrowLeft, RotateCcw, Search, UserPlus } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, MailPlus, RotateCcw, Search, UserPlus } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Avatar } from '../../components/ui/avatar'
 import { Button } from '../../components/ui/button'
@@ -10,6 +10,8 @@ import { cn, formatPhone } from '../../lib/utils'
 import { useTenant } from '../../state/location'
 import { AddContactDialog } from './AddContactDialog'
 import { ContactDetail } from './ContactDetail'
+import { InvitationsPanel } from './InvitationsPanel'
+import { InviteClientDialog } from './InviteClientDialog'
 
 export function ContactsPage() {
   const { current } = useTenant()
@@ -19,6 +21,8 @@ export function ContactsPage() {
   const [status, setStatus] = useState<'loading' | 'ready'>('loading')
   const [q, setQ] = useState('')
   const [adding, setAdding] = useState(false)
+  const [inviting, setInviting] = useState(false)
+  const [inviteTick, setInviteTick] = useState(0)
   // The list pane shows either the live book or the Archived (soft-deleted)
   // contacts. Archived rows are loaded lazily the first time the tab is opened.
   const [view, setView] = useState<'active' | 'archived'>('active')
@@ -55,6 +59,12 @@ export function ContactsPage() {
     setArchived((prev) => prev.filter((c) => c.id !== restored.id))
     setContacts((prev) => (prev.some((c) => c.id === restored.id) ? prev : [restored, ...prev]))
   }
+
+  // A client finished their registration on their own page: pull the new contact into the list.
+  const reloadContacts = useCallback(() => {
+    if (!loc) return
+    void api.contacts(loc).then((r) => setContacts(r.contacts)).catch(() => {})
+  }, [loc])
 
   useEffect(() => {
     if (!loc) return
@@ -117,12 +127,19 @@ export function ContactsPage() {
           <h1 className="text-lg font-semibold text-slate-900">Contacts</h1>
           <p className="text-xs text-slate-500">{contacts.length} total</p>
         </div>
-        <Button size="sm" onClick={() => setAdding(true)}>
-          <UserPlus className="h-4 w-4" />
-          Add contact
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setInviting(true)}>
+            <MailPlus className="h-4 w-4" />
+            Invite client
+          </Button>
+          <Button size="sm" onClick={() => setAdding(true)}>
+            <UserPlus className="h-4 w-4" />
+            Add contact
+          </Button>
+        </div>
       </header>
 
+      {inviting && <InviteClientDialog locationId={loc} onClose={() => setInviting(false)} onSent={() => setInviteTick((n) => n + 1)} />}
       {adding && <AddContactDialog
           onCancel={() => setAdding(false)}
           onCreate={handleCreate}
@@ -148,6 +165,8 @@ export function ContactsPage() {
               Archived
             </TabButton>
           </div>
+
+          {view === 'active' && <InvitationsPanel locationId={loc} refreshKey={inviteTick} onCompleted={reloadContacts} />}
 
           {view === 'active' && (
             <div className="border-b border-slate-100 p-3">

@@ -6,6 +6,8 @@ import { seedPractice } from '../lib/practice-seed'
 import type { TemplateField } from '../lib/document-vocab'
 import type { EmailMessage } from '../lib/sending/provider'
 import { contactsRoute } from '../routes/contacts'
+import { invitesRoute } from '../routes/invites'
+import { publicInvitesRoute } from '../routes/public-invites'
 import { publicDocumentsRoute } from '../routes/public-documents'
 import { freshDb } from '../test-utils/pglite'
 import { type WorkflowEvent, dispatchWorkflowEvent } from './workflow-dispatcher'
@@ -41,6 +43,9 @@ async function setup(opts: { activateDocuments?: boolean; email?: boolean } = {}
     await next()
   })
   app.route('/api/contacts', contactsRoute({ db, requireDateOfBirth: true, dispatch, today: () => '2026-11-05' }))
+  app.route('/api/invites', invitesRoute({ db, resolveEmail, publicBaseUrl: 'https://app.test' }))
+  let nowOverride: Date | null = null
+  app.route('/i', publicInvitesRoute({ db, dispatch, now: () => nowOverride ?? new Date() }))
   app.route('/d', publicDocumentsRoute({ db, sessionSecret: 'test-secret', resolveEmail, dispatch, publicBaseUrl: 'https://app.test' }))
 
   const addContact = async (body: Record<string, unknown>) => {
@@ -55,7 +60,8 @@ async function setup(opts: { activateDocuments?: boolean; email?: boolean } = {}
   const runs = (contactId: string) => db.query<{ name: string; status: string; steps: { type: string; status: string; detail: string }[] }>('SELECT w.name, r.status, r.steps FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id WHERE r.contact_id=$1 ORDER BY r.started_at', [contactId])
   const tasks = (contactId: string) => db.query<{ title: string; due_at: string | null }>('SELECT title, due_at FROM contact_tasks WHERE contact_id=$1', [contactId])
   const workflowId = async (name: string) => (await db.query<{ id: string }>('SELECT id FROM workflows WHERE location_id=$1 AND name=$2', [loc, name]))[0]!.id
-  return { db, pg, loc, stages, deps, dispatch, events, outbox, app, addContact, stageOf, audits, runs, tasks, workflowId, seeded }
+  const setNow = (d: Date | null) => { nowOverride = d }
+  return { db, pg, loc, stages, deps, dispatch, events, outbox, app, setNow, addContact, stageOf, audits, runs, tasks, workflowId, seeded }
 }
 type S = Awaited<ReturnType<typeof setup>>
 
@@ -162,8 +168,8 @@ test('a client under 18, or with no date of birth, never receives the adult pack
   expect(await s.stageOf(teen.id)).toBe('New contact') // not "Documents sent"
   const run = (await s.runs(teen.id))[0]!
   expect(run.steps.map((x) => x.status)).toEqual(['done', 'skipped', 'skipped'])
-  expect(run.steps[1]!.detail).toContain('under 18')
-  expect((await s.tasks(teen.id)).map((t) => t.title)).toEqual(['Send adolescent onboarding packet (guardian required)'])
+  expect(run.steps[1]!.detail).toBe('No guardian name and email on the record') // the adolescent packet needs a guardian to sign
+  expect((await s.tasks(teen.id)).map((t) => t.title)).toEqual(["Add the guardian's name and email to send the adolescent packet"])
   expect(s.outbox).toHaveLength(0)
 
   // no date of birth (created some other way): the packet is never defaulted to adult
@@ -283,4 +289,213 @@ test('the seeded workflows only reference stages and the packet of their own pra
   }
   const packet = acts.find((x) => x.type === 'send_document_packet')!
   expect((await s.db.query('SELECT 1 FROM document_packets WHERE id=$1 AND location_id=$2', [packet.config.packetId, s.loc])).length).toBe(1)
+})
+
+// ---- client invitations: the therapist invites, the person registers, onboarding starts -----------------
+
+async function invite(s: S, body: Record<string, unknown>) {
+  const res = await s.app.request('/api/invites', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  return { status: res.status, json: await res.json() }
+}
+const inviteToken = (s: S, to: string) => /\/i\/([A-Za-z0-9_-]{43})/.exec([...s.outbox].reverse().find((m) => m.to === to && /\/i\//.test(m.text))!.text)![1]!
+async function visit(s: S, token: string, method = 'GET', body?: unknown, ip = '198.51.100.20') {
+  const res = await s.app.request(`/i/${token}${method === 'POST' ? '/submit' : ''}`, { method, headers: { 'content-type': 'application/json', 'x-forwarded-for': ip, 'user-agent': 'Phone/1' }, body: body === undefined ? undefined : JSON.stringify(body) })
+  const text = await res.text()
+  return { status: res.status, headers: res.headers, text, json: res.headers.get('content-type')?.includes('json') ? JSON.parse(text) : null }
+}
+const ADULT = { firstName: 'Marta', lastName: 'Prueba', phone: '787-555-0142', dateOfBirth: '1988-03-04' }
+
+test('an invited adult registers on their own page and onboarding starts by itself: contact, card, packet email', async () => {
+  const s = await setup()
+  const sent = await invite(s, { name: 'Marta Prueba', email: 'Marta@Example.com', kind: 'adult' })
+  expect(sent.status).toBe(201)
+  expect(sent.json).toMatchObject({ emailed: true, invite: { kind: 'adult', status: 'sent', email: 'marta@example.com' } })
+  const mail = s.outbox[0]!
+  expect(mail).toMatchObject({ to: 'marta@example.com', subject: 'Consultorio Prueba: complete su registro' })
+  expect(`${mail.subject}${mail.text}`).not.toMatch(/terapia|psicoterapia|paciente/i)
+  const token = inviteToken(s, 'marta@example.com')
+  expect(await s.db.query('SELECT 1 FROM contacts WHERE location_id=$1 AND emails @> ARRAY[$2]::text[]', [s.loc, 'marta@example.com'])).toHaveLength(0) // no contact yet
+
+  expect((await s.db.query<{ opened_at: unknown }>('SELECT opened_at FROM client_invites'))[0]!.opened_at).toBeNull()
+  const page = await visit(s, token)
+  expect((await s.db.query<{ opened_at: unknown }>('SELECT opened_at FROM client_invites'))[0]!.opened_at).not.toBeNull() // "Opened" in the therapist's list
+  expect(page.status).toBe(200)
+  expect(page.text).toContain('Complete su registro')
+  expect(page.text).toContain('value="Marta"') // prefilled from what the therapist typed
+  expect(page.text).toContain('name="dateOfBirth"')
+  expect(page.headers.get('content-security-policy')).toMatch(/script-src 'nonce-/)
+  expect(page.headers.get('cache-control')).toBe('no-store')
+
+  const done = await visit(s, token, 'POST', ADULT)
+  expect(done.status, done.text).toBe(200)
+  const [c] = await s.db.query<any>("SELECT id, name, first_name, last_name, emails, phones, custom_fields, source FROM contacts WHERE emails @> ARRAY['marta@example.com']::text[]")
+  expect(c).toMatchObject({ name: 'Marta Prueba', first_name: 'Marta', last_name: 'Prueba', emails: ['marta@example.com'], phones: ['+17875550142'], source: 'invite' })
+  expect(c.custom_fields.date_of_birth).toBe('1988-03-04')
+
+  // onboarding ran on its own: card created and moved, adult packet emailed with a signing link
+  expect(await s.stageOf(c.id)).toBe('Documents sent')
+  expect(s.outbox.some((m) => m.to === 'marta@example.com' && m.subject.includes('documentos pendientes') && /\/d\//.test(m.text))).toBe(true)
+  const ev = s.events.find((e) => e.triggerType === 'contact_created' && e.contactId === c.id)!
+  expect(ev.payload).toEqual({ source: 'invite', inviteKind: 'adult' })
+
+  const log = await s.audits()
+  expect(log.filter((a) => a.action === 'invite.completed')[0]).toMatchObject({ actor_type: 'client', contact_id: c.id })
+  expect(log.find((a) => a.action === 'contact.created' && a.contact_id === c.id)!.details).toMatchObject({ source: 'invite' })
+  expect(JSON.stringify(log)).not.toContain('marta@example.com') // addresses stay out of the log
+
+  // single use: the link now only says thanks, and a second submission is refused
+  expect((await visit(s, token)).text).toContain('Gracias')
+  expect((await visit(s, token, 'POST', ADULT)).status).toBe(409)
+  expect(await s.db.query("SELECT 1 FROM contacts WHERE name='Marta Prueba'")).toHaveLength(1)
+})
+
+test('an invited parent registers a minor: the contact has no email of its own, the guardian is recorded, and the adolescent packet goes to the guardian', async () => {
+  const s = await setup()
+  await invite(s, { name: 'Rosa Díaz', email: 'rosa@example.com', kind: 'guardian' })
+  const token = inviteToken(s, 'rosa@example.com')
+  const page = await visit(s, token)
+  expect(page.text).toContain('Datos del paciente')
+  expect(page.text).toContain('name="guardianName"')
+
+  const r = await visit(s, token, 'POST', { firstName: 'Sofía', lastName: 'Díaz', dateOfBirth: '2010-06-01', guardianName: 'Rosa Díaz', guardianPhone: '787-555-0199' })
+  expect(r.status, r.text).toBe(200)
+  const [c] = await s.db.query<any>("SELECT id, name, emails, phones, custom_fields FROM contacts WHERE name='Sofía Díaz'")
+  expect(c.emails ?? []).toEqual([])
+  expect(c.phones ?? []).toEqual([])
+  expect(c.custom_fields).toMatchObject({ date_of_birth: '2010-06-01', guardian_name: 'Rosa Díaz', guardian_email: 'rosa@example.com', guardian_phone: '787-555-0199' })
+
+  expect(await s.stageOf(c.id)).toBe('Documents sent')
+  const req = (await s.db.query<{ audience: string; sent_by: string }>('SELECT audience, sent_by FROM document_requests WHERE contact_id=$1', [c.id]))[0]!
+  expect(req.audience).toBe('adolescent')
+  expect(req.sent_by).toMatch(/^workflow:/)
+  const signers = await s.db.query<{ role: string; email: string }>('SELECT role, email FROM document_signers')
+  expect(signers).toEqual([{ role: 'guardian', email: 'rosa@example.com' }]) // the guardian signs; no adult packet went anywhere
+  expect(s.outbox.filter((m) => m.subject.includes('documentos pendientes')).map((m) => m.to)).toEqual(['rosa@example.com'])
+
+  // a second child of the same parent is a second record, never merged with the first
+  await invite(s, { name: 'Rosa Díaz', email: 'rosa@example.com', kind: 'guardian' })
+  const t2 = inviteToken(s, 'rosa@example.com')
+  await visit(s, t2, 'POST', { firstName: 'Luis', lastName: 'Díaz', dateOfBirth: '2012-02-02', guardianName: 'Rosa Díaz' })
+  expect(await s.db.query("SELECT 1 FROM contacts WHERE last_name='Díaz'")).toHaveLength(2)
+})
+
+test('the date of birth must fit the kind of invitation; a mismatch creates nothing and tells the person what to do', async () => {
+  const s = await setup()
+  await invite(s, { name: 'Ana Rivera', email: 'ana@example.com', kind: 'adult' })
+  const a = inviteToken(s, 'ana@example.com')
+  const minor = await visit(s, a, 'POST', { ...ADULT, dateOfBirth: '2012-01-01' })
+  expect(minor).toMatchObject({ status: 422, json: { error: 'age_mismatch_minor' } })
+  await invite(s, { name: 'Rosa Díaz', email: 'rosa@example.com', kind: 'guardian' })
+  const g = inviteToken(s, 'rosa@example.com')
+  expect((await visit(s, g, 'POST', { firstName: 'X', lastName: 'Y', dateOfBirth: '1980-01-01', guardianName: 'Rosa' })).json.error).toBe('age_mismatch_adult')
+  expect((await visit(s, g, 'POST', { firstName: 'X', lastName: 'Y', dateOfBirth: '2012-01-01' })).json.error).toBe('guardian_name_required')
+  expect((await visit(s, a, 'POST', { ...ADULT, dateOfBirth: '2999-01-01' })).json.error).toBe('invalid_date_of_birth')
+  expect((await visit(s, a, 'POST', { ...ADULT, dateOfBirth: '1988-13-45' })).json.error).toBe('invalid_date_of_birth')
+  expect((await visit(s, a, 'POST', { ...ADULT, firstName: '' })).json.error).toBe('invalid')
+  expect(await s.db.query("SELECT 1 FROM contacts WHERE source='invite'")).toHaveLength(0)
+  // ...and the invitation is still usable afterwards
+  expect((await visit(s, a, 'POST', ADULT)).status).toBe(200)
+})
+
+test('an unknown, malformed, cancelled or expired link shows the same page; nothing about the practice leaks', async () => {
+  const s = await setup()
+  const sent = await invite(s, { name: 'Marta Prueba', email: 'marta@example.com', kind: 'adult' })
+  const token = inviteToken(s, 'marta@example.com')
+  const unknown = await visit(s, 'A'.repeat(43))
+  const normalize = (t: string) => t.replace(/nonce="[^"]+"/g, '')
+  expect(unknown.status).toBe(404)
+  expect(unknown.text).toContain('Este enlace no es válido o expiró')
+  expect(normalize((await visit(s, 'short')).text)).toBe(normalize(unknown.text))
+
+  s.setNow(new Date(Date.now() + 15 * 24 * 3600_000))
+  expect(normalize((await visit(s, token)).text)).toBe(normalize(unknown.text)) // expired
+  expect((await visit(s, token, 'POST', ADULT)).status).toBe(404)
+  s.setNow(null)
+
+  const v = await s.app.request(`/api/invites/${sent.json.invite.id}/void`, { method: 'POST' })
+  expect(v.status).toBe(200)
+  expect(normalize((await visit(s, token)).text)).toBe(normalize(unknown.text)) // cancelled
+  expect(await s.db.query("SELECT 1 FROM contacts WHERE source='invite'")).toHaveLength(0)
+})
+
+test('a bot that fills the hidden field creates nothing and the invitation stays open', async () => {
+  const s = await setup()
+  await invite(s, { name: 'Marta Prueba', email: 'marta@example.com', kind: 'adult' })
+  const token = inviteToken(s, 'marta@example.com')
+  expect((await visit(s, token, 'POST', { ...ADULT, website: 'http://spam.example' })).status).toBe(200)
+  expect(await s.db.query("SELECT 1 FROM contacts WHERE source='invite'")).toHaveLength(0)
+  expect((await s.db.query<{ status: string }>('SELECT status FROM client_invites'))[0]!.status).toBe('sent')
+})
+
+test('inviting someone who is already a client does not duplicate them, and a different date of birth is flagged, not applied', async () => {
+  const s = await setup()
+  const existing = await s.addContact({ name: 'Marta Prueba', email: 'marta@example.com', dateOfBirth: '1988-03-04', skipOnboarding: true })
+  await invite(s, { name: 'Marta Prueba', email: 'marta@example.com', kind: 'adult' })
+  const token = inviteToken(s, 'marta@example.com')
+  const before = s.events.length
+  expect((await visit(s, token, 'POST', { ...ADULT, dateOfBirth: '1989-04-05' })).status).toBe(200)
+  expect(await s.db.query("SELECT 1 FROM contacts WHERE emails @> ARRAY['marta@example.com']::text[]")).toHaveLength(1)
+  const [c] = await s.db.query<any>('SELECT custom_fields FROM contacts WHERE id=$1', [existing.id])
+  expect(c.custom_fields.date_of_birth).toBe('1988-03-04') // the record wins
+  expect(c.custom_fields.intake_conflicts).toEqual({ date_of_birth: { record: '1988-03-04', answered: '1989-04-05' } })
+  expect(s.events.slice(before).some((e) => e.triggerType === 'contact_created')).toBe(false) // not a new client: onboarding does not restart
+  expect((await s.audits('invite.completed'))[0]!.details).toMatchObject({ newClient: false })
+})
+
+test('one open invitation per email; resend replaces the link; names are shown escaped; everything is per practice', async () => {
+  const s = await setup()
+  const first = await invite(s, { name: '<img src=x onerror=alert(1)>', email: 'x@example.com', kind: 'adult' })
+  expect(first.status).toBe(201)
+  const dup = await invite(s, { name: 'Otra vez', email: 'X@example.com', kind: 'adult' })
+  expect(dup).toMatchObject({ status: 409, json: { error: 'already_invited', inviteId: first.json.invite.id } })
+
+  const oldToken = inviteToken(s, 'x@example.com')
+  const html = (await visit(s, oldToken)).text
+  expect(html).not.toContain('<img')
+  expect(html).toContain('&lt;img')
+
+  const re = await s.app.request(`/api/invites/${first.json.invite.id}/resend`, { method: 'POST' })
+  expect(re.status).toBe(200)
+  const fresh = inviteToken(s, 'x@example.com')
+  expect(fresh).not.toBe(oldToken)
+  expect((await visit(s, oldToken)).status).toBe(404) // the old link no longer works
+  expect((await visit(s, fresh)).status).toBe(200)
+
+  const list = await (await s.app.request('/api/invites')).json()
+  expect(list.invites).toHaveLength(1)
+  expect(list.invites[0]).toMatchObject({ status: 'sent' })
+  expect((await s.app.request('/api/invites/nope/resend', { method: 'POST' })).status).toBe(404)
+  expect((await invite(s, { name: 'A', email: 'not-an-email', kind: 'adult' })).status).toBe(400)
+  expect((await invite(s, { name: 'A', email: 'a@example.com', kind: 'teen' })).status).toBe(400)
+  const log = await s.audits()
+  expect(log.map((a) => a.action)).toEqual(expect.arrayContaining(['invite.sent', 'invite.resent']))
+  expect(JSON.stringify(log)).not.toContain('x@example.com')
+})
+
+test('with no email provider the invitation is still created and the link is returned to send by hand', async () => {
+  const s = await setup({ email: false })
+  const r = await invite(s, { name: 'Marta Prueba', email: 'marta@example.com', kind: 'adult' })
+  expect(r.status).toBe(201)
+  expect(r.json).toMatchObject({ emailed: false, emailIssue: 'no email provider connected' })
+  const token = /\/i\/([A-Za-z0-9_-]{43})/.exec(r.json.link)![1]!
+  expect((await visit(s, token)).status).toBe(200)
+})
+
+test('registration is rate limited per address', async () => {
+  const s = await setup()
+  await invite(s, { name: 'Marta Prueba', email: 'marta@example.com', kind: 'adult' })
+  const token = inviteToken(s, 'marta@example.com')
+  let last = 0
+  for (let i = 0; i < 12; i++) last = (await visit(s, token, 'POST', { ...ADULT, dateOfBirth: '2999-01-01' }, '203.0.113.50')).status
+  expect(last).toBe(429)
+  expect((await visit(s, token, 'POST', ADULT, '203.0.113.51')).status).toBe(200) // another address is unaffected
+})
+
+test('a client already in the book under a phone number is found by their email too, not duplicated', async () => {
+  const s = await setup()
+  await s.db.query("INSERT INTO contacts (id, location_id, name, phones, emails, match_key, custom_fields) VALUES ('c_old',$1,'Marta Prueba','{+17875550142}','{marta@example.com}',$2,'{\"date_of_birth\":\"1988-03-04\"}')", [s.loc, `${s.loc}|phone|+17875550142`])
+  await invite(s, { name: 'Marta Prueba', email: 'marta@example.com', kind: 'adult' })
+  expect((await visit(s, inviteToken(s, 'marta@example.com'), 'POST', ADULT)).status).toBe(200)
+  expect(await s.db.query("SELECT 1 FROM contacts WHERE name='Marta Prueba'")).toHaveLength(1)
+  expect((await s.db.query<{ contact_id: string }>('SELECT contact_id FROM client_invites'))[0]!.contact_id).toBe('c_old')
 })

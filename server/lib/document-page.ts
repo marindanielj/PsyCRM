@@ -7,7 +7,7 @@ import { escAttr, escText, jsonForScript, safeColor } from './page-html'
  * request's nonce, so the page can run with a strict Content-Security-Policy.
  */
 
-const PAGE_STYLE = `
+export const PAGE_STYLE = `
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 body{margin:0;background:#f1f5f9;font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif;color:#0f172a}
@@ -40,11 +40,11 @@ h1{font-size:1.35rem;margin:.2em 0 .5em}
 @media print{body{background:#fff}.noprint{display:none!important}.card{border:0;padding:0}.copy-doc{break-after:page}}
 `
 
-function shell(o: { title: string; brand?: string; body: string; nonce: string; script?: string }): string {
+export function shell(o: { title: string; brand?: string; body: string; nonce: string; script?: string }): string {
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer"><title>${escText(o.title)}</title><style>:root{--brand:${safeColor(o.brand)}}${DOC_STYLE}${PAGE_STYLE}</style></head><body><div class="wrap">${o.body}</div>${o.script ? `<script nonce="${escAttr(o.nonce)}">${o.script}</script>` : ''}</body></html>`
 }
 
-const header = (practice: string) => `<div class="head"><span class="brand">${escText(practice || 'Documentos')}</span><span>Documentos seguros</span></div>`
+export const header = (practice: string) => `<div class="head"><span class="brand">${escText(practice || 'Documentos')}</span><span>Documentos seguros</span></div>`
 
 /** Same words and same shape for a link that never existed, expired, was voided or belongs to another practice. */
 export function renderInvalidPage(nonce: string): string {

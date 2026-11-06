@@ -73,6 +73,11 @@ export const AUDIT_ACTIONS = {
   'packet.expired': 'Document packet expired',
   'packet.resent': 'Document link re-sent',
   'signer.locked': 'Signer locked after failed verification attempts',
+  'invite.sent': 'Client invitation sent',
+  'invite.resent': 'Client invitation re-sent',
+  'invite.voided': 'Client invitation cancelled',
+  'invite.completed': 'Client completed their registration',
+  'invite.expired': 'Client invitation expired',
   'document.viewed': 'Document opened by client',
   'document.signed': 'Document signed',
   'document.downloaded': 'Signed documents downloaded',
@@ -86,7 +91,7 @@ export type AuditAction = keyof typeof AUDIT_ACTIONS
 
 export const AUDIT_CATEGORIES = [
   { key: 'auth', label: 'Sign-ins', prefixes: ['auth.'] },
-  { key: 'contacts', label: 'Clients', prefixes: ['contact.'] },
+  { key: 'contacts', label: 'Clients', prefixes: ['contact.', 'invite.'] },
   { key: 'notes', label: 'Session notes', prefixes: ['note.', 'risk.'] },
   { key: 'documents', label: 'Documents', prefixes: ['template.', 'packet.', 'document.', 'signer.'] },
   { key: 'pipeline', label: 'Pipeline', prefixes: ['pipeline.', 'opportunity.'] },

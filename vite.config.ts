@@ -12,6 +12,7 @@ export default defineConfig({
       '/api': { target: 'http://localhost:8790', changeOrigin: true },
       // client-facing signing pages are served by the API
       '^/d/.*': { target: 'http://localhost:8790', changeOrigin: true },
+      '^/i/.*': { target: 'http://localhost:8790', changeOrigin: true },
     },
   },
 })

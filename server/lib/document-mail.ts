@@ -46,3 +46,11 @@ export const sendCopyEmail = (s: EmailSender | null, why: string | undefined, o:
     subject: `${o.practice}: sus documentos firmados`,
     text: `Hola ${first(o.name)}:\n\nSus documentos firmados están disponibles en este enlace (válido por 30 días):\n\n${o.link}\n\nPara abrirlos tendrá que verificar su identidad con un código.`,
   })
+
+export const sendInviteEmail = (s: EmailSender | null, why: string | undefined, o: { practice: string; to: string; name: string; link: string; days: number }) =>
+  send(s, why, {
+    to: o.to,
+    toName: o.name,
+    subject: `${o.practice}: complete su registro`,
+    text: `Hola ${first(o.name)}:\n\n${o.practice} le invita a completar sus datos de registro. Use este enlace seguro (válido por ${o.days} días):\n\n${o.link}\n\nSi no esperaba este mensaje, ignórelo.`,
+  })

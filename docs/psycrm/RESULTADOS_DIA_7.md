@@ -16,3 +16,5 @@ Spec: [`specs/day-07-onboarding-automation.md`](specs/day-07-onboarding-automati
 
 ## Pendientes y advertencias
 Ver "Estado de implementación (día 7)" en el spec. Lo más importante: **sin un proveedor de correo con BAA, nada de esto debe usarse con clientes reales**, las esperas siguen en memoria, y `PUBLIC_BASE_URL` debe estar configurada.
+
+> **Después del día 7:** `send_document_packet` acepta `adolescentPacketId` (paquete adolescente al tutor) para la [invitación al cliente](RESULTADOS_INVITACION.md); el workflow W1 sembrado lo trae.

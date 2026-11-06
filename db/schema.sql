@@ -1585,3 +1585,25 @@ CREATE TRIGGER signed_documents_immutable BEFORE UPDATE OR DELETE ON signed_docu
 DROP TRIGGER IF EXISTS signed_documents_no_truncate ON signed_documents;
 CREATE TRIGGER signed_documents_no_truncate BEFORE TRUNCATE ON signed_documents
   FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
+
+-- PsyCRM: a client invitation. The therapist enters a name and an email; the person gets a one-time
+-- link, fills in their own details (and date of birth) and only THEN does a contact exist, so the
+-- record always starts complete. Only sha256(token) is stored.
+CREATE TABLE IF NOT EXISTS client_invites (
+  id           text PRIMARY KEY,
+  location_id  text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  kind         text NOT NULL CHECK (kind IN ('adult','guardian')),
+  name         text NOT NULL,
+  email        text NOT NULL,
+  token_hash   text NOT NULL UNIQUE,
+  status       text NOT NULL DEFAULT 'sent' CHECK (status IN ('sent','completed','expired','voided')),
+  sent_by      text NOT NULL,
+  sent_at      timestamptz NOT NULL DEFAULT now(),
+  expires_at   timestamptz NOT NULL DEFAULT now() + interval '14 days',
+  opened_at    timestamptz,
+  completed_at timestamptz,
+  voided_at    timestamptz,
+  contact_id   text REFERENCES contacts(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS client_invites_location ON client_invites(location_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS client_invites_open ON client_invites(location_id, status, expires_at);

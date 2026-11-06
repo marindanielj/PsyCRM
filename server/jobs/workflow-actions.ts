@@ -114,30 +114,46 @@ export async function executeAction(ctx: ActionContext, action: WorkflowAction, 
 
     case 'send_document_packet': {
       if (!contact) return { ...base, status: 'skipped', detail: 'No contact to send to' }
-      const packetId = str(cfg.packetId)
-      if (!packetId) return { ...base, status: 'skipped', detail: 'No packet configured' }
-      const packet = await new DocumentPacketsRepo(db, locationId).get(packetId)
-      if (!packet || packet.archivedAt) return { ...base, status: 'failed', detail: 'The packet no longer exists' }
+      const adultId = str(cfg.packetId)
+      const teenId = str(cfg.adolescentPacketId)
+      if (!adultId && !teenId) return { ...base, status: 'skipped', detail: 'No packet configured' }
       const task = (title: string, body: string) => createTaskOnce(db, locationId, { contactId: contact.id, title, body })
+      const today = deps.now ? todayIn(undefined, deps.now()) : undefined
 
-      // A minor's packet needs a guardian, so a person sends it. Never the adult packet by default.
-      if (packet.audience === 'adolescent') {
-        await task('Send adolescent onboarding packet (guardian required)', 'Adolescent packets need a parent or guardian as signer: send it from the client’s Documents tab.')
-        return { ...base, status: 'skipped', detail: 'Adolescent packets are sent by hand (a guardian must sign)' }
-      }
+      // The packet follows the client's age; with no date of birth nothing is sent (never the adult packet by default).
       const dob = contact.custom_fields?.date_of_birth
       if (!isValidIsoDate(dob)) {
         await task('Add date of birth to send the onboarding packet', 'The date of birth decides which packet is sent. Add it to the record, then send the packet from the Documents tab.')
         return { ...base, status: 'skipped', detail: 'No date of birth on the record' }
       }
-      if (isMinor(dob, deps.now ? todayIn(undefined, deps.now()) : undefined)) {
-        await task('Send adolescent onboarding packet (guardian required)', 'This client is under 18: send the adolescent packet from the Documents tab, with a parent or guardian as signer.')
-        return { ...base, status: 'skipped', detail: 'The client is under 18: the adult packet was not sent' }
+      const minor = isMinor(dob, today) === true
+      const packetId = minor ? teenId : adultId
+      if (!packetId) {
+        // No adolescent packet is configured: a person sends it (it needs a guardian).
+        if (minor) await task('Send adolescent onboarding packet (guardian required)', 'This client is under 18: send the adolescent packet from the Documents tab, with a parent or guardian as signer.')
+        return { ...base, status: 'skipped', detail: minor ? 'The client is under 18: the adult packet was not sent' : 'No adult packet configured' }
       }
-      const email = contact.emails[0]
-      if (!email) {
-        await task('Add an email to send the onboarding packet', 'The client has no email on record, so the packet could not be sent.')
-        return { ...base, status: 'skipped', detail: 'The contact has no email' }
+      const packet = await new DocumentPacketsRepo(db, locationId).get(packetId)
+      if (!packet || packet.archivedAt) return { ...base, status: 'failed', detail: 'The packet no longer exists' }
+      if (packet.audience !== (minor ? 'adolescent' : 'adult')) return { ...base, status: 'skipped', detail: 'The packet does not fit the client\'s age' }
+
+      // Who signs: the client for an adult; the parent or guardian (recorded at registration) for a minor.
+      let signer: { role: 'client' | 'guardian'; name: string; email: string }
+      if (minor) {
+        const gName = str(contact.custom_fields?.guardian_name).trim()
+        const gEmail = str(contact.custom_fields?.guardian_email).trim()
+        if (!gName || !gEmail) {
+          await task('Add the guardian\'s name and email to send the adolescent packet', 'The adolescent packet is signed by a parent or guardian. Add their name and email to the record (Guardian fields), then send the packet from the Documents tab.')
+          return { ...base, status: 'skipped', detail: 'No guardian name and email on the record' }
+        }
+        signer = { role: 'guardian', name: gName, email: gEmail }
+      } else {
+        const email = contact.emails[0]
+        if (!email) {
+          await task('Add an email to send the onboarding packet', 'The client has no email on record, so the packet could not be sent.')
+          return { ...base, status: 'skipped', detail: 'The contact has no email' }
+        }
+        signer = { role: 'client', name: contactName(contact), email }
       }
       if (await new DocumentRequestsRepo(db, locationId).hasLiveRequest(contact.id, packetId)) {
         return { ...base, status: 'skipped', detail: 'This packet was already sent' }
@@ -145,7 +161,7 @@ export async function executeAction(ctx: ActionContext, action: WorkflowAction, 
 
       const sent = await sendDocumentPacket(
         { db, locationId, today: deps.now ? () => todayIn(undefined, deps.now!()) : undefined, resolveEmail: deps.resolveEmail, baseUrl: deps.publicBaseUrl ?? null },
-        { contactId: contact.id, packetId, excludeFamilyIds: [], signers: [{ role: 'client', name: contactName(contact), email }] },
+        { contactId: contact.id, packetId, excludeFamilyIds: [], signers: [signer] },
         { sentBy: `workflow:${workflow.id}`, audit: auditCtx },
       )
       if (!sent.ok) {
