@@ -31,6 +31,19 @@ async function main() {
     sessionSecret: 'dev-only-change-me',
     webhookSecret: 'dev-secret',
     secure: false,
+    // No email provider offline: print what would be sent (fictional demo data only), so the
+    // signing flow can be walked end to end — links and one-time codes show up in this log.
+    resolveEmail: async () => ({
+      ok: true,
+      sender: {
+        name: 'dev-console',
+        sendEmail: async (m) => {
+          console.log(`\n[dev email] to=${m.to}\n[dev email] subject=${m.subject}\n${m.text.split('\n').map((l) => `[dev email] ${l}`).join('\n')}\n`)
+          return { externalId: 'dev', provider: 'dev-console' }
+        },
+      },
+    }),
+    publicBaseUrl: 'http://localhost:5273',
     // No pg-boss against pglite — run the dispatch in-process so triggers fire
     // (and `wait` steps defer via the runner's default setTimeout) right here.
     dispatch: async (e) => {

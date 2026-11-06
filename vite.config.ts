@@ -10,6 +10,8 @@ export default defineConfig({
     port: 5273,
     proxy: {
       '/api': { target: 'http://localhost:8790', changeOrigin: true },
+      // client-facing signing pages are served by the API
+      '^/d/.*': { target: 'http://localhost:8790', changeOrigin: true },
     },
   },
 })

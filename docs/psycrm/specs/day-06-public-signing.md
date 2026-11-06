@@ -191,3 +191,30 @@ En el caso adolescente, el **tutor** y el **menor** reciben cada uno su propio e
 
 ## Archivos
 `db/schema.sql`, `server/lib/document-tokens.ts` (nuevo), `server/lib/document-page.ts` (nuevo, shell público y pasos), `server/lib/document-render.ts`, `server/repos/document-requests-repo.ts` (nuevo), `server/repos/signed-documents-repo.ts` (nuevo), `server/routes/documents.ts`, `server/routes/public-documents.ts` (nuevo), `server/index.ts`, `server/lib/sending/*`, `src/features/documents/{SendPacketDialog,RequestCard,SignedDocumentViewer,SentPage}.tsx` (nuevo), `src/features/contacts/ContactDetail.tsx`, `src/lib/api.ts`.
+
+---
+
+## Estado de implementación (día 6)
+
+**Hecho y verificado** (typecheck limpio; 210 archivos / 1852 pruebas en verde; recorrido completo en navegador: operador envía → cliente en iPhone SE (375 px) verifica con código, firma los 6 documentos con firma dibujada y descarga su copia → el operador abre el documento firmado; ver [`../RESULTADOS_DIA_6.md`](../RESULTADOS_DIA_6.md)).
+
+**Diferencias respecto a lo escrito arriba**
+- **Una sola ruta pública: `/d/:token/*`** (no `/api/public/documents`). La cookie del firmante (`ds_<signerId>`, `path=/d/`) solo la recibiría esa ruta, así que todo vive ahí. `/d/` recibe los mismos encabezados de seguridad que `/api/public/` (sin la CSP global) y **cada página trae su propia CSP con nonce**: `default-src 'none'; script-src 'nonce-…'`.
+- **La página de "enlace inválido" no nombra a la práctica.** Nombrarla delataría que el token existió (vencido o anulado). Un token desconocido, mal formado, anulado, vencido o de una práctica con el módulo apagado dan exactamente los mismos bytes.
+- **El hash no aparece dentro del HTML firmado.** `content_sha256 = sha256(rendered_html)` es circular si el HTML incluye su propio hash. El HTML lleva el id del documento; el hash se muestra en el visor del operador, que además **recalcula** el hash y avisa si no coincide ("record intact").
+- **Rol del tutor:** en el paquete adolescente el tutor firma también los documentos escritos para el rol `client` (privacidad, cancelación, honorarios, admisión). La asignación es de sistema (`document-assignment.ts`), no la elige el cliente.
+- **`mapsTo` sin sobrescribir:** nombre, correo y teléfono se copian solo si el contacto no los tiene; una diferencia queda en `custom.intake_conflicts` con un aviso en el perfil. **La fecha de nacimiento nunca se reemplaza** (decide el paquete): una diferencia retiene el paquete.
+- **Retención por revisión:** si la fecha de nacimiento respondida difiere del expediente, o no calza con el paquete (adulto/menor), el request queda `in_progress` con `needs_review`, se crea la tarea "Review: date of birth mismatch for …" y se audita `packet.age_mismatch`. Se agregó `POST /requests/:id/accept-review` para que la terapeuta lo acepte.
+- **"Copy link" solo existe al enviar y al reenviar:** el token no se guarda, así que no se puede recuperar. Resend crea un enlace nuevo y lo muestra.
+- **Resend también desbloquea** al firmante (cinco códigos fallidos lo bloquean).
+- **Audit nuevos:** `packet.voided`, `packet.expired`, `packet.resent`, `signer.locked`; trigger nuevo `documents_completed`.
+- **Vencimiento perezoso:** un request pasado de fecha se marca `expired` (con tarea de seguimiento) la primera vez que alguien lo consulta (lista del operador o enlace del cliente). No hay job diario todavía.
+- **Dev:** `dev-server.ts` imprime los correos (enlaces y códigos) en la consola; Vite proxea `^/d/.*` al API.
+
+**Pendiente / sin verificar**
+- **Correo real:** solo existe el adaptador de Brevo (`resolveEmailSender`). Brevo no tiene BAA; el plan era SES. Hasta tener un adaptador de SES (y su BAA), **el flujo de códigos por email no debe usarse con clientes reales**. El correo no lleva datos clínicos, pero sí el nombre de la práctica y el enlace.
+- **`after: [familia]`** (orden obligatorio entre documentos) **no está implementado**; los documentos se muestran en orden pero se pueden firmar en cualquier orden.
+- **Campos por rol dentro de un mismo documento** (la "sección del menor" del cuestionario del tutor) no están: todos los campos de un documento los llena quien lo firma.
+- **Límite de tasa en memoria**, por proceso (suficiente para una sola tarea ECS; hay que moverlo a un almacén compartido si se escala).
+- La **zona horaria de la fecha de firma** es siempre AST (Puerto Rico).
+- La concurrencia real (dos pestañas firmando a la vez) se prueba contra Postgres real en el día 8; el `FOR UPDATE` sobre signer y request la serializa.

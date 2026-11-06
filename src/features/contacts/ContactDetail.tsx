@@ -10,6 +10,7 @@ import { useTenant } from '../../state/location'
 import { ClientRiskBadge } from '../session-notes/RiskBadge'
 import { NotesTab } from '../session-notes/NotesTab'
 import { ContactAudit } from '../audit/ContactAudit'
+import { ContactDocuments } from '../documents/ContactDocuments'
 import { ConfirmDeleteContactDialog } from './ConfirmDeleteContactDialog'
 import { ContactCustomFields } from './ContactCustomFields'
 import { ContactState } from './ContactState'
@@ -39,6 +40,7 @@ export function ContactDetail({
   const [confirming, setConfirming] = useState(false)
   const { current } = useTenant()
   const clinicalNotes = moduleEnabled(current, 'session_notes')
+  const documentsOn = moduleEnabled(current, 'documents')
 
   useEffect(() => {
     let active = true
@@ -115,6 +117,13 @@ export function ContactDetail({
           </InfoRow>
         </div>
 
+        {Object.keys((contact.custom_fields.intake_conflicts as object | undefined) ?? {}).length > 0 && (
+          <div role="note" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <strong>Intake answers differ from record – review.</strong> The client answered differently for:{' '}
+            {Object.entries(contact.custom_fields.intake_conflicts as Record<string, { record: string; answered: string }>).map(([k, v]) => `${k.replace(/_/g, ' ')} (record: ${v.record}, answered: ${v.answered})`).join('; ')}.
+          </div>
+        )}
+
         <div className="mt-3">
           <ContactState locationId={locationId} contactId={contactId} initialState={contact.state} />
         </div>
@@ -134,6 +143,12 @@ export function ContactDetail({
         <div className="mt-8">
           <Tasks locationId={locationId} contactId={contactId} />
         </div>
+
+        {documentsOn && (
+          <div className="mt-8">
+            <ContactDocuments locationId={locationId} contactId={contactId} contactName={name} contactEmail={contact.emails[0] ?? null} customFields={contact.custom_fields} />
+          </div>
+        )}
 
         {clinicalNotes ? (
           // Clinical session notes replace the free-text "Notes" panel: those can be edited

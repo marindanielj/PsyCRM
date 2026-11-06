@@ -97,6 +97,7 @@ export default function App() {
           <Route path="contacts/:id/notes/:noteId" element={<RequireModule module="session_notes"><NoteReportPage /></RequireModule>} />
           <Route path="contacts/:id/notes/:noteId/edit" element={<RequireModule module="session_notes"><NoteWizardPage mode="edit" /></RequireModule>} />
           <Route path="documents" element={<RequireModule module="documents"><DocumentsPage tab="templates" /></RequireModule>} />
+          <Route path="documents/sent" element={<RequireModule module="documents"><DocumentsPage tab="sent" /></RequireModule>} />
           <Route path="documents/packets" element={<RequireModule module="documents"><DocumentsPage tab="packets" /></RequireModule>} />
           <Route path="documents/templates/:id" element={<RequireModule module="documents"><TemplateEditorPage /></RequireModule>} />
           <Route path="documents/packets/:id" element={<RequireModule module="documents"><PacketEditorPage /></RequireModule>} />

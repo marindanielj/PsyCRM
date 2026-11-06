@@ -1,4 +1,5 @@
 import type { PracticeProfile } from '../repos/practice-repo'
+import { fieldVisible } from './document-answers'
 import { DISPLAY_TYPES, type SignerRole, type TemplateField } from './document-vocab'
 import { escAttr, escText } from './page-html'
 
@@ -161,12 +162,7 @@ function valueOf(values: Record<string, unknown> | undefined, key: string): unkn
   return values?.[key]
 }
 
-function showIfHolds(f: TemplateField, values: Record<string, unknown> | undefined): boolean {
-  if (!f.showIf) return true
-  const v = valueOf(values, f.showIf.key)
-  if (typeof f.showIf.equals === 'boolean') return v === f.showIf.equals || v === String(f.showIf.equals)
-  return v === f.showIf.equals
-}
+const showIfHolds = fieldVisible
 
 function optionLabel(f: TemplateField, value: string): string {
   return f.options?.find((o) => o.value === value)?.label ?? value
@@ -204,36 +200,42 @@ function renderOneField(f: TemplateField, t: RenderableTemplate, ctx: RenderCont
 
   const disabled = ctx.mode === 'preview' ? ' disabled' : ''
   const req = f.required && ctx.mode === 'fill' ? ' required' : ''
+  const cur = ctx.mode === 'fill' ? valueOf(ctx.values, f.key) : undefined
+  const curStr = typeof cur === 'string' ? cur : ''
+  const curArr = Array.isArray(cur) ? cur.map(String) : []
+  const val = curStr ? ` value="${escAttr(curStr)}"` : ''
+  const sel = (v: string) => (curStr === v ? ' selected' : '')
+  const chk = (on: boolean) => (on ? ' checked' : '')
   let control: string
   switch (f.type) {
     case 'textarea':
-      control = `<textarea name="${name}" rows="4"${disabled}${req}></textarea>`
+      control = `<textarea name="${name}" rows="4"${disabled}${req}>${escText(curStr)}</textarea>`
       break
     case 'select':
-      control = `<select name="${name}"${disabled}${req}><option value=""></option>${(f.options ?? []).map((o) => `<option value="${escAttr(o.value)}">${escText(o.label)}</option>`).join('')}</select>`
+      control = `<select name="${name}"${disabled}${req}><option value=""></option>${(f.options ?? []).map((o) => `<option value="${escAttr(o.value)}"${sel(o.value)}>${escText(o.label)}</option>`).join('')}</select>`
       break
     case 'radio':
-      control = `<span class="doc-options">${(f.options ?? []).map((o) => `<label><input type="radio" name="${name}" value="${escAttr(o.value)}"${disabled}${req}> ${escText(o.label)}</label>`).join('')}</span>`
+      control = `<span class="doc-options">${(f.options ?? []).map((o) => `<label><input type="radio" name="${name}" value="${escAttr(o.value)}"${chk(curStr === o.value)}${disabled}${req}> ${escText(o.label)}</label>`).join('')}</span>`
       break
     case 'checkbox_group':
-      control = `<span class="doc-options">${(f.options ?? []).map((o) => `<label><input type="checkbox" name="${name}" value="${escAttr(o.value)}"${disabled}> ${escText(o.label)}</label>`).join('')}</span>`
+      control = `<span class="doc-options">${(f.options ?? []).map((o) => `<label><input type="checkbox" name="${name}" value="${escAttr(o.value)}"${chk(curArr.includes(o.value))}${disabled}> ${escText(o.label)}</label>`).join('')}</span>`
       break
     case 'checkbox':
-      control = `<label class="doc-check"><input type="checkbox" name="${name}" value="true"${disabled}${req}> ${label}${star}</label>`
+      control = `<label class="doc-check"><input type="checkbox" name="${name}" value="true"${chk(cur === true || cur === 'true')}${disabled}${req}> ${label}${star}</label>`
       return `<div class="${cls}"${showIf}>${control}${help}</div>`
     case 'yes_no':
-      control = `<span class="doc-options"><label><input type="radio" name="${name}" value="yes"${disabled}${req}> ${YES_NO[t.locale][0]}</label><label><input type="radio" name="${name}" value="no"${disabled}${req}> ${YES_NO[t.locale][1]}</label></span>`
+      control = `<span class="doc-options"><label><input type="radio" name="${name}" value="yes"${chk(curStr === 'yes')}${disabled}${req}> ${YES_NO[t.locale][0]}</label><label><input type="radio" name="${name}" value="no"${chk(curStr === 'no')}${disabled}${req}> ${YES_NO[t.locale][1]}</label></span>`
       break
     case 'initials':
-      control = `<input type="text" name="${name}" maxlength="6" size="6" autocomplete="off"${disabled}${req}>`
+      control = `<input type="text" name="${name}" maxlength="6" size="6" autocomplete="off"${val}${disabled}${req}>`
       break
     default:
-      control = `<input type="${INPUT_TYPE[f.type] ?? 'text'}" name="${name}"${disabled}${req}>`
+      control = `<input type="${INPUT_TYPE[f.type] ?? 'text'}" name="${name}"${val}${disabled}${req}>`
   }
   return `<div class="${cls}"${showIf}>${head}${control}${help}</div>`
 }
 
-const STYLE = `
+export const DOC_STYLE = `
 body{font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif;color:#0f172a;margin:0;background:#fff}
 .doc{max-width:720px;margin:0 auto;padding:24px 20px}
 .doc h1{font-size:1.5rem;margin:.2em 0 .8em}.doc h2{font-size:1.2rem;margin:1.4em 0 .4em}.doc h3,.doc h4{font-size:1.05rem;margin:1.2em 0 .3em}
@@ -247,6 +249,9 @@ body{font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif;color:#0f172a;ma
 .doc-help{display:block;color:#475569;margin-top:.25em}.doc-answer{display:block;padding:.3em 0;border-bottom:1px dotted #94a3b8;white-space:pre-wrap}
 .doc-badge{display:inline-block;font-size:.75rem;background:#e2e8f0;color:#334155;border-radius:999px;padding:.1em .6em;margin-left:.5em;vertical-align:middle}
 .doc-sep{break-after:page;margin:0}
+.doc-sign{margin:2em 0 0;padding:1em;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;break-inside:avoid;font-size:.9rem}
+.doc-sign img{display:block;max-width:320px;height:auto;margin:.5em 0;border-bottom:1px solid #0f172a;background:#fff}
+.doc-sign small{display:block;color:#475569;margin-top:.4em}
 `
 
 /** The document's HTML fragment (title + body + any fields not placed inline). */
@@ -268,7 +273,7 @@ export function renderDocumentBody(t: RenderableTemplate, ctx: RenderContext): s
 }
 
 export function documentShell(title: string, body: string, locale: 'es' | 'en' = 'es'): string {
-  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${escText(title)}</title><style>${STYLE}</style></head><body>${body}</body></html>`
+  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${escText(title)}</title><style>${DOC_STYLE}</style></head><body>${body}</body></html>`
 }
 
 export function renderDocumentHtml(t: RenderableTemplate, ctx: RenderContext): string {
@@ -282,3 +287,36 @@ export function renderPacketHtml(templates: RenderableTemplate[], ctx: RenderCon
 }
 
 export { DISPLAY_TYPES }
+
+/** "5 de noviembre de 2026, 3:42 p. m. AST" — an instant shown in practice time (Puerto Rico, UTC-4 all year). */
+export function longDateTime(at: Date, locale: 'es' | 'en'): string {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Puerto_Rico', year: 'numeric', month: '2-digit', day: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true }).formatToParts(at)
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? ''
+  const date = longDate(`${get('year')}-${get('month')}-${get('day')}`, locale)
+  const ampm = get('dayPeriod').toUpperCase() === 'AM' ? (locale === 'es' ? 'a. m.' : 'AM') : locale === 'es' ? 'p. m.' : 'PM'
+  return `${date}, ${get('hour')}:${get('minute')} ${ampm} AST`
+}
+
+export interface SignatureEvidence {
+  signerName: string
+  signedAt: Date
+  ip: string
+  maskedEmail: string
+  /** A `data:image/png;base64,…` URL, or null when the template asks for no drawn signature. */
+  signaturePng: string | null
+  documentId: string
+  locale: 'es' | 'en'
+}
+
+/** The closing block of a signed document: who signed, when, from where, how they were verified. */
+export function renderSignatureBlock(e: SignatureEvidence): string {
+  const es = e.locale === 'es'
+  const img = e.signaturePng ? `<img src="${escAttr(e.signaturePng)}" alt="${es ? 'Firma' : 'Signature'}">` : ''
+  return `<section class="doc-sign" aria-label="${es ? 'Firma electrónica' : 'Electronic signature'}">
+<strong>${es ? 'Firmado electrónicamente por' : 'Electronically signed by'} ${escText(e.signerName)}</strong>
+${img}
+<small>${es ? 'Fecha' : 'Date'}: ${escText(longDateTime(e.signedAt, e.locale))} · IP ${escText(e.ip)}</small>
+<small>${es ? 'Verificado por código enviado a' : 'Verified by a code sent to'} ${escText(e.maskedEmail)}</small>
+<small>${es ? 'Documento' : 'Document'} ${escText(e.documentId)}</small>
+</section>`
+}

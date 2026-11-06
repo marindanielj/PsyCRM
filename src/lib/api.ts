@@ -2051,6 +2051,61 @@ export interface DocPacket {
 export interface DocPacketItem { familyId: string; templateId: string; title: string; version: number; status: string; active: boolean }
 export interface DocMeta { mergeFields: { token: string; label: string }[]; fieldTypes: DocFieldType[] }
 
+export type DocRequestStatus = 'sent' | 'in_progress' | 'completed' | 'expired' | 'voided'
+export interface DocRequestSigner {
+  id: string
+  role: SignerRole
+  name: string
+  email: string
+  status: 'pending' | 'viewed' | 'in_progress' | 'completed'
+  verifiedAt: string | null
+  firstViewedAt: string | null
+  completedAt: string | null
+  locked: boolean
+}
+export interface DocRequestDocument {
+  templateId: string
+  familyId: string
+  title: string
+  version: number
+  signerId: string | null
+  signerRole: SignerRole | null
+  signedDocumentId: string | null
+  signedAt: string | null
+}
+export interface DocRequest {
+  id: string
+  contactId: string
+  contactName: string | null
+  packetId: string | null
+  packetName: string
+  audience: 'adult' | 'adolescent'
+  status: DocRequestStatus
+  sentAt: string
+  expiresAt: string
+  completedAt: string | null
+  voidedAt: string | null
+  voidReason: string | null
+  needsReview: string | null
+  signers: DocRequestSigner[]
+  documents: DocRequestDocument[]
+}
+export interface SentSigner { id: string; role: SignerRole; name: string; email: string; link: string; emailed: boolean; emailIssue: string | null }
+export interface SignedDocSummary {
+  id: string
+  requestId: string
+  contactId: string
+  signerRole: SignerRole
+  signerName: string
+  templateId: string
+  templateTitle: string
+  templateVersion: number
+  locale: 'es' | 'en'
+  signedAt: string
+  contentSha256: string
+}
+export interface SignedDoc extends SignedDocSummary { renderedHtml: string; fieldValues: Record<string, unknown>; signerIp: string; verifiedVia: string; intact: boolean }
+
 export const api = {
   login: (email: string, password: string) =>
     req<{ ok: true; operator: Operator }>('/auth/login', {
@@ -2092,6 +2147,17 @@ export const api = {
       req<{ ok: true; packet: DocPacket }>(`/loc/${loc}/documents/packets/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
     previewPacket: (loc: string, id: string, contactId?: string) =>
       req<{ html: string }>(`/loc/${loc}/documents/packets/${id}/preview`, { method: 'POST', body: JSON.stringify({ contactId }) }),
+    requests: (loc: string, filters: { contactId?: string; status?: DocRequestStatus } = {}) =>
+      req<{ requests: DocRequest[] }>(`/loc/${loc}/documents/requests${qs(filters)}`),
+    sendPacket: (loc: string, input: { contactId: string; packetId: string; excludeFamilyIds: string[]; signers: { role: SignerRole; name: string; email: string }[] }) =>
+      req<{ ok: true; request: DocRequest; signers: SentSigner[]; warnings: string[] }>(`/loc/${loc}/documents/requests`, { method: 'POST', body: JSON.stringify(input) }),
+    resend: (loc: string, requestId: string, signerId: string) =>
+      req<{ ok: true; signer: { id: string; role: SignerRole; link: string; emailed: boolean; emailIssue: string | null } }>(`/loc/${loc}/documents/requests/${requestId}/resend`, { method: 'POST', body: JSON.stringify({ signerId }) }),
+    voidRequest: (loc: string, requestId: string, reason: string) =>
+      req<{ ok: true }>(`/loc/${loc}/documents/requests/${requestId}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    acceptReview: (loc: string, requestId: string) => req<{ ok: true }>(`/loc/${loc}/documents/requests/${requestId}/accept-review`, { method: 'POST' }),
+    signedList: (loc: string, contactId: string) => req<{ documents: SignedDocSummary[] }>(`/loc/${loc}/documents/signed${qs({ contactId })}`),
+    signed: (loc: string, id: string) => req<{ document: SignedDoc }>(`/loc/${loc}/documents/signed/${id}`),
   },
 
   sessionNotes: {

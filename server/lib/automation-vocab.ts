@@ -14,6 +14,7 @@ export const TRIGGER_TYPES = [
   'pipeline_stage_changed',
   'session_note_signed',
   'appointment_checked_in',
+  'documents_completed',
 ] as const
 
 export const ACTION_TYPES = ['send_sms', 'send_email', 'add_tag', 'wait'] as const
@@ -32,6 +33,7 @@ export const TRIGGER_LABELS: Record<TriggerType, string> = {
   pipeline_stage_changed: 'Pipeline stage changed',
   session_note_signed: 'Session note signed',
   appointment_checked_in: 'Client checked in',
+  documents_completed: 'Onboarding documents completed',
 }
 
 export const ACTION_LABELS: Record<ActionType, string> = {

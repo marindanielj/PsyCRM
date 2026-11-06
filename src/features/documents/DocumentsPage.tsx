@@ -7,23 +7,25 @@ import { PageSpinner } from '../../components/ui/spinner'
 import { type DocPacket, type DocTemplateSummary, api } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { useTenant } from '../../state/location'
+import { SentList } from './SentList'
 import { STATUS_VARIANT } from './TemplateEditorPage'
 
 const KIND_LABEL = { agreement: 'Agreement', intake_form: 'Intake form' } as const
 const AUDIENCE_LABEL = { adult: 'Adult (18+)', adolescent: 'Adolescent (under 18)' } as const
 
-function Tabs({ active }: { active: 'templates' | 'packets' }) {
+function Tabs({ active }: { active: 'templates' | 'packets' | 'sent' }) {
   const cls = (on: boolean) => cn('border-b-2 px-3 py-2 text-sm font-medium', on ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-600 hover:text-slate-900')
   return (
     <nav aria-label="Documents sections" className="mb-5 flex gap-1 border-b border-slate-200">
       <NavLink to="/documents" end className={cls(active === 'templates')}>Templates</NavLink>
       <NavLink to="/documents/packets" className={cls(active === 'packets')}>Packets</NavLink>
+      <NavLink to="/documents/sent" className={cls(active === 'sent')}>Sent</NavLink>
     </nav>
   )
 }
 
 /** Documents -> Templates | Packets. */
-export function DocumentsPage({ tab }: { tab: 'templates' | 'packets' }) {
+export function DocumentsPage({ tab }: { tab: 'templates' | 'packets' | 'sent' }) {
   const { current } = useTenant()
   const loc = current?.id
   const nav = useNavigate()
@@ -36,6 +38,7 @@ export function DocumentsPage({ tab }: { tab: 'templates' | 'packets' }) {
     if (!loc) return
     let live = true
     setError(null)
+    if (tab === 'sent') return
     if (tab === 'templates') {
       setTemplates(null)
       api.documents.templates(loc).then((r) => live && setTemplates(r.templates)).catch(() => live && (setTemplates([]), setError('Could not load templates.')))
@@ -75,12 +78,14 @@ export function DocumentsPage({ tab }: { tab: 'templates' | 'packets' }) {
     <div className="mx-auto max-w-5xl p-4 sm:p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold text-slate-900">Documents</h1>
-        <Button disabled={busy} onClick={tab === 'templates' ? newTemplate : newPacket}><Plus className="h-4 w-4" /> {tab === 'templates' ? 'New template' : 'New packet'}</Button>
+        {tab !== 'sent' && <Button disabled={busy} onClick={tab === 'templates' ? newTemplate : newPacket}><Plus className="h-4 w-4" /> {tab === 'templates' ? 'New template' : 'New packet'}</Button>}
       </div>
       <Tabs active={tab} />
       {error && <div role="alert" className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</div>}
 
-      {tab === 'templates' ? (
+      {tab === 'sent' ? (
+        loc ? <SentList locationId={loc} /> : null
+      ) : tab === 'templates' ? (
         templates === null ? <PageSpinner /> : templates.length === 0 ? (
           <p className="text-sm text-slate-600">No templates yet.</p>
         ) : (

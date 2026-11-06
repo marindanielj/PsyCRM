@@ -268,3 +268,16 @@ test('the documents API sits behind the documents module: on by default, 404 for
   expect((await app(off).request('/api/loc/locA/documents/templates', { headers: cookie() })).status).toBe(404)
   expect(off.calls.some((c) => /document_templates/.test(c.sql))).toBe(false)
 })
+
+test('the public signing pages carry their own nonce-based CSP (not the app-wide one) and are never cached', async () => {
+  const res = await app(new FakeDatabase()).request(`/d/${'A'.repeat(43)}`)
+  expect(res.status).toBe(404)
+  const csp = res.headers.get('content-security-policy') ?? ''
+  expect(csp).toMatch(/script-src 'nonce-[^']+'/)
+  expect(csp).not.toMatch(/script-src[^;]*'self'/)
+  expect(res.headers.get('cache-control')).toBe('no-store')
+  expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+  expect(res.headers.get('x-frame-options')).toBe('DENY')
+  // and the app's own API keeps the strict policy
+  expect((await app(new FakeDatabase()).request('/health')).headers.get('content-security-policy')).toContain("script-src 'self'")
+})

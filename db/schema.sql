@@ -1508,3 +1508,80 @@ CREATE TABLE IF NOT EXISTS document_packets (
   updated_at   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS document_packets_location ON document_packets(location_id);
+
+-- PsyCRM day 6: sending a packet for signature. A request freezes the EXACT template
+-- versions at send time; each signer gets a one-time link (only sha256(token) is stored);
+-- a signature is an immutable record with its evidence.
+CREATE TABLE IF NOT EXISTS document_requests (
+  id           text PRIMARY KEY,
+  location_id  text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id   text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  packet_id    text REFERENCES document_packets(id) ON DELETE SET NULL,
+  packet_name  text NOT NULL,
+  audience     text NOT NULL DEFAULT 'adult' CHECK (audience IN ('adult','adolescent')),
+  template_ids text[] NOT NULL,
+  status       text NOT NULL DEFAULT 'sent' CHECK (status IN ('sent','in_progress','completed','expired','voided')),
+  sent_by      text NOT NULL,
+  sent_at      timestamptz NOT NULL DEFAULT now(),
+  expires_at   timestamptz NOT NULL DEFAULT now() + interval '14 days',
+  completed_at timestamptz,
+  voided_at    timestamptz,
+  void_reason  text,
+  needs_review text
+);
+CREATE INDEX IF NOT EXISTS document_requests_contact ON document_requests(location_id, contact_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS document_requests_open ON document_requests(location_id, status, expires_at);
+
+CREATE TABLE IF NOT EXISTS document_signers (
+  id             text PRIMARY KEY,
+  location_id    text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  request_id     text NOT NULL REFERENCES document_requests(id) ON DELETE RESTRICT,
+  role           text NOT NULL CHECK (role IN ('client','guardian','minor')),
+  name           text NOT NULL,
+  email          text NOT NULL,
+  token_hash     text NOT NULL UNIQUE,
+  status         text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','viewed','in_progress','completed')),
+  otp_hash       text,
+  otp_expires_at timestamptz,
+  otp_attempts   int NOT NULL DEFAULT 0,
+  verified_at    timestamptz,
+  first_viewed_at timestamptz,
+  completed_at   timestamptz,
+  draft_values   jsonb NOT NULL DEFAULT '{}',
+  UNIQUE (request_id, role)
+);
+CREATE INDEX IF NOT EXISTS document_signers_request ON document_signers(request_id);
+
+CREATE TABLE IF NOT EXISTS signed_documents (
+  id                text PRIMARY KEY,
+  location_id       text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id        text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  request_id        text NOT NULL REFERENCES document_requests(id) ON DELETE RESTRICT,
+  signer_id         text NOT NULL REFERENCES document_signers(id) ON DELETE RESTRICT,
+  signer_role       text NOT NULL,
+  template_id       text NOT NULL REFERENCES document_templates(id) ON DELETE RESTRICT,
+  template_title    text NOT NULL,
+  template_version  int NOT NULL,
+  locale            text NOT NULL,
+  field_values      jsonb NOT NULL,
+  rendered_html     text NOT NULL,
+  content_sha256    text NOT NULL,
+  signer_name       text NOT NULL,
+  signature_png     text,
+  esign_consent     boolean NOT NULL CHECK (esign_consent),
+  signer_ip         text NOT NULL,
+  signer_user_agent text NOT NULL,
+  verified_via      text NOT NULL,
+  signed_at         timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (signer_id, template_id)
+);
+CREATE INDEX IF NOT EXISTS signed_documents_contact ON signed_documents(location_id, contact_id, signed_at DESC);
+CREATE INDEX IF NOT EXISTS signed_documents_request ON signed_documents(request_id);
+
+-- A signature is evidence: never edited, never removed (reject_mutation() is defined with the audit log).
+DROP TRIGGER IF EXISTS signed_documents_immutable ON signed_documents;
+CREATE TRIGGER signed_documents_immutable BEFORE UPDATE OR DELETE ON signed_documents
+  FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS signed_documents_no_truncate ON signed_documents;
+CREATE TRIGGER signed_documents_no_truncate BEFORE TRUNCATE ON signed_documents
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();

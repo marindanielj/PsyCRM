@@ -26,7 +26,9 @@ import type { Module } from './lib/modules'
 import { moduleGate } from './middleware/module-gate'
 import { auditRoute } from './routes/audit'
 import { practiceRoute } from './routes/practice'
+import type { ResolvedEmailSender } from './lib/sending/resolve'
 import { documentsRoute } from './routes/documents'
+import { publicDocumentsRoute } from './routes/public-documents'
 import { sessionNotesRoute } from './routes/session-notes'
 import { notifyPush } from './lib/notify-push'
 import type { SendTextFn } from './lib/operator-tools'
@@ -110,6 +112,10 @@ export interface AppDeps {
   idleTtlMs?: number
   /** Directory of the built web app to serve (vite build output). Unset = none. */
   staticDir?: string
+  /** Builds the practice's email sender (signing links and codes). Injectable for tests and dev. */
+  resolveEmail?: (db: Database, locationId: string) => Promise<ResolvedEmailSender>
+  /** Public origin for the links in emails (PUBLIC_BASE_URL). Falls back to each request's origin. */
+  publicBaseUrl?: string
 }
 
 /** Route-group -> module key, for PsyCRM-mode gating. Groups missing here
@@ -186,7 +192,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }
     const strict = secureHeaders({ ...baseHeaders, contentSecurityPolicy: csp })
     const relaxed = secureHeaders({ ...baseHeaders, contentSecurityPolicy: undefined })
-    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') ? relaxed(c, next) : strict(c, next)))
+    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') || c.req.path.startsWith('/d/') ? relaxed(c, next) : strict(c, next)))
     app.use('/api/*', async (c, next) => {
       await next()
       c.header('Cache-Control', 'no-store')
@@ -258,6 +264,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   }
   // Hosted booking pages: pick a day + time, leave details. A booking creates a
   // contact + appointment and fires appointment_booked into live automations.
+  // Client-facing signing pages (one-time-code verified, strict per-page CSP). Always on; a practice that turns the documents module off gets "invalid link".
+  app.route('/d', publicDocumentsRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure, dispatch: deps.dispatch, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
   app.route('/api/public/booking', publicBookingRoute({ db: deps.db, dispatch: deps.dispatch, requireDateOfBirth: true }))
 
   app.use('/api/locations', auth())
@@ -352,7 +360,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // Clinical session notes: DAP + mental status + mandatory risk assessment, locked after 72 h.
   app.route('/api/loc/:loc/session-notes', sessionNotesRoute({ db: deps.db, dispatch: deps.dispatch }))
   // Document templates (versioned, immutable once active) and packets.
-  app.route('/api/loc/:loc/documents', documentsRoute({ db: deps.db }))
+  app.route('/api/loc/:loc/documents', documentsRoute({ db: deps.db, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
   // The audit log (read-only) + its integrity check and CSV export.
   app.route('/api/loc/:loc/audit', auditRoute({ db: deps.db }))
   // The practice profile (name, license, fees, cancellation policy).
@@ -466,6 +474,7 @@ async function bootstrap() {
     webhookSecret: config.CHATWOOT_WEBHOOK_SECRET,
     secure: config.NODE_ENV === 'production',
     staticDir: config.STATIC_DIR,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
     integrations,
     claude,
     dispatch,
