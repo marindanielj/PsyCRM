@@ -47,7 +47,10 @@ Abra la nota → **Print / Save as PDF** y elija "Guardar como PDF".
 
 ![Auditoría](e2e/14-audit-log.png)
 
-## 7. Si algo falla
+## 7. Su marca
+**Settings → Branding:** ponga el nombre de su consultorio, elija su color y suba su logo (PNG, JPEG o WebP, hasta 300 KB). Cambia al instante en la aplicación y en las páginas y los correos que recibe su cliente. El nombre legal de **Settings → Practice** (el de los documentos y las notas impresas) no cambia.
+
+## 8. Si algo falla
 - **El cliente no recibió el correo:** pídale que revise "spam"; en **Documents** o **Invitations** use **Resend**. Si el correo no está configurado, el sistema le muestra el enlace para que lo envíe usted (**Copy link**).
 - **"Este enlace no es válido o expiró":** pasan 14 días, se anuló o ya se usó. Use **Resend**.
 - **Un paquete queda "Needs your review":** la fecha de nacimiento que el cliente escribió no coincide con la del expediente. Revísela; si está bien, **Accept as complete**.

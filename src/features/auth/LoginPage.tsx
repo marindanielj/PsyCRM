@@ -5,6 +5,9 @@ import { Label } from '../../components/ui/label'
 import { ApiError } from '../../lib/api'
 import { useAuth } from '../../state/auth'
 
+// Before anyone signs in there is no practice to take a name from: the deployment names the product (VITE_APP_NAME at build time).
+const APP_NAME = (import.meta.env.VITE_APP_NAME as string | undefined)?.trim() || 'PsyCRM'
+
 export function LoginPage() {
   const { login } = useAuth()
   const [email, setEmail] = useState('')
@@ -30,9 +33,9 @@ export function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
           <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-600 text-lg font-bold text-white shadow-lg">
-            OL
+            {APP_NAME.slice(0, 2).toUpperCase()}
           </span>
-          <h1 className="text-2xl font-semibold tracking-tight text-white">OpenLevel</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">{APP_NAME}</h1>
           <p className="mt-1 text-sm text-slate-400">Sign in to your operator workspace</p>
         </div>
 
@@ -76,7 +79,7 @@ export function LoginPage() {
         </form>
 
         <p className="mt-6 text-center text-xs text-slate-500">
-          OpenLevel · operator workspace
+          {APP_NAME} · operator workspace
         </p>
       </div>
     </div>

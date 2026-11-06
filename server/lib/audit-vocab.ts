@@ -78,6 +78,7 @@ export const AUDIT_ACTIONS = {
   'invite.voided': 'Client invitation cancelled',
   'invite.completed': 'Client completed their registration',
   'invite.expired': 'Client invitation expired',
+  'practice.branding_updated': 'Practice branding changed',
   'document.viewed': 'Document opened by client',
   'document.signed': 'Document signed',
   'document.downloaded': 'Signed documents downloaded',
@@ -98,6 +99,7 @@ export const AUDIT_CATEGORIES = [
   { key: 'appointments', label: 'Appointments', prefixes: ['appointment.'] },
   { key: 'workflows', label: 'Automations', prefixes: ['workflow.'] },
   { key: 'tasks', label: 'Tasks', prefixes: ['task.'] },
+  { key: 'settings', label: 'Settings', prefixes: ['practice.'] },
   { key: 'audit', label: 'Audit log', prefixes: ['audit.'] },
 ] as const
 

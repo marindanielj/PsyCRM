@@ -8,7 +8,7 @@ import { sendInviteEmail } from '../lib/document-mail'
 import { REQUEST_TTL_DAYS, hashToken, newToken } from '../lib/document-tokens'
 import { type ResolvedEmailSender, resolveEmailSender } from '../lib/sending/resolve'
 import { ClientInvitesRepo } from '../repos/client-invites-repo'
-import { PracticeRepo } from '../repos/practice-repo'
+import { displayName } from '../repos/branding-repo'
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -36,10 +36,10 @@ export function invitesRoute(deps: {
   const baseUrl = (c: Context<AppEnv>) => (deps.publicBaseUrl ?? new URL(c.req.url).origin).replace(/\/$/, '')
 
   async function mail(c: Context<AppEnv>, o: { to: string; name: string; token: string }) {
-    const practice = await new PracticeRepo(deps.db, c.get('locationId')).get()
+    const name = (await displayName(deps.db, c.get('locationId'))) || 'Su terapeuta'
     const sender = await (deps.resolveEmail ?? resolveEmailSender)(deps.db, c.get('locationId'))
     const link = `${baseUrl(c)}/i/${o.token}`
-    const r = await sendInviteEmail(sender.ok ? sender.sender : null, sender.ok ? undefined : sender.reason, { practice: practice.name || 'Su terapeuta', to: o.to, name: o.name, link, days: REQUEST_TTL_DAYS })
+    const r = await sendInviteEmail(sender.ok ? sender.sender : null, sender.ok ? undefined : sender.reason, { practice: name, to: o.to, name: o.name, link, days: REQUEST_TTL_DAYS })
     return { link, emailed: r.sent, emailIssue: r.reason ?? null }
   }
 

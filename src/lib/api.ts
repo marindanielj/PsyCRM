@@ -2127,6 +2127,13 @@ export interface ClientInvite {
 }
 export interface InviteSendResult { ok: true; invite: ClientInvite; link: string; emailed: boolean; emailIssue: string | null }
 
+export interface Branding {
+  name: string | null
+  color: string | null
+  logoVersion: string | null
+  logoUrl: string | null
+}
+
 export const api = {
   login: (email: string, password: string) =>
     req<{ ok: true; operator: Operator }>('/auth/login', {
@@ -2143,6 +2150,15 @@ export const api = {
   auditVerify: (loc: string) => req<AuditVerification>(`/loc/${loc}/audit/verify`),
   /** A same-origin URL the browser can navigate to (it carries the session cookie). */
   auditExportUrl: (loc: string, filters: AuditFilters = {}) => `/api/loc/${loc}/audit/export.csv${qs(filters)}`,
+
+  branding: {
+    get: (loc: string) => req<{ branding: Branding }>(`/loc/${loc}/branding`),
+    save: (loc: string, input: { name?: string | null; color?: string | null }) =>
+      req<{ ok: true; branding: Branding }>(`/loc/${loc}/branding`, { method: 'PUT', body: JSON.stringify(input) }),
+    uploadLogo: (loc: string, dataUrl: string) =>
+      req<{ ok: true; branding: Branding }>(`/loc/${loc}/branding/logo`, { method: 'PUT', body: JSON.stringify({ dataUrl }) }),
+    removeLogo: (loc: string) => req<{ ok: true; branding: Branding }>(`/loc/${loc}/branding/logo`, { method: 'DELETE' }),
+  },
 
   invites: {
     list: (loc: string) => req<{ invites: ClientInvite[] }>(`/loc/${loc}/invites`),

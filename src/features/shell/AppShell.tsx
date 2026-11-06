@@ -32,6 +32,7 @@ import {
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Avatar } from '../../components/ui/avatar'
+import { applyAccent, brandLogoUrl, brandName } from '../../lib/brand'
 import { type ModuleKey, moduleEnabled } from '../../lib/modules'
 import { cn } from '../../lib/utils'
 import { useTenant } from '../../state/location'
@@ -116,6 +117,19 @@ function NavRow({ item }: { item: NavItem }) {
   )
 }
 
+/** The practice's logo, or its initials on the accent colour when it has none. */
+function Mark({ name, logo, size }: { name: string; logo: string | null; size: 'sm' | 'lg' }) {
+  const box = size === 'lg' ? 'h-8 w-8 text-sm' : 'h-7 w-7 text-xs'
+  const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('') || 'P'
+  return logo ? (
+    <img src={logo} alt="" className={cn(box, 'shrink-0 rounded-lg bg-white object-contain p-0.5')} />
+  ) : (
+    <span className={cn(box, 'flex shrink-0 items-center justify-center rounded-lg bg-brand-600 font-bold text-white')} aria-hidden="true">
+      {initials}
+    </span>
+  )
+}
+
 /** The persistent app frame: dark sidebar (brand + sub-account switcher + nav +
  *  operator) and a content area that renders the routed page via <Outlet/>.
  *  Below lg the sidebar is an off-canvas drawer behind a hamburger top bar —
@@ -126,6 +140,18 @@ export function AppShell() {
   const nav = NAV.filter((item) => !item.module || moduleEnabled(current, item.module))
   const [navOpen, setNavOpen] = useState(false)
   const { pathname } = useLocation()
+  const name = brandName(current)
+  const logo = brandLogoUrl(current)
+  const accent = typeof current?.branding?.color === 'string' ? current.branding.color : null
+
+  // The practice's own look: its accent colour across the app, its name in the browser tab.
+  useEffect(() => {
+    applyAccent(accent)
+    return () => applyAccent(null)
+  }, [accent])
+  useEffect(() => {
+    document.title = name
+  }, [name])
 
   // A nav tap navigates; the drawer must not outlive the page it was opened on.
   useEffect(() => {
@@ -149,10 +175,8 @@ export function AppShell() {
         )}
       >
         <div className="flex items-center gap-2.5 px-4 pb-3 pt-5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
-            OL
-          </span>
-          <span className="text-[15px] font-semibold tracking-tight text-white">OpenLevel</span>
+          <Mark name={name} logo={logo} size="lg" />
+          <span className="min-w-0 truncate text-[15px] font-semibold tracking-tight text-white">{name}</span>
           <button
             type="button"
             onClick={() => setNavOpen(false)}
@@ -204,10 +228,8 @@ export function AppShell() {
           >
             <Menu className="h-5 w-5" />
           </button>
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-xs font-bold text-white">
-            OL
-          </span>
-          <span className="text-sm font-semibold tracking-tight text-slate-900">OpenLevel</span>
+          <Mark name={name} logo={logo} size="sm" />
+          <span className="min-w-0 truncate text-sm font-semibold tracking-tight text-slate-900">{name}</span>
         </header>
         <Outlet />
       </main>

@@ -10,6 +10,7 @@ import { renderInvalidPage } from '../lib/document-page'
 import { hashToken, looksLikeToken } from '../lib/document-tokens'
 import { completeInvite } from '../lib/invite-complete'
 import { renderInviteDone, renderInviteForm } from '../lib/invite-page'
+import { normalizeBranding, logoUrl, readableBrand } from '../lib/branding'
 import { enabledModules } from '../lib/modules'
 import { SlidingWindowRateLimiter } from '../lib/rate-limit'
 import { type InviteContext, findInviteByTokenHash } from '../repos/client-invites-repo'
@@ -43,7 +44,7 @@ export function publicInvitesRoute(deps: { db: Database; dispatch?: WorkflowDisp
 
   const nonceHeaders = (c: import('hono').Context<AppEnv>): string => {
     const nonce = randomBytes(16).toString('base64')
-    c.header('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'`)
+    c.header('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'`)
     return nonce
   }
 
@@ -53,7 +54,7 @@ export function publicInvitesRoute(deps: { db: Database; dispatch?: WorkflowDisp
     c.header('X-Robots-Tag', 'noindex, nofollow')
   })
 
-  type Valid = InviteContext & { practice: string; brand?: string; usable: boolean }
+  type Valid = InviteContext & { practice: string; brand?: string; logoUrl?: string; usable: boolean }
   async function resolveLink(token: string): Promise<Valid | null> {
     if (!looksLikeToken(token)) return null
     const ctx = await findInviteByTokenHash(deps.db, hashToken(token))
@@ -64,8 +65,8 @@ export function publicInvitesRoute(deps: { db: Database; dispatch?: WorkflowDisp
     const expired = status === 'sent' && new Date(expiresAt).getTime() <= clock().getTime()
     if (status === 'voided' || status === 'expired' || expired) return null
     const practice = await new PracticeRepo(deps.db, ctx.locationId).get()
-    const color = location.branding?.color
-    return { ...ctx, practice: practice.name, brand: typeof color === 'string' ? color : undefined, usable: status === 'sent' }
+    const look = normalizeBranding(location.branding)
+    return { ...ctx, practice: look.name ?? practice.name, brand: look.color ? readableBrand(look.color) : undefined, logoUrl: logoUrl(ctx.locationId, look) ?? undefined, usable: status === 'sent' }
   }
 
   app.get('/:token', async (c) => {
@@ -73,10 +74,10 @@ export function publicInvitesRoute(deps: { db: Database; dispatch?: WorkflowDisp
     if (!pageHits.check(clientIp(c), clock().getTime()).allowed) return c.html(renderInvalidPage(nonce), 429)
     const v = await resolveLink(c.req.param('token'))
     if (!v) return c.html(renderInvalidPage(nonce), 404)
-    if (!v.usable) return c.html(renderInviteDone({ practice: v.practice, brand: v.brand, nonce }))
+    if (!v.usable) return c.html(renderInviteDone({ practice: v.practice, brand: v.brand, logoUrl: v.logoUrl, nonce }))
     // First time the link is opened: the therapist's list shows "Opened" instead of "Sent".
     if (!v.invite.openedAt) await deps.db.query('UPDATE client_invites SET opened_at = $3 WHERE location_id = $1 AND id = $2 AND opened_at IS NULL', [v.locationId, v.invite.id, clock().toISOString()])
-    return c.html(renderInviteForm({ practice: v.practice, brand: v.brand, token: c.req.param('token'), nonce, kind: v.invite.kind, name: v.invite.name, email: v.invite.email }))
+    return c.html(renderInviteForm({ practice: v.practice, brand: v.brand, logoUrl: v.logoUrl, token: c.req.param('token'), nonce, kind: v.invite.kind, name: v.invite.name, email: v.invite.email }))
   })
 
   app.post('/:token/submit', zValidator('json', submitSchema, (res, c) => (res.success ? undefined : c.json({ error: 'invalid' }, 422))), async (c) => {

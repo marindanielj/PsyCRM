@@ -5,7 +5,7 @@ import { escAttr, escText, jsonForScript } from './page-html'
 
 const HP_STYLE = '<style>.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}</style>'
 
-export function renderInviteForm(o: { practice: string; brand?: string; token: string; nonce: string; kind: 'adult' | 'guardian'; name: string; email: string }): string {
+export function renderInviteForm(o: { practice: string; brand?: string; logoUrl?: string; token: string; nonce: string; kind: 'adult' | 'guardian'; name: string; email: string }): string {
   const guardian = o.kind === 'guardian'
   const [first = '', ...rest] = o.name.trim().split(/\s+/)
   const script = `const T=${jsonForScript(o.token)},KIND=${jsonForScript(o.kind)};
@@ -35,7 +35,7 @@ ${guardian ? '' : '<label class="field-label" for="phone">Teléfono</label><inpu
 <label class="field-label" for="guardianName">Nombre completo</label><input class="text" id="guardianName" name="guardianName" required maxlength="120" autocomplete="name" value="${escAttr(o.name)}">
 <label class="field-label" for="guardianPhone">Teléfono</label><input class="text" id="guardianPhone" name="guardianPhone" type="tel" maxlength="40" autocomplete="tel"></fieldset>`
     : ''
-  const body = `${HP_STYLE}${header(o.practice)}<div class="card"><h1>Complete su registro</h1>
+  const body = `${HP_STYLE}${header(o.practice, o.logoUrl)}<div class="card"><h1>Complete su registro</h1>
 <p>${escText(o.practice || 'Su terapeuta')} necesita unos datos para abrir su expediente. ${guardian ? 'Complete los datos del paciente y los suyos.' : 'Tardará menos de un minuto.'}</p>
 <p class="muted">Correo: <strong>${escText(o.email)}</strong></p>
 <form id="reg" onsubmit="return false" novalidate>${patient}${parent}
@@ -46,11 +46,11 @@ ${guardian ? '' : '<label class="field-label" for="phone">Teléfono</label><inpu
   return shell({ title: `${o.practice || 'Registro'}: registro`, brand: o.brand, body, nonce: o.nonce, script })
 }
 
-export function renderInviteDone(o: { practice: string; brand?: string; nonce: string }): string {
+export function renderInviteDone(o: { practice: string; brand?: string; logoUrl?: string; nonce: string }): string {
   return shell({
     title: `${o.practice || 'Registro'}: gracias`,
     brand: o.brand,
     nonce: o.nonce,
-    body: `${header(o.practice)}<div class="card"><h1>¡Gracias!</h1><p>Recibimos sus datos. Revise su correo: pronto le enviaremos los siguientes pasos.</p></div>`,
+    body: `${header(o.practice, o.logoUrl)}<div class="card"><h1>¡Gracias!</h1><p>Recibimos sus datos. Revise su correo: pronto le enviaremos los siguientes pasos.</p></div>`,
   })
 }

@@ -40,11 +40,13 @@ h1{font-size:1.35rem;margin:.2em 0 .5em}
 @media print{body{background:#fff}.noprint{display:none!important}.card{border:0;padding:0}.copy-doc{break-after:page}}
 `
 
-export function shell(o: { title: string; brand?: string; body: string; nonce: string; script?: string }): string {
+export function shell(o: { title: string; brand?: string; logoUrl?: string; body: string; nonce: string; script?: string }): string {
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer"><title>${escText(o.title)}</title><style>:root{--brand:${safeColor(o.brand)}}${DOC_STYLE}${PAGE_STYLE}</style></head><body><div class="wrap">${o.body}</div>${o.script ? `<script nonce="${escAttr(o.nonce)}">${o.script}</script>` : ''}</body></html>`
 }
 
-export const header = (practice: string) => `<div class="head"><span class="brand">${escText(practice || 'Documentos')}</span><span>Documentos seguros</span></div>`
+/** The page's top bar: the practice's logo (when it has one) and its name. The logo URL is one WE build (`/brand/<id>/logo?v=…`). */
+export const header = (practice: string, logoUrl?: string | null) =>
+  `<div class="head"><span class="brand" style="display:inline-flex;align-items:center;gap:8px">${logoUrl && /^\/brand\/[A-Za-z0-9_-]+\/logo\?v=[0-9a-f]{8}$/.test(logoUrl) ? `<img src="${escAttr(logoUrl)}" alt="" style="height:32px;width:auto;max-width:140px;object-fit:contain">` : ''}${escText(practice || 'Documentos')}</span><span>Documentos seguros</span></div>`
 
 /** Same words and same shape for a link that never existed, expired, was voided or belongs to another practice. */
 export function renderInvalidPage(nonce: string): string {
@@ -67,7 +69,7 @@ async function post(path,body){
 function show(el,text,cls){el.className='msg '+cls;el.textContent=text;el.hidden=false}
 `
 
-export function renderVerifyPage(o: { practice: string; maskedEmail: string; token: string; nonce: string; brand?: string; locked: boolean }): string {
+export function renderVerifyPage(o: { practice: string; maskedEmail: string; token: string; nonce: string; brand?: string; logoUrl?: string; locked: boolean }): string {
   const script = `${CLIENT_COMMON.replace('__T__', jsonForScript(o.token))}
 const send=document.getElementById('send'),codeBox=document.getElementById('codebox'),verify=document.getElementById('verify'),code=document.getElementById('code'),msg=document.getElementById('msg');
 send&&send.addEventListener('click',async()=>{
@@ -89,7 +91,7 @@ verify&&verify.addEventListener('click',async()=>{
   else if(r.status===401)show(msg,r.json.remaining!=null?'El código no es correcto. Intentos restantes: '+r.json.remaining+'.':'El código no es correcto o venció. Pida uno nuevo.','err');
   else show(msg,'No pudimos verificar el código. Inténtelo de nuevo.','err');
 });`
-  const body = `${header(o.practice)}<div class="card"><h1>Verifique su identidad</h1>
+  const body = `${header(o.practice, o.logoUrl)}<div class="card"><h1>Verifique su identidad</h1>
 <p>Para proteger su información, enviaremos un código de 6 dígitos a <strong>${escText(o.maskedEmail)}</strong>.</p>
 ${o.locked ? '<div class="msg err">Este enlace quedó bloqueado por demasiados intentos. Pida a su terapeuta que le envíe uno nuevo.</div>' : `<div class="row"><button class="btn" id="send" type="button">Enviar código</button></div>
 <div id="codebox" hidden><label class="field-label" for="code">Código de 6 dígitos</label><input class="code" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*"><div class="row"><button class="btn" id="verify" type="button">Verificar</button></div></div>`}
@@ -103,12 +105,12 @@ export interface ChecklistItem {
   href: string
 }
 
-export function renderChecklistPage(o: { practice: string; signerName: string; items: ChecklistItem[]; nonce: string; brand?: string }): string {
+export function renderChecklistPage(o: { practice: string; signerName: string; items: ChecklistItem[]; nonce: string; brand?: string; logoUrl?: string }): string {
   const signed = o.items.filter((i) => i.state === 'signed').length
   const next = o.items.find((i) => i.state !== 'signed')
   const mark = { pending: '', in_progress: '◐', signed: '✓' }
   const minutes = Math.max(5, (o.items.length - signed) * 3)
-  const body = `${header(o.practice)}<div class="card"><h1>Hola, ${escText(o.signerName.split(/\s+/)[0] ?? '')}</h1>
+  const body = `${header(o.practice, o.logoUrl)}<div class="card"><h1>Hola, ${escText(o.signerName.split(/\s+/)[0] ?? '')}</h1>
 <p>Tiene <strong>${o.items.length - signed}</strong> documento${o.items.length - signed === 1 ? '' : 's'} por completar (unos ${minutes} minutos). Puede guardar su avance y volver con este mismo enlace.</p>
 <div class="bar" aria-hidden="true"><i style="width:${Math.round((signed / o.items.length) * 100)}%"></i></div>
 <ol class="list">${o.items.map((i, n) => `<li><span class="st ${i.state === 'signed' ? 'done' : i.state === 'in_progress' ? 'prog' : ''}" aria-hidden="true">${mark[i.state] || n + 1}</span><span style="flex:1">${escText(i.title)}</span>${i.state === 'signed' ? `<a href="${escAttr(i.href)}" class="muted">Ver</a>` : ''}</li>`).join('')}</ol>
@@ -121,6 +123,7 @@ export function renderDocumentPage(o: {
   token: string
   nonce: string
   brand?: string
+  logoUrl?: string
   templateId: string
   index: number
   total: number
@@ -187,7 +190,7 @@ document.getElementById('save').addEventListener('click',async()=>{
   const r=await post('/draft',{templateId:TID,values:collect()});
   if(r.status===200)show(msg,'Guardado. Puede volver más tarde con el mismo enlace.','ok');else if(r.status===401)location.reload();else show(msg,'No pudimos guardar. Inténtelo de nuevo.','err');
 });`
-  const body = `${header(o.practice)}<div class="card doc-card">
+  const body = `${header(o.practice, o.logoUrl)}<div class="card doc-card">
 <div class="muted">Documento ${o.index} de ${o.total}</div><div class="bar" aria-hidden="true"><i style="width:${Math.round(((o.index - 1) / o.total) * 100)}%"></i></div>
 <form id="docform" onsubmit="return false" novalidate>${o.fillHtml}</form>
 <div class="consent" style="margin-top:1.6em;padding-top:1em;border-top:1px solid #e2e8f0">
@@ -202,22 +205,22 @@ ${o.drawn ? `<span class="field-label">Firma</span><canvas id="sig" width="900" 
 }
 
 /** A document the signer already signed: read-only, with the stored snapshot. */
-export function renderSignedViewPage(o: { practice: string; nonce: string; brand?: string; index: number; total: number; bodyHtml: string; backHref: string; nextHref: string | null }): string {
-  const body = `${header(o.practice)}<div class="card readonly"><div class="msg ok">Documento ${o.index} de ${o.total}: ya firmado. Solo puede leerlo.</div>${o.bodyHtml}<div class="row noprint"><a class="btn ghost" href="${escAttr(o.backHref)}">Volver a la lista</a>${o.nextHref ? `<a class="btn" href="${escAttr(o.nextHref)}">Siguiente</a>` : ''}</div></div>`
+export function renderSignedViewPage(o: { practice: string; nonce: string; brand?: string; logoUrl?: string; index: number; total: number; bodyHtml: string; backHref: string; nextHref: string | null }): string {
+  const body = `${header(o.practice, o.logoUrl)}<div class="card readonly"><div class="msg ok">Documento ${o.index} de ${o.total}: ya firmado. Solo puede leerlo.</div>${o.bodyHtml}<div class="row noprint"><a class="btn ghost" href="${escAttr(o.backHref)}">Volver a la lista</a>${o.nextHref ? `<a class="btn" href="${escAttr(o.nextHref)}">Siguiente</a>` : ''}</div></div>`
   return shell({ title: `${o.practice || 'Documentos'}: documento firmado`, brand: o.brand, body, nonce: o.nonce })
 }
 
-export function renderDonePage(o: { practice: string; nonce: string; brand?: string; copyHref: string; waiting: boolean }): string {
-  const body = `${header(o.practice)}<div class="card"><h1>¡Gracias!</h1>
+export function renderDonePage(o: { practice: string; nonce: string; brand?: string; logoUrl?: string; copyHref: string; waiting: boolean }): string {
+  const body = `${header(o.practice, o.logoUrl)}<div class="card"><h1>¡Gracias!</h1>
 <p>${o.waiting ? 'Ya completó todos sus documentos. Falta que las demás personas completen los suyos.' : 'Sus documentos quedaron firmados.'} Recibirá un correo con el enlace a su copia.</p>
 <div class="row"><a class="btn" href="${escAttr(o.copyHref)}">Descargar mis documentos</a></div></div>`
   return shell({ title: `${o.practice || 'Documentos'}: listo`, brand: o.brand, body, nonce: o.nonce })
 }
 
 /** All the signer's signed documents on one printable page. */
-export function renderCopyPage(o: { practice: string; nonce: string; brand?: string; docs: { title: string; bodyHtml: string }[] }): string {
+export function renderCopyPage(o: { practice: string; nonce: string; brand?: string; logoUrl?: string; docs: { title: string; bodyHtml: string }[] }): string {
   const script = `document.getElementById('print').addEventListener('click',()=>window.print())`
-  const body = `${header(o.practice)}<div class="card noprint"><h1>Sus documentos firmados</h1><p class="muted">Use “Imprimir” y elija “Guardar como PDF” para conservar una copia.</p><div class="row"><button class="btn" id="print" type="button">Imprimir / Guardar como PDF</button></div></div>${o.docs.map((d) => `<section class="card copy-doc" aria-label="${escAttr(d.title)}">${d.bodyHtml}</section>`).join('')}`
+  const body = `${header(o.practice, o.logoUrl)}<div class="card noprint"><h1>Sus documentos firmados</h1><p class="muted">Use “Imprimir” y elija “Guardar como PDF” para conservar una copia.</p><div class="row"><button class="btn" id="print" type="button">Imprimir / Guardar como PDF</button></div></div>${o.docs.map((d) => `<section class="card copy-doc" aria-label="${escAttr(d.title)}">${d.bodyHtml}</section>`).join('')}`
   return shell({ title: `${o.practice || 'Documentos'}: sus documentos`, brand: o.brand, body, nonce: o.nonce, script })
 }
 

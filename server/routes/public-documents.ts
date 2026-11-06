@@ -15,6 +15,7 @@ import {
 } from '../lib/document-page'
 import { renderDocumentBody } from '../lib/document-render'
 import { COPY_WINDOW_MS, OTP_MAX_ATTEMPTS, OTP_TTL_MS, SIGNER_SESSION_TTL_MS, checkOtp, createSignerSession, hashOtp, hashToken, looksLikeToken, maskEmail, newOtp, readSignerSession } from '../lib/document-tokens'
+import { normalizeBranding, logoUrl, readableBrand } from '../lib/branding'
 import { enabledModules } from '../lib/modules'
 import { SlidingWindowRateLimiter } from '../lib/rate-limit'
 import { type ResolvedEmailSender, resolveEmailSender } from '../lib/sending/resolve'
@@ -65,7 +66,7 @@ export function publicDocumentsRoute(deps: {
   // A person signs a handful of documents; this only stops a script hammering the endpoints with a stolen session.
   const writesPerSigner = new SlidingWindowRateLimiter(60, 10 * 60_000)
 
-  type Valid = SignerContext & { practice: string; brand?: string }
+  type Valid = SignerContext & { practice: string; brand?: string; logoUrl?: string }
 
   /** The signer behind a link, or null for anything that should look like "invalid or expired". */
   async function resolveLink(token: string): Promise<Valid | null> {
@@ -84,8 +85,8 @@ export function publicDocumentsRoute(deps: {
     const location = await new LocationsRepo(deps.db).getById(ctx.locationId)
     if (!location || !enabledModules(location.settings).includes('documents')) return null
     const practice = await new PracticeRepo(deps.db, ctx.locationId).get()
-    const color = location.branding?.color
-    return { ...ctx, practice: practice.name, brand: typeof color === 'string' ? color : undefined }
+    const look = normalizeBranding(location.branding)
+    return { ...ctx, practice: look.name ?? practice.name, brand: look.color ? readableBrand(look.color) : undefined, logoUrl: logoUrl(ctx.locationId, look) ?? undefined }
   }
 
   const cookieName = (signerId: string) => `ds_${signerId}`
@@ -98,7 +99,7 @@ export function publicDocumentsRoute(deps: {
 
   function htmlHeaders(c: Context<AppEnv>): string {
     const nonce = randomBytes(16).toString('base64')
-    c.header('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'`)
+    c.header('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'`)
     return nonce
   }
 
@@ -117,7 +118,7 @@ export function publicDocumentsRoute(deps: {
     const nonce = htmlHeaders(c)
     const v = await resolveLink(token)
     if (!v) return c.html(renderInvalidPage(nonce), 404)
-    const base = { practice: v.practice, brand: v.brand, nonce }
+    const base = { practice: v.practice, brand: v.brand, logoUrl: v.logoUrl, nonce }
 
     if (!isVerified(c, v)) {
       return c.html(renderVerifyPage({ ...base, maskedEmail: maskEmail(v.signer.email), token, locked: v.signer.otpAttempts >= OTP_MAX_ATTEMPTS }))
@@ -273,7 +274,7 @@ export function publicDocumentsRoute(deps: {
     const repo = new DocumentRequestsRepo(deps.db, v.locationId)
     const docs = await repo.signedFor(v.signer.id)
     await repo.recordDownload(v.signer.id, v.request.contactId, v.request.id, actorOf(c, v))
-    return c.html(renderCopyPage({ practice: v.practice, brand: v.brand, nonce, docs: docs.map((d) => ({ title: d.title, bodyHtml: snapshotBody(d.renderedHtml) })) }))
+    return c.html(renderCopyPage({ practice: v.practice, brand: v.brand, logoUrl: v.logoUrl, nonce, docs: docs.map((d) => ({ title: d.title, bodyHtml: snapshotBody(d.renderedHtml) })) }))
   })
 
   return app

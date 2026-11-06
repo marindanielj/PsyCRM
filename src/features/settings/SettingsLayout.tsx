@@ -1,4 +1,4 @@
-import { Bot, Braces, CreditCard, GitBranch, History, type LucideIcon, Phone, Send, Share2, SlidersHorizontal, Stethoscope } from 'lucide-react'
+import { Bot, Braces, Palette, CreditCard, GitBranch, History, type LucideIcon, Phone, Send, Share2, SlidersHorizontal, Stethoscope } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { type ModuleKey, moduleEnabled } from '../../lib/modules'
 import { cn } from '../../lib/utils'
@@ -23,6 +23,12 @@ const SETTINGS_NAV: SettingsNavItem[] = [
     label: 'Practice',
     icon: Stethoscope,
     description: 'Name, license, fees and policies',
+  },
+  {
+    to: '/settings/branding',
+    label: 'Branding',
+    icon: Palette,
+    description: 'Name, colour and logo',
   },
   {
     to: '/settings/audit',

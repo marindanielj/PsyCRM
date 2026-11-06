@@ -19,6 +19,7 @@ import { DocumentPacketsRepo } from '../repos/document-packets-repo'
 import { DocumentRequestsRepo } from '../repos/document-requests-repo'
 import { type DocActor, type DocumentTemplate, DocumentTemplatesRepo, type TemplateError } from '../repos/document-templates-repo'
 import { PracticeRepo } from '../repos/practice-repo'
+import { displayName } from '../repos/branding-repo'
 
 const previewBody = z.object({ contactId: z.string().min(1).max(64).optional() })
 
@@ -218,10 +219,10 @@ export function documentsRoute(deps: {
   })
 
   async function mailLink(c: Context<AppEnv>, o: { to: string; name: string; token: string }) {
-    const practice = await new PracticeRepo(deps.db, c.get('locationId')).get()
+    const name = (await displayName(deps.db, c.get('locationId'))) || 'Su terapeuta'
     const sender = await emailSender(c)
     const link = `${baseUrl(c)}/d/${o.token}`
-    const r = await sendLinkEmail(sender.ok ? sender.sender : null, sender.ok ? undefined : sender.reason, { practice: practice.name || 'Su terapeuta', to: o.to, name: o.name, link, days: REQUEST_TTL_DAYS })
+    const r = await sendLinkEmail(sender.ok ? sender.sender : null, sender.ok ? undefined : sender.reason, { practice: name, to: o.to, name: o.name, link, days: REQUEST_TTL_DAYS })
     return { link, emailed: r.sent, reason: r.reason }
   }
 

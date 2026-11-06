@@ -1607,3 +1607,12 @@ CREATE TABLE IF NOT EXISTS client_invites (
 );
 CREATE INDEX IF NOT EXISTS client_invites_location ON client_invites(location_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS client_invites_open ON client_invites(location_id, status, expires_at);
+
+-- A practice's own logo (shown in the app and on the pages its clients see). Kept apart from `locations`
+-- so ordinary location queries never carry image bytes.
+CREATE TABLE IF NOT EXISTS location_logos (
+  location_id  text PRIMARY KEY REFERENCES locations(id) ON DELETE CASCADE,
+  content_type text NOT NULL CHECK (content_type IN ('image/png','image/jpeg','image/webp')),
+  data         bytea NOT NULL CHECK (octet_length(data) <= 307200),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);

@@ -10,7 +10,7 @@ import { ContactsRepo } from '../repos/contacts-repo'
 import { DocumentPacketsRepo } from '../repos/document-packets-repo'
 import { type DocumentRequest, DocumentRequestsRepo } from '../repos/document-requests-repo'
 import { DocumentTemplatesRepo } from '../repos/document-templates-repo'
-import { PracticeRepo } from '../repos/practice-repo'
+import { displayName } from '../repos/branding-repo'
 
 /** Who is sending: a person at the keyboard, or an automation. Recorded in the request and the audit log. */
 export interface SendActor {
@@ -107,13 +107,13 @@ export async function sendDocumentPacket(deps: SendDeps, input: SendInput, actor
     actor,
   )
 
-  const practice = await new PracticeRepo(db, locationId).get()
+  const name = (await displayName(db, locationId)) || 'Su terapeuta'
   const sender = await (deps.resolveEmail ?? resolveEmailSender)(db, locationId)
   const out: SentSigner[] = []
   for (const s of created.signers) {
     const t = tokens.find((x) => x.role === s.role)!
     const link = `${deps.baseUrl.replace(/\/$/, '')}/d/${t.token}`
-    const m = await sendLinkEmail(sender.ok ? sender.sender : null, sender.ok ? undefined : sender.reason, { practice: practice.name || 'Su terapeuta', to: s.email, name: s.name, link, days: REQUEST_TTL_DAYS })
+    const m = await sendLinkEmail(sender.ok ? sender.sender : null, sender.ok ? undefined : sender.reason, { practice: name, to: s.email, name: s.name, link, days: REQUEST_TTL_DAYS })
     out.push({ id: s.id, role: s.role, name: s.name, email: s.email, link, emailed: m.sent, emailIssue: m.reason ?? null })
   }
   return { ok: true, request: created.request, signers: out, warnings }

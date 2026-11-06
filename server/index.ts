@@ -29,6 +29,7 @@ import { auditRoute } from './routes/audit'
 import { practiceRoute } from './routes/practice'
 import type { ResolvedEmailSender } from './lib/sending/resolve'
 import { documentsRoute } from './routes/documents'
+import { brandLogoRoute, brandingRoute } from './routes/branding'
 import { invitesRoute } from './routes/invites'
 import { publicDocumentsRoute } from './routes/public-documents'
 import { publicInvitesRoute } from './routes/public-invites'
@@ -279,6 +280,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // Client-facing signing pages (one-time-code verified, strict per-page CSP). Always on; a practice that turns the documents module off gets "invalid link".
   app.route('/d', publicDocumentsRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure, dispatch: deps.dispatch, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
   // Client invitation pages (one-time link, own nonce CSP). Always on; a practice with contacts off gets "invalid link".
+  // A practice's logo, for the pages its clients see.
+  app.route('/brand', brandLogoRoute({ db: deps.db }))
   app.route('/i', publicInvitesRoute({ db: deps.db, dispatch: deps.dispatch }))
   app.route('/api/public/booking', publicBookingRoute({ db: deps.db, dispatch: deps.dispatch, requireDateOfBirth: true }))
 
@@ -374,6 +377,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // Clinical session notes: DAP + mental status + mandatory risk assessment, locked after 72 h.
   app.route('/api/loc/:loc/session-notes', sessionNotesRoute({ db: deps.db, dispatch: deps.dispatch }))
   // Document templates (versioned, immutable once active) and packets.
+  // Settings -> Branding (name, accent colour, logo). Always available: it is configuration, not a module.
+  app.route('/api/loc/:loc/branding', brandingRoute({ db: deps.db }))
   app.route('/api/loc/:loc/invites', invitesRoute({ db: deps.db, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
   app.route('/api/loc/:loc/documents', documentsRoute({ db: deps.db, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
   // The audit log (read-only) + its integrity check and CSV export.

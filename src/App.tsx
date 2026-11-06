@@ -5,6 +5,7 @@ import { AssistantPage } from './features/assistant/AssistantPage'
 import { DocumentsPage } from './features/documents/DocumentsPage'
 import { PacketEditorPage } from './features/documents/PacketEditorPage'
 import { TemplateEditorPage } from './features/documents/TemplateEditorPage'
+import { BrandingSettingsPage } from './features/settings/BrandingSettingsPage'
 import { AuditLogPage } from './features/audit/AuditLogPage'
 import { NoteReportPage } from './features/session-notes/NoteReportPage'
 import { NoteWizardPage } from './features/session-notes/NoteWizard'
@@ -105,6 +106,7 @@ export default function App() {
           <Route path="settings" element={<SettingsLayout />}>
             <Route index element={<Navigate to="/settings/practice" replace />} />
             <Route path="practice" element={<PracticeSettingsPage />} />
+            <Route path="branding" element={<BrandingSettingsPage />} />
             <Route path="audit" element={<RequireModule module="audit"><AuditLogPage /></RequireModule>} />
             <Route path="pipelines" element={<PipelinesSettingsPage />} />
             <Route path="custom-fields" element={<CustomFieldsPage />} />
