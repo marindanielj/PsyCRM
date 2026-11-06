@@ -39,7 +39,7 @@ Respuestas: **409** `note_locked` / `note_deleted`; **422** `risk_incomplete`, `
 |---|---|
 | `npm run typecheck` | Limpio |
 | Pruebas nuevas | `server/db/session-notes-schema.test.ts` (22, contra Postgres real en memoria), `server/routes/session-notes.test.ts` (21, flujo completo por la API), `server/lib/clinical-vocab.test.ts` (9) y una de módulos en `server/index.test.ts` |
-| Suite completa | Ver el §5 |
+| Suite completa (`npx vitest run`) | **198 archivos, 1761 tests, todos en verde** (los días 1-2 cerraron con 195 y 1708) |
 | Simulación del paso de las 72 h | Se reescribe `locks_at` como superusuario que se salta los triggers (lo que la aplicación nunca puede hacer) |
 | Atomicidad | Con la tabla de auditoría renombrada, una edición falla y la nota queda intacta, sin revisión huérfana |
 | Texto clínico en el log | Una prueba recorre todo el ciclo de vida de una nota y comprueba que ningún texto clínico, motivo ni anexo llegó al log, y que la cadena de auditoría sigue íntegra |
