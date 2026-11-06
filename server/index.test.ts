@@ -10,7 +10,7 @@ function app(db = new FakeDatabase()) {
 test('health is public', async () => {
   const res = await app().request('/health')
   expect(res.status).toBe(200)
-  expect(await res.json()).toMatchObject({ ok: true, service: 'openlevel' })
+  expect(await res.json()).toMatchObject({ ok: true, service: 'psycrm' })
 })
 
 test('GET /api/locations requires a session', async () => {
@@ -33,8 +33,8 @@ test('authenticated operator without access to the location gets 403', async () 
   expect(res.status).toBe(403)
 })
 
-test('chatwoot webhook with the wrong secret is 401', async () => {
-  const res = await app().request('/api/webhooks/chatwoot?secret=wrong', {
+test('chatwoot webhook with the wrong secret is 401 (once the chatwoot integration is enabled)', async () => {
+  const res = await createApp({ db: new FakeDatabase(), sessionSecret: 'sek', webhookSecret: 'whsek', integrations: ['chatwoot'] }).request('/api/webhooks/chatwoot?secret=wrong', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ event: 'message_created' }),
@@ -51,6 +51,7 @@ test('createApp threads the gateway text rail into the assistant /confirm send_t
   const db = new FakeDatabase()
   const CONTACT = { id: 'c1', location_id: 'locA', name: 'Jane Doe', phones: ['+16025551234'], emails: [], tags: [] }
   db.enqueue([{ id: 'locA' }]) // locationAccess: hasAccess -> granted
+  db.enqueue([{ settings: { enabledModules: ['assistant'] } }]) // module gate: this practice has the assistant on
   db.enqueue([CONTACT]) // resolve(confirm) -> prepareText -> contacts.get
   db.enqueue([CONTACT]) // perform -> prepareText -> contacts.get
   const calls: Array<{ e164: string; body: string; nonce: string }> = []
@@ -59,7 +60,7 @@ test('createApp threads the gateway text rail into the assistant /confirm send_t
     return { ok: true, messageId: 'gw1' }
   }
   const token = createSession({ operatorId: 'op1' }, 'sek')
-  const res = await createApp({ db, sessionSecret: 'sek', webhookSecret: 'whsek', sendText }).request(
+  const res = await createApp({ db, sessionSecret: 'sek', webhookSecret: 'whsek', integrations: ['ai'], sendText }).request(
     '/api/loc/locA/assistant/confirm',
     {
       method: 'POST',
@@ -78,8 +79,8 @@ test('createApp threads the gateway text rail into the assistant /confirm send_t
 // sessions). With no FEDERATION_SERVICE_TOKEN the whole surface answers 503 ("not
 // turned on"); once a token is configured it answers, and a wrong bearer is 401.
 
-test('federation surface is inert (503) when no token is configured', async () => {
-  const res = await app().request('/federation/capabilities', { headers: { authorization: 'Bearer anything' } })
+test('federation surface is inert (503) when enabled but no token is configured', async () => {
+  const res = await createApp({ db: new FakeDatabase(), sessionSecret: 'sek', webhookSecret: 'whsek', integrations: ['federation'] }).request('/federation/capabilities', { headers: { authorization: 'Bearer anything' } })
   expect(res.status).toBe(503)
 })
 
@@ -88,6 +89,7 @@ test('federation capabilities answer (200) once a token is configured, 401 on a 
     db: new FakeDatabase(),
     sessionSecret: 'sek',
     webhookSecret: 'whsek',
+    integrations: ['federation'],
     federationServiceToken: 'fed-token',
   })
   const ok = await built.request('/federation/capabilities', { headers: { authorization: 'Bearer fed-token' } })
@@ -97,67 +99,123 @@ test('federation capabilities answer (200) once a token is configured, 401 on a 
   expect(bad.status).toBe(401)
 })
 
-// --- PsyCRM mode ---------------------------------------------------------------
+// --- fixed PsyCRM behavior + per-integration mounting ---------------------------
 
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { INTEGRATION_NAMES, type Integration } from './lib/integrations'
 
-function psycrmApp(db = new FakeDatabase(), extra: Partial<Parameters<typeof createApp>[0]> = {}) {
-  return createApp({ db, sessionSecret: 'sek', webhookSecret: 'whsek', psycrmMode: true, ...extra })
-}
 const cookie = () => ({ Cookie: `ol_session=${createSession({ operatorId: 'op1' }, 'sek')}` })
 
-test('PsyCRM mode does not mount third-party-PHI integrations', async () => {
-  const post = (path: string) => psycrmApp().request(path, { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } })
+/** The route prefixes each integration puts on the app (read from the router, so the
+ *  test cannot pass by accident the way a status-code check could). */
+const MOUNTS: Record<Integration, string[]> = {
+  chatwoot: ['/api/webhooks/chatwoot'],
+  ai: ['/api/loc/:loc/assistant'],
+  public_pages: ['/api/public/f', '/api/public/forms', '/api/public/reviews', '/api/public/courses', '/api/public/blog', '/api/public/communities', '/api/public/surveys', '/api/public/proposals', '/api/public/l', '/api/public/ref'],
+  payments: ['/api/public/pay'],
+  voice: ['/api/public/voice'],
+  federation: ['/federation'],
+  push: ['/api/push-tokens'],
+}
+const mounted = (integrations: Integration[]) => {
+  // Only real handlers count: app.use() (e.g. a module gate) also lists its path, with method ALL.
+  const paths = createApp({ db: new FakeDatabase(), sessionSecret: 'sek', webhookSecret: 'whsek', integrations }).routes.filter((r) => r.method !== 'ALL').map((r) => r.path)
+  return (prefix: string) => paths.some((p) => p === prefix || p.startsWith(`${prefix}/`))
+}
+
+test('no third-party integration is mounted by default', () => {
+  const has = mounted([])
+  for (const prefixes of Object.values(MOUNTS)) for (const prefix of prefixes) expect(has(prefix), prefix).toBe(false)
+})
+
+test('each integration mounts exactly its own routes and nobody else\'s', () => {
+  // the registry and this table must list the same integrations
+  expect(Object.keys(MOUNTS).sort()).toEqual([...INTEGRATION_NAMES].sort())
+  for (const name of INTEGRATION_NAMES) {
+    const has = mounted([name])
+    for (const prefix of MOUNTS[name]) expect(has(prefix), `${name} -> ${prefix}`).toBe(true)
+    for (const other of INTEGRATION_NAMES.filter((n) => n !== name)) {
+      for (const prefix of MOUNTS[other]) expect(has(prefix), `${name} must not mount ${prefix}`).toBe(false)
+    }
+  }
+})
+
+test('unmounted integrations answer 404 and never touch the database', async () => {
+  const db = new FakeDatabase()
+  const a = app(db)
+  const post = (path: string) => a.request(path, { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } })
   expect((await post('/api/webhooks/chatwoot?secret=whsek')).status).toBe(404)
   expect((await post('/api/public/voice/anything')).status).toBe(404)
   expect((await post('/api/public/pay/anything')).status).toBe(404)
-  expect((await psycrmApp().request('/api/public/proposals/x/y')).status).toBe(404)
-  expect((await psycrmApp().request('/federation/anything')).status).toBe(404)
-  // …while plain OpenLevel mode still has the chatwoot webhook (401 = mounted, wrong secret)
-  expect((await app().request('/api/webhooks/chatwoot?secret=wrong', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } })).status).toBe(401)
+  expect((await a.request('/api/public/proposals/x/y')).status).toBe(404)
+  expect((await a.request('/federation/anything')).status).toBe(404)
+  expect(db.calls).toHaveLength(0)
 })
 
-test('PsyCRM mode keeps the public booking page mounted (it reaches the database)', async () => {
+test('the public booking page is always mounted (it reaches the database)', async () => {
   const db = new FakeDatabase()
-  await psycrmApp(db).request('/api/public/booking/locA/missing')
+  await app(db).request('/api/public/booking/locA/missing')
   expect(db.calls.length).toBeGreaterThan(0)
 })
 
-test('PsyCRM mode: a module the location has not enabled is 404; an enabled one passes', async () => {
+test('the module gate looks the practice up once per request, even on the bare route', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ id: 'locA' }])
+  db.enqueue([{ settings: {} }])
+  db.enqueue([])
+  await app(db).request('/api/loc/locA/contacts', { headers: cookie() })
+  expect(db.calls.filter((c) => /FROM locations WHERE id/.test(c.sql))).toHaveLength(1)
+})
+
+test('a module the location has not enabled is 404; an enabled one passes', async () => {
   // campaigns (marketing) is off by default…
   const off = new FakeDatabase()
   off.enqueue([{ id: 'locA' }]) // hasAccess
   off.enqueue([{ settings: {} }]) // moduleGate settings -> PsyCRM defaults
-  expect((await psycrmApp(off).request('/api/loc/locA/campaigns', { headers: cookie() })).status).toBe(404)
+  expect((await app(off).request('/api/loc/locA/campaigns', { headers: cookie() })).status).toBe(404)
   // …contacts is on.
   const on = new FakeDatabase()
   on.enqueue([{ id: 'locA' }])
   on.enqueue([{ settings: {} }])
   on.enqueue([]) // contacts list
-  expect((await psycrmApp(on).request('/api/loc/locA/contacts', { headers: cookie() })).status).toBe(200)
+  expect((await app(on).request('/api/loc/locA/contacts', { headers: cookie() })).status).toBe(200)
 })
 
-test('PsyCRM mode adds security headers and no-store; plain mode does not', async () => {
-  const res = await psycrmApp().request('/api/locations')
+test('a practice that lists a module in its settings gets it (modules are data, not a deploy mode)', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ id: 'locA' }])
+  db.enqueue([{ settings: { enabledModules: ['contacts', 'marketing'] } }])
+  db.enqueue([]) // campaigns list
+  expect((await app(db).request('/api/loc/locA/campaigns', { headers: cookie() })).status).toBe(200)
+})
+
+test('security headers and no-store are always on', async () => {
+  const res = await app().request('/api/locations')
   expect(res.status).toBe(401)
   expect(res.headers.get('cache-control')).toBe('no-store')
   expect(res.headers.get('x-frame-options')).toBe('DENY')
   expect(res.headers.get('referrer-policy')).toBe('no-referrer')
   expect(res.headers.get('strict-transport-security')).toContain('max-age=')
   expect(res.headers.get('content-security-policy')).toContain("default-src 'self'")
-  const plain = await app().request('/api/locations')
-  expect(plain.headers.get('x-frame-options')).toBeNull()
-  expect(plain.headers.get('cache-control')).toBeNull()
 })
 
-test('PsyCRM mode signs out an idle web session', async () => {
+test('public pages get the framing/referrer protections but no CSP (they inline a small script); API and app get the strict CSP', async () => {
+  const pub = await app().request('/api/public/booking/locA/none')
+  expect(pub.headers.get('x-frame-options')).toBe('DENY')
+  expect(pub.headers.get('referrer-policy')).toBe('no-referrer')
+  expect(pub.headers.get('content-security-policy')).toBeNull()
+  expect(pub.headers.get('x-robots-tag')).toBe('noindex')
+  expect(pub.headers.get('cache-control')).toBe('no-store')
+  expect((await app().request('/api/locations')).headers.get('content-security-policy')).toContain("default-src 'self'")
+})
+
+test('an idle web session is signed out; the limit can be overridden', async () => {
   const old = createSession({ operatorId: 'op1' }, 'sek', { now: Date.now() - 31 * 60_000 })
-  const res = await psycrmApp().request('/api/locations', { headers: { Cookie: `ol_session=${old}` } })
-  expect(res.status).toBe(401)
-  // plain mode has no idle limit
-  expect((await app(new FakeDatabase()).request('/api/locations', { headers: { Cookie: `ol_session=${old}` } })).status).toBe(200)
+  expect((await app().request('/api/locations', { headers: { Cookie: `ol_session=${old}` } })).status).toBe(401)
+  const roomy = createApp({ db: new FakeDatabase(), sessionSecret: 'sek', webhookSecret: 'whsek', idleTtlMs: 60 * 60_000 })
+  expect((await roomy.request('/api/locations', { headers: { Cookie: `ol_session=${old}` } })).status).toBe(200)
 })
 
 test('serves the built web app with an SPA fallback, without shadowing the API', async () => {
@@ -165,7 +223,7 @@ test('serves the built web app with an SPA fallback, without shadowing the API',
   mkdirSync(join(dir, 'assets'))
   writeFileSync(join(dir, 'index.html'), '<!doctype html><title>spa</title>')
   writeFileSync(join(dir, 'assets', 'app.js'), 'console.log(1)')
-  const a = psycrmApp(new FakeDatabase(), { staticDir: dir })
+  const a = createApp({ db: new FakeDatabase(), sessionSecret: 'sek', webhookSecret: 'whsek', staticDir: dir })
 
   const root = await a.request('/')
   expect(root.status).toBe(200)
@@ -181,14 +239,4 @@ test('serves the built web app with an SPA fallback, without shadowing the API',
   expect((await a.request('/api/nope')).status).toBe(404)
   expect(((await a.request('/api/nope')).headers.get('content-type') ?? '')).toContain('json')
   expect(await (await a.request('/health')).json()).toMatchObject({ ok: true, service: 'psycrm' })
-})
-
-test('PsyCRM mode: public pages get the framing/referrer protections but no CSP (they inline a small script); API and app get the strict CSP', async () => {
-  const pub = await psycrmApp().request('/api/public/booking/locA/none')
-  expect(pub.headers.get('x-frame-options')).toBe('DENY')
-  expect(pub.headers.get('referrer-policy')).toBe('no-referrer')
-  expect(pub.headers.get('content-security-policy')).toBeNull()
-  expect(pub.headers.get('x-robots-tag')).toBe('noindex')
-  expect(pub.headers.get('cache-control')).toBe('no-store')
-  expect((await psycrmApp().request('/api/locations')).headers.get('content-security-policy')).toContain("default-src 'self'")
 })

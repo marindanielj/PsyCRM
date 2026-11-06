@@ -160,13 +160,15 @@ Ruta `server/routes/audit.ts`, montada en `/api/loc/:loc/audit` (módulo `audit`
 
 ## Estado de implementación (día 2)
 
+> **Actualización (2026-11-06):** `PSYCRM_MODE` se eliminó (ver [`../INTEGRACIONES.md`](../INTEGRACIONES.md)); «en modo PsyCRM» ahora significa siempre. `dev:local` arranca ya con una práctica de demostración.
+
 **Hecho y verificado** (typecheck limpio; suite completa en verde; recorrido en navegador con PGlite + seed):
 - **Esquema** (`db/schema.sql`): `audit_log` con cadena de hashes por práctica, `occurred_at` fijado por la base, `UPDATE`/`DELETE`/`TRUNCATE` rechazados, `audit_log_verify()`. `reject_mutation()` queda reutilizable para los días 3 y 6.
 - **Transacciones** (`Database.transaction`, en pg, PGlite y el doble de pruebas) y `audit()` en la **misma transacción** que el cambio. Probado contra una base real: si no se puede escribir el log, el cambio se revierte (cliente, cita, cambio de etapa).
 - **Instrumentado:** login / login fallido / logout; clientes (crear, ver, archivar, restaurar, estado, etiquetas, campos personalizados, notas libres); tareas; citas del operador (crear, reprogramar con *desde→hacia* reales, cambio de estado); reserva pública (cliente + cita + línea de tiempo + auditoría en una transacción); tarjetas del pipeline (crear, editar, estado) y **cambio de etapa** (servicio `lib/pipeline-moves.ts`: auditoría + línea de tiempo del cliente + disparo de `pipeline_stage_changed` solo después de confirmar; mover a la misma etapa no escribe nada); ejecuciones de automatizaciones (inicio, cada paso con tipo y resultado, fin).
 - **API** `/api/loc/:loc/audit`: listado con filtros y paginación por cursor, `/verify`, `/export.csv` (BOM UTF-8, protegido contra inyección de fórmulas, la exportación queda registrada). Solo lectura.
 - **UI:** Settings → Audit log (filtros por fechas, categoría, cliente y quién; verificar integridad; exportar CSV) y el panel "Access & change history" en la ficha de cada cliente.
-- **Fecha de nacimiento obligatoria** al crear un cliente y al reservar en la página pública (en modo PsyCRM), con `server/lib/age.ts` (18 o más = adulto, día de cumpleaños exacto, "hoy" en hora de Puerto Rico).
+- **Fecha de nacimiento obligatoria** al crear un cliente y al reservar en la página pública (siempre), con `server/lib/age.ts` (18 o más = adulto, día de cumpleaños exacto, "hoy" en hora de Puerto Rico).
 
 **Diferencias respecto a lo escrito arriba**
 - **`chain_seq`:** la cadena se ordena por una columna propia asignada dentro del bloqueo, no por el `id` serial (el serial se toma antes del trigger y, con escrituras simultáneas, no coincide con el orden de la cadena).
@@ -174,7 +176,7 @@ Ruta `server/routes/audit.ts`, montada en `/api/loc/:loc/audit` (módulo `audit`
 - **Las automatizaciones registran en modo "mejor esfuerzo":** si falla escribir el log, la ejecución sigue (un fallo haría que la cola reintente y repita efectos reales, como un email). Los efectos clínicamente relevantes (cambio de etapa, citas) se auditan en su origen y sí hacen fallar la operación.
 - **`clientIp` ahora toma la dirección que añadió nuestro balanceador (la última de `X-Forwarded-For`)**, no la primera, que la puede falsificar el cliente. También endurece el límite de intentos de login.
 - **Los detalles nunca llevan valores clínicos:** `sanitizeDetails` descarta claves prohibidas y trunca texto; las fechas se guardan como texto ISO (un test con base real encontró que `pg` devuelve `Date` y se perdían).
-- **`operator-tools.ts` (asistente de IA) no se instrumentó:** está apagado en modo PsyCRM. Si se reactiva, debe usar `moveOpportunityToStage`.
+- **`operator-tools.ts` (asistente de IA) no se instrumentó:** está apagado salvo que se habilite la integración `ai`. Si se reactiva, debe usar `moveOpportunityToStage`.
 - `contact.viewed` se registra en **cada** apertura de la ficha (no hay deduplicación).
 - `calendars` (editar configuración de reserva), borrado de tarjetas y alta/baja de etapas aún no se auditan.
 

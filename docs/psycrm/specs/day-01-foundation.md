@@ -47,7 +47,7 @@ export function enabledModules(settings: unknown): Module[]   // lee locations.s
 
 ### Servidor
 - Middleware `moduleGate(module)` en `server/middleware/module-gate.ts`: si el módulo no está habilitado para la `location`, responde **404**. Se aplica a cada `app.route('/api/loc/:loc/<x>', …)` en `server/index.ts`.
-- **Integraciones que envían PHI a terceros:** el assistant/agente IA, `webhooks-chatwoot`, Beeper, `webhooks-voice`, social y federation **no se montan** si `PSYCRM_MODE=true` (nueva variable en `config.ts`, `true` en prod). Tampoco se registra `registerAgentReplyWorker`.
+- **Integraciones que envían PHI a terceros:** el assistant/agente IA, `webhooks-chatwoot`, Beeper, `webhooks-voice`, social y federation **no se montan** salvo que se nombren en `ENABLED_INTEGRATIONS` (vacía por defecto; ver [`../INTEGRACIONES.md`](../INTEGRACIONES.md)). Tampoco se registra `registerAgentReplyWorker`. *(Originalmente esto colgaba de una variable `PSYCRM_MODE`, eliminada el 2026-11-06.)*
 
 ### Web
 - `GET /api/locations` incluye `enabledModules` en cada location.
@@ -113,7 +113,7 @@ Además: cambiar el default `calendars.timezone` en `schema.sql` **no** hace fal
 ## Criterios de aceptación
 1. `https://<dominio>` sirve el SPA; `/health` responde 200; el certificado TLS es válido.
 2. La navegación muestra solo Calendars, Contacts, Opportunities, Tasks, Tags, Automations, Dashboard y Settings.
-3. `GET /api/loc/:loc/campaigns` (u otro módulo apagado) devuelve 404. `POST /api/public/chatwoot/...` devuelve 404 en `PSYCRM_MODE`.
+3. `GET /api/loc/:loc/campaigns` (u otro módulo apagado) devuelve 404. `POST /api/public/chatwoot/...` devuelve 404 mientras la integración `chatwoot` no esté habilitada.
 4. Tras 30 min de inactividad, cualquier llamada a la API devuelve 401 y el SPA vuelve a `/login`. Con actividad continua la sesión dura hasta 8 h y luego expira.
 5. El pipeline "Onboarding" existe con 6 etapas; el calendario está en AST.
 6. Los backups de RDS están activos (verificado en la consola) y el BAA de AWS está aceptado en Artifact (captura de pantalla guardada fuera del repo).
@@ -131,6 +131,8 @@ Además: cambiar el default `calendars.timezone` en `schema.sql` **no** hace fal
 ---
 
 ## Estado de implementación (día 1)
+
+> **Actualización (2026-11-06):** `PSYCRM_MODE` se eliminó. Donde esta sección dice «con `PSYCRM_MODE`» o «en modo PsyCRM», léase **siempre**: cabeceras, inactividad, compuertas de módulos y SSL verificado ya no dependen de un interruptor, y las integraciones con terceros son `ENABLED_INTEGRATIONS` (vacía por defecto). Ver [`../INTEGRACIONES.md`](../INTEGRACIONES.md) y [`../RESULTADOS_DIAS_1_2.md`](../RESULTADOS_DIAS_1_2.md).
 
 **Hecho y verificado** (typecheck limpio, tests del día en verde, recorrido en navegador con una base PGlite y el seed):
 - `PSYCRM_MODE` (`server/lib/config.ts`): módulos por práctica con 404 en la API (`server/lib/modules.ts`, `server/middleware/module-gate.ts`), integraciones con datos de clientes **sin montar** (Chatwoot, voz, pagos, federación, páginas públicas de marketing, tokens push, agente de IA y su worker), cabeceras de seguridad (CSP estricta, HSTS, `X-Frame-Options`, `no-referrer`) y `Cache-Control: no-store` en `/api/*`.

@@ -36,7 +36,7 @@ Hay que guardar las capturas de cada paso en `docs/psycrm/e2e/` (sin datos reale
 - [ ] **Cabeceras**: CSP, HSTS, `no-store` y `X-Frame-Options` verificadas con `curl -I` en producción.
 - [ ] **Rate limit**: login (existe), OTP, verify y sign.
 - [ ] **Secretos**: `SESSION_SECRET` ≥ 32 caracteres en AWS Secrets Manager; ningún `.env` en el repo.
-- [ ] **Integraciones apagadas** en `PSYCRM_MODE`: assistant, Chatwoot, voice, social, federation y SMS (rutas en 404 y workers sin registrar).
+- [ ] **Integraciones apagadas:** `ENABLED_INTEGRATIONS` vacía en la definición de la tarea; el registro de arranque dice `integrations enabled: none`; las rutas de assistant, Chatwoot, voz, pagos, federación y páginas públicas responden 404 (ver `INTEGRACIONES.md`).
 - [ ] **Dependencias**: `npm audit --omit=dev` sin vulnerabilidades altas ni críticas.
 - [ ] Correr el skill `/security-review` sobre la rama antes del merge.
 

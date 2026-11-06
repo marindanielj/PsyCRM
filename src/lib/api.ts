@@ -62,8 +62,6 @@ export interface Location {
   settings: Record<string, unknown>
   /** Modules turned on for this location (nav + route gating). */
   enabledModules?: string[]
-  /** True in a PsyCRM deployment (e.g. a date of birth is required for new clients). */
-  psycrm?: boolean
 }
 
 export interface PracticeProfile {

@@ -20,6 +20,7 @@ import type { WorkflowDispatch } from './jobs/workflow-dispatcher'
 import { createAnthropicClient } from './lib/anthropic'
 import type { sendChatwootMessage } from './lib/chatwoot-client'
 import { loadConfig } from './lib/config'
+import type { Integration } from './lib/integrations'
 import { IDLE_TTL_MS } from './lib/session'
 import type { Module } from './lib/modules'
 import { moduleGate } from './middleware/module-gate'
@@ -100,12 +101,10 @@ export interface AppDeps {
   sendText?: SendTextFn
   /** The hub gateway's shared bearer for /federation/*. Unset => surface is 503. */
   federationServiceToken?: string
-  /** PsyCRM mode (single therapy practice). Gates modules per location, adds
-   *  security headers + no-store, and leaves every third-party-PHI integration
-   *  unmounted. Off = the original OpenLevel surface, unchanged. */
-  psycrmMode?: boolean
-  /** Sign a web session out after this much inactivity (PsyCRM mode defaults to
-   *  IDLE_TTL_MS). Unset in plain OpenLevel mode. */
+  /** Third-party integrations to mount (none by default). Each moves client data to a
+   *  vendor, so each is turned on deliberately — see lib/integrations.ts. */
+  integrations?: readonly Integration[]
+  /** Sign a web session out after this much inactivity (default IDLE_TTL_MS). */
   idleTtlMs?: number
   /** Directory of the built web app to serve (vite build output). Unset = none. */
   staticDir?: string
@@ -156,11 +155,11 @@ const ROUTE_MODULE: Record<string, Module> = {
  */
 export function createApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
-  const psycrm = deps.psycrmMode === true
-  const idleTtlMs = psycrm ? (deps.idleTtlMs ?? IDLE_TTL_MS) : deps.idleTtlMs
+  const on = new Set<Integration>(deps.integrations ?? [])
+  const idleTtlMs = deps.idleTtlMs ?? IDLE_TTL_MS
   const auth = () => operatorAuth(deps.sessionSecret, { idleTtlMs, secure: deps.secure })
 
-  if (psycrm) {
+  {
     // Clinical data: nothing cacheable, nothing embeddable, no referrer leakage
     // (public signing links carry a token in the path), HTTPS pinned. The CSP is
     // strict for the app + API; the server-rendered public pages (which inline a
@@ -193,18 +192,21 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.notFound((c) => c.json({ error: 'not found' }, 404))
 
-  app.get('/health', (c) => c.json({ ok: true, service: psycrm ? 'psycrm' : 'openlevel' }))
+  app.get('/health', (c) => c.json({ ok: true, service: 'psycrm' }))
 
   app.route('/api/auth', authRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure, idleTtlMs }))
-  // Integrations that carry client data to third parties (Chatwoot relay, payment
-  // and voice webhooks, public marketing pages, the AI hub federation, push
-  // tokens) are not mounted at all in PsyCRM mode. Only the public booking page
-  // stays (its calendars are off until the practice turns booking on).
-  if (!psycrm) {
+  // Integrations that carry client data to third parties. NONE is mounted unless it
+  // is named in `deps.integrations` (ENABLED_INTEGRATIONS): enabling one is a
+  // deliberate step that should follow a BAA with that vendor. Only the public
+  // booking page below is always on (its calendars stay off until the practice
+  // turns booking on).
+  if (on.has('chatwoot')) {
     app.route(
       '/api/webhooks/chatwoot',
       chatwootWebhookRoute({ db: deps.db, webhookSecret: deps.webhookSecret, onInbound: deps.onInbound }),
     )
+  }
+  if (on.has('public_pages')) {
     // Public hosted funnel + form pages — unauthenticated, read location from the
     // URL. Mounted before the operatorAuth boundary so visitors never hit a login.
     app.route('/api/public/f', publicFunnelsRoute({ db: deps.db, dispatch: deps.dispatch }))
@@ -224,13 +226,18 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     // Affiliate referral links: record the visit (attributed when ?c= names a real
     // contact), then 302 to the program landing URL. Self-contained — no dispatch.
     app.route('/api/public/ref', publicAffiliatesRoute({ db: deps.db }))
+  }
+  if (on.has('payments')) {
     // Payment-processor webhooks + the post-checkout landing page. Signature-
     // verified per location; a completed checkout marks the invoice paid.
     app.route('/api/public/pay', paymentsWebhookRoute({ db: deps.db }))
+  }
+  if (on.has('voice')) {
     // Voice-provider webhooks (Twilio status callbacks / Vapi call reports).
     // Signature-verified per location; events keep the call log honest.
     app.route('/api/public/voice', voiceWebhookRoute({ db: deps.db }))
-
+  }
+  if (on.has('federation')) {
     // The Acme Hub federation surface. Mounted OUTSIDE the operator-session
     // boundary because it carries its own bearer gate (the hub gateway's shared
     // service token); it is inert (503) until federationServiceToken is set. The
@@ -247,26 +254,26 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   }
   // Hosted booking pages: pick a day + time, leave details. A booking creates a
   // contact + appointment and fires appointment_booked into live automations.
-  app.route('/api/public/booking', publicBookingRoute({ db: deps.db, dispatch: deps.dispatch, requireDateOfBirth: psycrm }))
+  app.route('/api/public/booking', publicBookingRoute({ db: deps.db, dispatch: deps.dispatch, requireDateOfBirth: true }))
 
   app.use('/api/locations', auth())
-  app.route('/api/locations', locationsRoute({ db: deps.db, psycrmMode: psycrm }))
+  app.route('/api/locations', locationsRoute({ db: deps.db }))
 
-  if (!psycrm) {
+  if (on.has('push')) {
     app.use('/api/push-tokens', auth())
     app.route('/api/push-tokens', pushTokensRoute({ db: deps.db }))
   }
 
   app.use('/api/loc/:loc/*', auth())
   app.use('/api/loc/:loc/*', locationAccess(deps.db))
-  if (psycrm) {
+  {
     // 404 any route group whose module this location has not enabled.
     for (const [group, module] of Object.entries(ROUTE_MODULE)) {
+      // `/x/*` also matches `/x` itself; one registration = one settings lookup per request.
       app.use(`/api/loc/:loc/${group}/*`, moduleGate(deps.db, module))
-      app.use(`/api/loc/:loc/${group}`, moduleGate(deps.db, module))
     }
   }
-  app.route('/api/loc/:loc/contacts', contactsRoute({ db: deps.db, requireDateOfBirth: psycrm }))
+  app.route('/api/loc/:loc/contacts', contactsRoute({ db: deps.db, requireDateOfBirth: true }))
   app.route(
     '/api/loc/:loc/conversations',
     conversationsRoute({ db: deps.db, claude: deps.claude, sendMessage: deps.sendMessage }),
@@ -275,7 +282,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // across the location with its tools and answers, and (approve-first) drafts a
   // text the operator confirms. The confirm tap is the only send path; deps.sendText
   // is the gateway rail it goes through. 501 when no Claude client is configured.
-  app.route('/api/loc/:loc/assistant', assistantRoute({ db: deps.db, claude: deps.claude, sendText: deps.sendText }))
+  if (on.has('ai')) {
+    app.route('/api/loc/:loc/assistant', assistantRoute({ db: deps.db, claude: deps.claude, sendText: deps.sendText }))
+  }
   app.route('/api/loc/:loc/opportunities', opportunitiesRoute({ db: deps.db, dispatch: deps.dispatch }))
   // Pipeline + stage *structure* management (the Settings -> Pipelines area). The
   // opportunities route owns the board reads/writes; this owns create/rename/
@@ -363,52 +372,60 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 }
 
 /**
- * The original OpenLevel integrations (text rail, hub federation, inbound-message
- * relay + push). Only wired when PsyCRM mode is off: they carry client data to
- * third parties that have no BAA with the practice.
+ * The deps each enabled integration needs at boot. Anything not enabled contributes
+ * nothing, so a disabled integration has no client, no token and no callback to
+ * leak through.
  */
-function openLevelIntegrations(
+function integrationDeps(
   config: ReturnType<typeof loadConfig>,
   boss: Awaited<ReturnType<typeof startBoss>>,
 ): Pick<AppDeps, 'sendText' | 'federationServiceToken' | 'onInbound'> {
+  const has = (i: Integration) => config.ENABLED_INTEGRATIONS.includes(i)
   return {
-    // The approve-first text rail. Injected unconditionally — the env vars are the
-    // deployment control, NOT a feature flag (no dormant texting toggle). When
-    // GATEWAY_TEXT_URL/INTERNAL_PUSH_SECRET are unset, the rail honestly reports
-    // "not set up" rather than silently dropping. Reuses the gateway's internal
-    // push secret; the gateway owns the Beeper credential, OpenLevel never sees it.
-    sendText: makeHttpSendText({
-      url: process.env.GATEWAY_TEXT_URL ?? '',
-      secret: process.env.INTERNAL_PUSH_SECRET ?? '',
-    }),
+    // The approve-first text rail (assistant + federation). The env vars are the
+    // deployment control, NOT a feature flag: when GATEWAY_TEXT_URL/INTERNAL_PUSH_SECRET
+    // are unset the rail honestly reports "not set up" rather than silently dropping.
+    sendText:
+      has('ai') || has('federation')
+        ? makeHttpSendText({
+            url: process.env.GATEWAY_TEXT_URL ?? '',
+            secret: process.env.INTERNAL_PUSH_SECRET ?? '',
+          })
+        : undefined,
     // The hub gateway's shared bearer for /federation/*. Unset => that surface
-    // stays inert (503); the env var is the deployment control, not a feature flag.
-    federationServiceToken: config.FEDERATION_SERVICE_TOKEN,
-    // A fresh inbound both drafts an agent reply and fires the inbound_message
-    // trigger so message-triggered workflows enroll the contact.
-    onInbound: async (e) => {
-      await enqueueAgentReply(boss, {
-        locationId: e.locationId,
-        conversationId: e.conversationId,
-        contactId: e.contactId,
-      })
-      await enqueueWorkflowEvent(boss, {
-        locationId: e.locationId,
-        triggerType: 'inbound_message',
-        contactId: e.contactId,
-      })
-      // Nudge the Hub Android app out-of-process: a fresh inbound just landed.
-      // Fire-and-forget — a down/unconfigured gateway must never block ingestion.
-      void notifyPush(
-        { url: process.env.GATEWAY_PUSH_URL ?? '', secret: process.env.INTERNAL_PUSH_SECRET ?? '' },
-        {
-          source: 'openlevel',
-          title: e.contactName ? `New message — ${e.contactName}` : 'New OpenLevel message',
-          body: (e.preview ?? '').slice(0, 140),
-          data: { conversationId: e.conversationId, locationId: e.locationId },
-        },
-      )
-    },
+    // stays inert (503).
+    federationServiceToken: has('federation') ? config.FEDERATION_SERVICE_TOKEN : undefined,
+    // A fresh inbound fires the inbound_message trigger (so message-triggered
+    // workflows enroll the contact) and, only with the matching integrations on,
+    // drafts an agent reply and nudges the mobile app.
+    onInbound: has('chatwoot')
+      ? async (e) => {
+          if (has('ai')) {
+            await enqueueAgentReply(boss, {
+              locationId: e.locationId,
+              conversationId: e.conversationId,
+              contactId: e.contactId,
+            })
+          }
+          await enqueueWorkflowEvent(boss, {
+            locationId: e.locationId,
+            triggerType: 'inbound_message',
+            contactId: e.contactId,
+          })
+          if (has('push')) {
+            // Fire-and-forget — a down/unconfigured gateway must never block ingestion.
+            void notifyPush(
+              { url: process.env.GATEWAY_PUSH_URL ?? '', secret: process.env.INTERNAL_PUSH_SECRET ?? '' },
+              {
+                source: 'openlevel', // the push contract's fixed source id
+                title: 'New message',
+                body: '', // never put message text or a client name in a push payload
+                data: { conversationId: e.conversationId, locationId: e.locationId },
+              },
+            )
+          }
+        }
+      : undefined,
   }
 }
 
@@ -418,19 +435,20 @@ async function bootstrap() {
   const pool = new Pool({ connectionString: config.DATABASE_URL })
   const db = new PgDatabase(pool)
 
-  const psycrm = config.PSYCRM_MODE
+  const integrations = config.ENABLED_INTEGRATIONS
+  const has = (i: Integration) => integrations.includes(i)
 
-  // Jobs: pg-boss runs the workflow-dispatch worker (and, outside PsyCRM mode, the
-  // agent-reply worker); routes enqueue onto them.
+  // Jobs: pg-boss runs the workflow-dispatch worker (and the agent-reply worker only
+  // when the AI integration is on); routes enqueue onto them.
   const boss = await startBoss(config.DATABASE_URL)
   const dispatch: WorkflowDispatch = (e) => enqueueWorkflowEvent(boss, e)
-  // PsyCRM never sends client data to an AI provider: no Claude client, no agent
-  // worker, no text rail, no federation token, no inbound-message relay.
-  const claude = psycrm ? undefined : createAnthropicClient()
-  if (!psycrm) {
+  // No Claude client unless the AI integration is enabled: client data never goes
+  // to an AI provider by default.
+  const claude = has('ai') ? createAnthropicClient() : undefined
+  if (claude) {
     // The autonomous agent books/tags through real tools; thread the dispatcher so
     // an agent-booked appointment fires appointment_booked like the public page.
-    await registerAgentReplyWorker(boss, { db, claude: claude as ClaudeClient, dispatch })
+    await registerAgentReplyWorker(boss, { db, claude, dispatch })
   }
   await registerWorkflowDispatchWorker(boss, { db })
 
@@ -439,14 +457,17 @@ async function bootstrap() {
     sessionSecret: config.SESSION_SECRET,
     webhookSecret: config.CHATWOOT_WEBHOOK_SECRET,
     secure: config.NODE_ENV === 'production',
-    psycrmMode: psycrm,
     staticDir: config.STATIC_DIR,
+    integrations,
     claude,
     dispatch,
-    ...(psycrm ? {} : openLevelIntegrations(config, boss)),
+    ...integrationDeps(config, boss),
   })
   serve({ fetch: app.fetch, port: config.PORT })
-  console.log(`openlevel api listening on :${config.PORT}`)
+  console.log(`psycrm api listening on :${config.PORT}`)
+  // Names only. A reviewer reading the boot log can see at a glance which vendors
+  // are connected.
+  console.log(`integrations enabled: ${integrations.length > 0 ? integrations.join(', ') : 'none'}`)
 }
 
 // Boot only when run directly (tsx server/index.ts), never on import (tests).

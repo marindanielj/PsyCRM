@@ -18,12 +18,12 @@ import { ApiError } from '../../lib/api'
 export function AddContactDialog({
   onCancel,
   onCreate,
-  requireDateOfBirth = false,
+  requireDateOfBirth = true,
 }: {
   onCancel: () => void
   /** Saves the contact; the page owns navigating to the result. */
   onCreate: (input: { name?: string; phone?: string; email?: string; dateOfBirth?: string }) => Promise<void>
-  /** PsyCRM: the onboarding packet is chosen by age, so a date of birth is mandatory. */
+  /** The onboarding packet is chosen by age, so a date of birth is mandatory (default). */
   requireDateOfBirth?: boolean
 }) {
   const [name, setName] = useState('')

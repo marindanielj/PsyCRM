@@ -16,11 +16,11 @@ test('reads provided values over defaults', () => {
     SESSION_SECRET: STRONG,
     CHATWOOT_WEBHOOK_SECRET: STRONG,
     NODE_ENV: 'production',
-    DATABASE_URL: 'postgres://x',
+    DATABASE_URL: 'postgres://x?sslmode=verify-full',
   })
   expect(c.SESSION_SECRET).toBe(STRONG)
   expect(c.NODE_ENV).toBe('production')
-  expect(c.DATABASE_URL).toBe('postgres://x')
+  expect(c.DATABASE_URL).toBe('postgres://x?sslmode=verify-full')
   expect(c.PORT).toBe(8790)
 })
 
@@ -30,10 +30,14 @@ test('rejects the dev-default SESSION_SECRET in production', () => {
   ).toThrow(/SESSION_SECRET/)
 })
 
-test('rejects the dev-default CHATWOOT_WEBHOOK_SECRET in production', () => {
+test('rejects the dev-default CHATWOOT_WEBHOOK_SECRET in production once the chatwoot integration is on', () => {
   expect(() =>
-    loadConfig({ NODE_ENV: 'production', SESSION_SECRET: STRONG, CHATWOOT_WEBHOOK_SECRET: 'dev-secret' }),
+    loadConfig({ NODE_ENV: 'production', SESSION_SECRET: STRONG, CHATWOOT_WEBHOOK_SECRET: 'dev-secret', ENABLED_INTEGRATIONS: 'chatwoot' }),
   ).toThrow(/CHATWOOT_WEBHOOK_SECRET/)
+})
+
+test('the chatwoot webhook secret is not needed while that integration is off', () => {
+  expect(loadConfig({ NODE_ENV: 'production', SESSION_SECRET: STRONG }).ENABLED_INTEGRATIONS).toEqual([])
 })
 
 test('rejects a too-short secret in production', () => {
@@ -69,21 +73,35 @@ test('a too-short FEDERATION_SERVICE_TOKEN is rejected in production', () => {
 })
 
 const SSL_URL = 'postgres://u:p@h:5432/db?sslmode=verify-full&sslrootcert=/app/certs/rds.pem'
-const prod = { NODE_ENV: 'production', SESSION_SECRET: STRONG, CHATWOOT_WEBHOOK_SECRET: STRONG }
+const prod = { NODE_ENV: 'production', SESSION_SECRET: STRONG }
 
-test('PSYCRM_MODE defaults to off and parses true/false', () => {
-  expect(loadConfig({}).PSYCRM_MODE).toBe(false)
-  expect(loadConfig({ PSYCRM_MODE: 'true' }).PSYCRM_MODE).toBe(true)
-  expect(() => loadConfig({ PSYCRM_MODE: 'yes' })).toThrow()
+test('production requires a verified-SSL database URL (always, not behind a mode flag)', () => {
+  expect(() => loadConfig({ ...prod, DATABASE_URL: 'postgres://u:p@h/db' })).toThrow(/sslmode=verify-full/)
+  expect(() => loadConfig({ ...prod, DATABASE_URL: 'postgres://u:p@h/db?sslmode=require' })).toThrow(/sslmode=verify-full/)
+  expect(() => loadConfig({ ...prod, DATABASE_URL: 'postgres://u:p@h/db?sslmode=disable' })).toThrow(/sslmode=verify-full/)
+  expect(loadConfig({ ...prod, DATABASE_URL: SSL_URL }).DATABASE_URL).toBe(SSL_URL)
+  expect(loadConfig({ ...prod, DATABASE_URL: 'postgres://u:p@h/db?sslmode=verify-ca' }).DATABASE_URL).toContain('verify-ca')
 })
 
-test('PSYCRM_MODE in production requires a verified-SSL database URL', () => {
-  expect(() => loadConfig({ ...prod, PSYCRM_MODE: 'true', DATABASE_URL: 'postgres://u:p@h/db' })).toThrow(/sslmode=verify-full/)
-  expect(() => loadConfig({ ...prod, PSYCRM_MODE: 'true', DATABASE_URL: 'postgres://u:p@h/db?sslmode=require' })).toThrow(/sslmode=verify-full/)
-  expect(loadConfig({ ...prod, PSYCRM_MODE: 'true', DATABASE_URL: SSL_URL }).PSYCRM_MODE).toBe(true)
+test('outside production a plain database URL is fine (local dev)', () => {
+  expect(loadConfig({ DATABASE_URL: 'postgres://u:p@localhost/db' }).DATABASE_URL).toBe('postgres://u:p@localhost/db')
 })
 
-test('the SSL requirement only applies to PSYCRM_MODE in production', () => {
-  expect(loadConfig({ ...prod, DATABASE_URL: 'postgres://u:p@h/db' }).DATABASE_URL).toBe('postgres://u:p@h/db')
-  expect(loadConfig({ PSYCRM_MODE: 'true', DATABASE_URL: 'postgres://u:p@h/db' }).PSYCRM_MODE).toBe(true)
+test('no integration is enabled by default', () => {
+  expect(loadConfig({}).ENABLED_INTEGRATIONS).toEqual([])
+  expect(loadConfig({ ENABLED_INTEGRATIONS: '' }).ENABLED_INTEGRATIONS).toEqual([])
+  expect(loadConfig({ ENABLED_INTEGRATIONS: ' , ' }).ENABLED_INTEGRATIONS).toEqual([])
+})
+
+test('ENABLED_INTEGRATIONS turns on exactly the named integrations (trimmed, any case, de-duplicated)', () => {
+  expect(loadConfig({ ENABLED_INTEGRATIONS: 'chatwoot, AI ,chatwoot' }).ENABLED_INTEGRATIONS).toEqual(['chatwoot', 'ai'])
+})
+
+test('an unknown integration name stops the boot instead of being ignored (a typo must never look like it worked)', () => {
+  expect(() => loadConfig({ ENABLED_INTEGRATIONS: 'chatwot' })).toThrow(/unknown integration\(s\): chatwot/)
+  expect(() => loadConfig({ ENABLED_INTEGRATIONS: 'chatwoot,twilio' })).toThrow(/twilio/)
+})
+
+test('the old PSYCRM_MODE variable no longer does anything', () => {
+  expect('PSYCRM_MODE' in loadConfig({ PSYCRM_MODE: 'true' })).toBe(false)
 })

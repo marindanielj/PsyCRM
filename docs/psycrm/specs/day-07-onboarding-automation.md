@@ -32,7 +32,7 @@ Que el pipeline **Onboarding** avance solo según lo que pasa con el cliente: al
 | `send_document_packet` | `{ packetId }` | Llama al mismo servicio que `POST /documents/requests` con el contacto como firmante `client`. Queda `skipped` si el contacto no tiene email, si ya tiene un request abierto o completado de ese paquete, o si el paquete es `adolescent` (requiere tutor y lo envía el operador) |
 | `create_task` | `{ title, body?, dueInDays? }` | Crea `contact_tasks` con merge fields en el título |
 | `send_email` (real) | `{ subject, body }` existente | Usa `resolveEmailSender`. Si no hay proveedor, queda `failed` con el detalle "Email provider not configured" (antes se registraba como si hubiera salido bien). Se mantiene el evento de timeline con `status: 'sent'\|'failed'` y el `externalId` |
-| `send_sms` | — | Sin cambios (sigue solo en el log); se apaga en `PSYCRM_MODE` hasta tener un proveedor con BAA. La UI lo oculta |
+| `send_sms` | — | Sin cambios (sigue solo en el log); queda fuera de uso hasta tener un proveedor de SMS con BAA. La UI lo oculta |
 
 ## 2. Cambios en el motor
 

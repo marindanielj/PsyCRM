@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { INTEGRATION_NAMES, type Integration, parseIntegrations } from './integrations'
 
 /**
  * Environment parsing with safe dev defaults. Secrets default to obviously
@@ -23,15 +24,24 @@ const EnvSchema = z.object({
   // when unset the federation surface is inert (503). If present in production it
   // must be long enough to resist guessing.
   FEDERATION_SERVICE_TOKEN: z.string().optional(),
-  // PsyCRM mode: a single therapy practice. Turns on the idle session timeout,
-  // security headers, per-location module gating, and leaves every integration
-  // that would send client data to a third party (AI agent, Chatwoot, voice,
-  // social, federation, payments webhooks) unmounted. Default off, so a plain
-  // OpenLevel deploy behaves exactly as before.
-  PSYCRM_MODE: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
+  // Third-party integrations to turn ON (comma-separated; none by default). Each one
+  // moves client information to a vendor, so each is enabled on purpose, one at a
+  // time, after a BAA — see lib/integrations.ts and docs/psycrm/INTEGRACIONES.md.
+  // An unknown name fails the boot instead of being silently ignored.
+  ENABLED_INTEGRATIONS: z
+    .string()
+    .default('')
+    .transform((raw, ctx): Integration[] => {
+      const { enabled, unknown } = parseIntegrations(raw)
+      if (unknown.length > 0) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `unknown integration(s): ${unknown.join(', ')} (valid: ${INTEGRATION_NAMES.join(', ')})`,
+        })
+        return z.NEVER
+      }
+      return enabled
+    }),
   // Public origin used to build links in outbound email (document signing, etc.).
   PUBLIC_BASE_URL: z.string().url().optional(),
   // Directory holding the built web app (vite build output) to serve from the API
@@ -56,14 +66,17 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const config = EnvSchema.parse(env)
   if (config.NODE_ENV === 'production') {
     assertProdSecret('SESSION_SECRET', config.SESSION_SECRET, DEV_SESSION_SECRET)
-    assertProdSecret('CHATWOOT_WEBHOOK_SECRET', config.CHATWOOT_WEBHOOK_SECRET, DEV_WEBHOOK_SECRET)
+    // The Chatwoot webhook secret only matters while that integration is on.
+    if (config.ENABLED_INTEGRATIONS.includes('chatwoot')) {
+      assertProdSecret('CHATWOOT_WEBHOOK_SECRET', config.CHATWOOT_WEBHOOK_SECRET, DEV_WEBHOOK_SECRET)
+    }
     if (config.FEDERATION_SERVICE_TOKEN !== undefined && config.FEDERATION_SERVICE_TOKEN.length < MIN_PROD_SECRET_LEN) {
       throw new Error(`FEDERATION_SERVICE_TOKEN must be at least ${MIN_PROD_SECRET_LEN} characters in production`)
     }
     // PHI in transit to the database must be encrypted AND the server verified.
     // node-postgres reads sslmode / sslrootcert from the URL (also used by pg-boss).
-    if (config.PSYCRM_MODE && config.DATABASE_URL && !/[?&]sslmode=verify-(full|ca)\b/.test(config.DATABASE_URL)) {
-      throw new Error('DATABASE_URL must use sslmode=verify-full (with sslrootcert) when PSYCRM_MODE is on in production')
+    if (config.DATABASE_URL && !/[?&]sslmode=verify-(full|ca)\b/.test(config.DATABASE_URL)) {
+      throw new Error('DATABASE_URL must use sslmode=verify-full (with sslrootcert) in production')
     }
   }
   return config

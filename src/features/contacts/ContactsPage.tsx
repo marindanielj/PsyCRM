@@ -126,7 +126,6 @@ export function ContactsPage() {
       {adding && <AddContactDialog
           onCancel={() => setAdding(false)}
           onCreate={handleCreate}
-          requireDateOfBirth={current?.psycrm === true}
         />}
 
       <div className="flex min-h-0 flex-1">

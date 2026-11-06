@@ -26,7 +26,7 @@
 
 1. **Un solo tenant (una `location`)** para la práctica, con un solo usuario. Mantener el modelo multi-tenant tal cual (no estorba).
 2. **Ocultar módulos que no aplican** (Social, Blog, Afiliados, Comunidades, Funnels, Reputación, Campañas, Assistant/IA, Chatwoot) con una lista de `enabledModules` en `locations.settings` que lee `AppShell.tsx`. No se borra código; se oculta.
-3. **Apagar todo lo que envíe PHI a terceros sin BAA**: el agente de IA (Anthropic), Chatwoot, Beeper y las redes sociales. Se reactivan después, con BAA.
+3. **Apagar todo lo que envíe PHI a terceros sin BAA**: el agente de IA (Anthropic), Chatwoot, Beeper y las redes sociales. Queda apagado **por defecto** y se reactiva integración por integración, con BAA, mediante `ENABLED_INTEGRATIONS` (y los módulos por práctica con `enabledModules`): ver [`INTEGRACIONES.md`](INTEGRACIONES.md).
 4. **Nuevo dominio clínico en tablas nuevas.** No se modifica `contact_notes` ni `proposals`, para no romper los tests existentes y para separar la data clínica (PHI sensible) del resto.
 5. **Doble capa de enforcement** para el bloqueo de 72 h y la inmutabilidad del audit: validación en el repo/route **y** triggers en Postgres. Aunque haya un bug en la app, la base de datos rechaza el cambio.
 

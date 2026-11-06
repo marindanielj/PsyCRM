@@ -3,6 +3,8 @@
 > Fecha: 2026-11-06 · Rama: `claude/gracious-mayer-p1aobu` · Specs de origen: [`day-01-foundation.md`](specs/day-01-foundation.md) y [`day-02-audit-log.md`](specs/day-02-audit-log.md) (cada uno termina con su sección "Estado de implementación").
 >
 > Este documento reúne **qué se construyó, cómo se verificó, qué se encontró, en qué se desvió de los specs y qué falta**, para que se pueda retomar sin leer la conversación.
+>
+> **Actualización (2026-11-06, después de los días 1 y 2):** la variable `PSYCRM_MODE` **se eliminó**. PsyCRM es ahora el único comportamiento del producto, y las integraciones con terceros se activan una por una con `ENABLED_INTEGRATIONS` (ver [`INTEGRACIONES.md`](INTEGRACIONES.md)). Este documento ya describe el estado actual; el §6 explica el cambio.
 
 ---
 
@@ -19,9 +21,9 @@
 | Comprobación | Resultado |
 |---|---|
 | `npm run typecheck` | Limpio |
-| `npx vitest run` (suite completa) | **193 archivos, 1693 tests, todos en verde** |
+| `npx vitest run` (suite completa) | **195 archivos, 1708 tests, todos en verde** (tras quitar `PSYCRM_MODE`) |
 | `npm run build` (app web) | Compila |
-| Recorrido en navegador (Playwright + Chromium) con base PGlite y el seed | Sin errores en la consola (salvo el 401 esperado de la consulta de sesión antes de iniciar sesión) |
+| Recorrido en navegador (Playwright + Chromium) con el servidor real `dev:local` + Vite: inicio de sesión, menú, pipeline con los 4 clientes demo, agenda con 3 citas, módulo apagado por URL | Sin errores en la consola ni en el proxy de Vite (salvo el 401 esperado de la consulta de sesión antes de iniciar sesión) |
 | `npm ci` con el `package-lock.json` del repositorio, en carpeta limpia | Funciona (tras la corrección del §5.1) |
 | Build de la imagen Docker | **No probado** (no hay Docker en el entorno de desarrollo) |
 | Despliegue y servicios de AWS | **No probado** (la cuenta aún no existe) |
@@ -34,12 +36,12 @@ Alcance del cambio: **81 archivos** de código (4 791 líneas añadidas, 290 qui
 
 ### 2.1 Qué hace ahora
 
-**Modo PsyCRM (`PSYCRM_MODE=true`).** Una sola variable convierte el producto en la versión para una práctica de terapia. Con ella apagada, OpenLevel se comporta exactamente como antes (los tests originales lo confirman).
+**Comportamiento fijo.** No hay un modo que activar: esto es lo que hace el producto siempre.
 
-| Aspecto | Con `PSYCRM_MODE=true` |
+| Aspecto | Qué hace |
 |---|---|
 | **Módulos** | Cada práctica tiene una lista `settings.enabledModules`. Por defecto: contacts, tags, opportunities, tasks, calendars, automations, reporting, documents, session_notes, audit. Un módulo apagado responde **404** en la API y desaparece del menú. Escribir su dirección a mano redirige al inicio |
-| **Integraciones sin montar** | Chatwoot, webhooks de voz y de pagos, páginas públicas de marketing (funnels, formularios, reseñas, cursos, blog, comunidades, encuestas, propuestas, trigger links, afiliados), la federación con el hub y los tokens push. El agente de IA queda sin cliente de IA ni worker (la ruta del asistente sigue montada, pero detrás del módulo `assistant`, apagado por defecto, y sin cliente responde 501). Solo queda la página pública de reservas. La razón: enviarían datos de clientes a terceros sin acuerdo HIPAA |
+| **Integraciones con terceros** | Todas **apagadas por defecto** y sin montar: Chatwoot, webhooks de voz y de pagos, páginas públicas de marketing, la federación con el hub, los tokens push y el agente de IA (sin cliente de IA ni worker). Cada una se enciende **por separado** con `ENABLED_INTEGRATIONS` cuando exista un BAA con el proveedor, y solo queda siempre montada la reserva pública. Detalle, lista de verificación y registro en [`INTEGRACIONES.md`](INTEGRACIONES.md) |
 | **Sesión web** | Se cierra tras **30 min sin actividad** (ventana deslizante: la cookie se renueva como máximo cada 60 s) y a las **8 h** absolutas. A los 25 min aparece el aviso "Still there?" con cuenta regresiva. Mientras hay actividad, la web consulta la API cada 4 min para mantener viva la sesión. Cualquier 401 devuelve al login |
 | **Sesiones por `Authorization: Bearer`** (app móvil) | Exentas del límite de inactividad (no pueden renovarse); solo aplica el límite absoluto |
 | **Cabeceras** | CSP estricta (`default-src 'self'`…), HSTS, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` en `/api/*`, `X-Robots-Tag: noindex` en las páginas públicas. Las páginas públicas renderizadas en el servidor llevan las mismas cabeceras **sin CSP** hasta que usen nonces |
@@ -60,10 +62,10 @@ Alcance del cambio: **81 archivos** de código (4 791 líneas añadidas, 290 qui
 |---|---|---|
 | `NODE_ENV` | sí en producción | `production` activa las comprobaciones de secretos y la cookie `Secure` |
 | `PORT` | no (8790) | Puerto del servidor |
-| `DATABASE_URL` | sí | Postgres. En producción con PsyCRM: `…?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem` |
+| `DATABASE_URL` | sí | Postgres. En producción: `…?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem` |
 | `SESSION_SECRET` | sí en producción | ≥ 32 caracteres; firma las sesiones |
-| `CHATWOOT_WEBHOOK_SECRET` | sí en producción (aunque no se use) | `config.ts` lo exige; ≥ 32 caracteres |
-| `PSYCRM_MODE` | no (`false`) | `true` / `false` (cualquier otro valor da error) |
+| `ENABLED_INTEGRATIONS` | no (vacía = ninguna) | Nombres separados por comas (`chatwoot`, `ai`, `public_pages`, `payments`, `voice`, `federation`, `push`). Un nombre desconocido detiene el arranque |
+| `CHATWOOT_WEBHOOK_SECRET` | solo con `chatwoot` habilitada | ≥ 32 caracteres en producción |
 | `PUBLIC_BASE_URL` | no | Origen público para los enlaces de los emails (días 6-7) |
 | `STATIC_DIR` | no | Carpeta de la web compilada. El `Dockerfile` la fija en `/app/dist` |
 | `PRACTICE_NAME`, `OWNER_EMAIL`, `OWNER_NAME`, `OWNER_PASSWORD` | solo para `seed:practice` | `OWNER_PASSWORD` (≥ 12 caracteres) solo se lee si la dueña aún no existe |
@@ -80,13 +82,13 @@ npm run seed:practice       # crea la práctica (ver variables arriba)
 npm run start               # arranca el servidor (tsx server/index.ts)
 ```
 
-> **`npm run dev:local` NO activa el modo PsyCRM** (sigue siendo el OpenLevel original, con su semilla de demostración). Hoy no existe un script para ver PsyCRM en local con datos: se hizo con una base PGlite en memoria, `seedPractice()` y `createApp({ psycrmMode: true, staticDir })` (el mismo montaje de los tests), y con el servidor real (`PSYCRM_MODE=true` más `npm run migrate` y `npm run seed:practice`) contra un Postgres. Esto último **no se ha probado** con un Postgres real. Un `npm run dev:psycrm` es un pendiente fácil.
+> **`npm run dev:local`** levanta la API en `:8790` con una base en memoria y una **práctica de demostración ficticia** (`db/seed-demo.ts`: 4 clientes repartidos por el pipeline, uno menor de edad, y 3 citas próximas). Sin integraciones habilitadas. Entrada: `demo@psycrm.test` / `psycrm-demo-pass`. La web se levanta aparte con `npm run dev` (`:5273`, reenvía `/api` a `:8790`); si solo corre la web aparece `ECONNREFUSED` en el proxy de Vite.
 
 ### 2.4 Archivos
 
 **Nuevos (17):** `Dockerfile`, `.dockerignore`, `.gitignore` (el repositorio no tenía), `db/seed-practice.ts`, `server/lib/modules.ts`, `server/lib/practice-seed.ts`, `server/middleware/module-gate.ts`, `server/repos/practice-repo.ts`, `server/routes/practice.ts`, `src/features/auth/IdleTimeout.tsx`, `src/features/settings/PracticeSettingsPage.tsx`, `src/features/shell/RequireModule.tsx`, `src/lib/modules.ts` y sus tests.
 
-**Modificados (principales):** `server/index.ts` (modo PsyCRM, cabeceras, compuertas, estáticos), `server/lib/config.ts`, `server/lib/session.ts` y `server/middleware/auth.ts` (inactividad), `server/routes/locations.ts` (`enabledModules`, `psycrm`), `src/App.tsx`, `src/features/shell/AppShell.tsx`, `src/features/settings/SettingsLayout.tsx`, `src/state/auth.tsx`, `src/lib/api.ts`, `index.html`, `package.json` (`seed:practice`, `start`).
+**Modificados (principales):** `server/index.ts` (cabeceras, compuertas de módulos, montaje por integración, estáticos), `server/lib/config.ts`, `server/lib/session.ts` y `server/middleware/auth.ts` (inactividad), `server/routes/locations.ts` (`enabledModules`, `psycrm`), `src/App.tsx`, `src/features/shell/AppShell.tsx`, `src/features/settings/SettingsLayout.tsx`, `src/state/auth.tsx`, `src/lib/api.ts`, `index.html`, `package.json` (`seed:practice`, `start`).
 
 ---
 
@@ -140,7 +142,7 @@ Los parámetros se validan (una fecha, categoría o acción mal formada da 400, 
 
 ### 3.4 Fecha de nacimiento y edad
 
-`server/lib/age.ts`: edad exacta (cumpleaños el mismo día; el 29 de febrero cuenta el 1 de marzo en años no bisiestos), "hoy" en hora de Puerto Rico (a las 8 pm de allí ya es mañana en UTC), **adulto = 18 años o más**. En modo PsyCRM un cliente nuevo exige una fecha de nacimiento válida y no futura, tanto en el diálogo "Add contact" (el botón queda desactivado hasta ponerla) como en la API y en la reserva pública. Se guarda como el campo personalizado `date_of_birth` y **no se sobrescribe** si el cliente ya tenía una. El diálogo ahora muestra el mensaje de error de la API (antes fallaba en silencio).
+`server/lib/age.ts`: edad exacta (cumpleaños el mismo día; el 29 de febrero cuenta el 1 de marzo en años no bisiestos), "hoy" en hora de Puerto Rico (a las 8 pm de allí ya es mañana en UTC), **adulto = 18 años o más**. Un cliente nuevo exige una fecha de nacimiento válida y no futura, tanto en el diálogo "Add contact" (el botón queda desactivado hasta ponerla) como en la API y en la reserva pública. Se guarda como el campo personalizado `date_of_birth` y **no se sobrescribe** si el cliente ya tenía una. El diálogo ahora muestra el mensaje de error de la API (antes fallaba en silencio).
 
 ### 3.5 Archivos
 
@@ -156,7 +158,7 @@ Los parámetros se validan (una fecha, categoría o acción mal formada da 400, 
 |---|---|
 | Esquema, triggers y cadena | `npx vitest run server/db/audit-schema.test.ts` (base real PGlite: encadenado, aislamiento por práctica, inmutabilidad, detección de alteraciones, migración repetible) |
 | Atomicidad cambio + auditoría | Los tests "against a real database…" de `server/routes/{contacts,opportunities,calendars}.test.ts` renombran la tabla de auditoría y comprueban que el cambio se revierte |
-| Modo PsyCRM | `server/index.test.ts` (integraciones sin montar, compuertas, cabeceras en la API y en las páginas públicas, inactividad, estáticos) |
+| Comportamiento fijo e integraciones | `server/index.test.ts` (ninguna integración montada por defecto y cada una monta exactamente sus rutas, compuertas de módulos, cabeceras en la API y en las páginas públicas, inactividad, estáticos); `server/lib/integrations.test.ts`; `server/lib/config.test.ts` |
 | Seed | `server/lib/practice-seed.test.ts` (crea, es idempotente, no pisa ediciones, exige contraseña fuerte) |
 | Aviso de inactividad en la web | Se verificó adelantando el reloj del navegador (Playwright `page.clock`): sin aviso a los 10 min, aviso a los 26 con "4:00", "Stay signed in" lo cierra y a los 31 min más sin actividad vuelve a `/login` |
 | Verificación manual | Con una base y el seed, iniciar sesión, crear un cliente (con fecha de nacimiento), abrir su ficha y revisar Settings → Audit log |
@@ -178,6 +180,8 @@ Los parámetros se validan (una fecha, categoría o acción mal formada da 400, 
 
 | Tema | Decisión |
 |---|---|
+| **Sin flag global** (2026-11-06) | Se eliminó `PSYCRM_MODE`. Lo creé el día 1 para no tocar el comportamiento original de OpenLevel (y sus ~1 600 tests), pero fallaba hacia lo inseguro: olvidarlo en producción dejaba montadas las integraciones con terceros, sin cierre por inactividad y sin exigir SSL a la base, sin avisar. Ahora cabeceras, inactividad, compuertas de módulos, fecha de nacimiento obligatoria y SSL verificado son **siempre** así, y las integraciones son una lista explícita y vacía por defecto (`ENABLED_INTEGRATIONS`), para poder encenderlas una a una cuando haya un BAA. Cambios en las respuestas de la API: `/api/locations` ya no lleva `psycrm`; `enabledModules` sale siempre de la configuración de la práctica |
+| Compuerta de módulos | Se registraba con dos patrones por grupo y cada petición consultaba los ajustes de la práctica **dos veces**; ahora es una (el patrón `/x/*` ya cubre `/x`) |
 | `chain_seq` | La cadena se ordena por una columna propia, no por el `id` serial |
 | Login fallido con un correo desconocido | **No se registra:** la tabla exige `location_id` y no hay práctica a la que asociarlo. Lo cubre el límite de intentos. El de una cuenta real se registra en cada una de sus prácticas |
 | Automatizaciones | La auditoría es de **mejor esfuerzo**: si falla escribirla, la ejecución sigue (un fallo haría que la cola reintente y repita efectos reales como un email). Los efectos clínicos relevantes (cambio de etapa, citas) se auditan en su origen y **sí** hacen fallar la operación |
@@ -198,9 +202,9 @@ Los parámetros se validan (una fecha, categoría o acción mal formada da 400, 
 - La **concurrencia** del bloqueo que evita bifurcar la cadena entre conexiones simultáneas: PGlite atiende una consulta a la vez. Pendiente para el día 8, contra Postgres real.
 
 **Sin hacer (por diseño del plan)**
-- `moveOpportunityToStage` aún no lo usa nadie más que la ruta del tablero; `operator-tools.ts` (asistente de IA, apagado en modo PsyCRM) debe migrarse si se reactiva.
+- `moveOpportunityToStage` aún no lo usa nadie más que la ruta del tablero; `operator-tools.ts` (asistente de IA, apagado salvo que se habilite `ai`) debe migrarse si se reactiva.
 - No se auditan todavía: editar la configuración de reservas de un calendario, borrar tarjetas, alta y baja de etapas.
-- Un script `dev:psycrm` para ver el modo PsyCRM en local con datos.
+- Una pantalla Settings → Modules (hoy `enabledModules` se cambia con SQL; ver `INTEGRACIONES.md` §5).
 - MFA, esperas durables en las automatizaciones y el resto de la lista de la semana 2 (ver [`PLAN_MVP.md`](PLAN_MVP.md)).
 
 **Riesgos a tener presentes**

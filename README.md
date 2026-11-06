@@ -1,3 +1,5 @@
+> **PsyCRM.** Este repositorio es un fork de OpenLevel orientado a la práctica privada de psicología (notas clínicas, documentos firmados y un log de auditoría pensados para HIPAA). El plan, los specs y el estado están en [`docs/psycrm/`](docs/psycrm/PLAN_MVP.md); para ver la aplicación en local: `npm run dev:local` y, en otra terminal, `npm run dev` (entrada: `demo@psycrm.test` / `psycrm-demo-pass`). El texto de abajo es el del proyecto original.
+
 # OpenLevel
 
 **The Open-Source, AI-First Alternative to GoHighLevel**
