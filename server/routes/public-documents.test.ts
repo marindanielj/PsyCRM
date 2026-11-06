@@ -302,3 +302,13 @@ test('only the hash of a link is stored, and the page never puts a token in a lo
   // the token appears only as part of the page's own URLs and as the endpoint prefix in its script
   expect(page.text.replaceAll(`/d/${token}`, '').replace(`const T="${token}";`, '')).not.toContain(token)
 })
+
+test('signing and saving are rate limited per signer (a stolen session cannot hammer the endpoints)', async () => {
+  const s = await documentsSetup()
+  const { token } = await s.sendAdult()
+  const v = await s.verified(token, ANA)
+  let last = 0
+  for (let i = 0; i < 62; i++) last = (await v.call('POST', `/${token}/sign/t_consent`, s.signBody({ consent: false } as never))).status
+  expect(last).toBe(429)
+  expect((await v.call('POST', `/${token}/draft`, { templateId: 't_intake', values: {} })).status).toBe(429)
+})

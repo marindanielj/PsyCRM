@@ -73,6 +73,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     if (config.FEDERATION_SERVICE_TOKEN !== undefined && config.FEDERATION_SERVICE_TOKEN.length < MIN_PROD_SECRET_LEN) {
       throw new Error(`FEDERATION_SERVICE_TOKEN must be at least ${MIN_PROD_SECRET_LEN} characters in production`)
     }
+    // The signing and invitation links in emails are built from this. Behind a load balancer a request's own
+    // origin is http://, so guessing it would put insecure (or wrong) links in front of clients.
+    if (!config.PUBLIC_BASE_URL || !config.PUBLIC_BASE_URL.startsWith('https://')) {
+      throw new Error('PUBLIC_BASE_URL must be set to the https:// address of the app in production (it is used in emailed links)')
+    }
     // PHI in transit to the database must be encrypted AND the server verified.
     // node-postgres reads sslmode / sslrootcert from the URL (also used by pg-boss).
     if (config.DATABASE_URL && !/[?&]sslmode=verify-(full|ca)\b/.test(config.DATABASE_URL)) {

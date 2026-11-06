@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
+import { HTTPException } from 'hono/http-exception'
 import { secureHeaders } from 'hono/secure-headers'
 import { Pool } from 'pg'
 import type { AppEnv } from './app-env'
@@ -204,6 +205,14 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   }
 
   app.notFound((c) => c.json({ error: 'not found' }, 404))
+
+  // The default handler prints the whole error, and a database error can carry the offending VALUES
+  // (a duplicate email, a name): that would put client data in the logs. Log the code and the method only.
+  app.onError((err, c) => {
+    if (err instanceof HTTPException) return err.getResponse()
+    console.error('request failed', c.req.method, (err as { code?: unknown } | null)?.code ?? 'unknown')
+    return c.json({ error: 'internal error' }, 500)
+  })
 
   app.get('/health', (c) => c.json({ ok: true, service: 'psycrm' }))
 

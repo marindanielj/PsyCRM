@@ -498,3 +498,36 @@ test('checked_in is a valid appointment status for the status endpoint too', asy
   db.enqueue([{ id: 'ap1', contact_id: 'c1', status: 'checked_in', prev_status: 'scheduled' }])
   expect((await patchJson(harness(db), '/appointments/ap1', { status: 'checked_in' })).status).toBe(200)
 })
+
+test('an appointment the therapist books for a client fires appointment_booked (so the onboarding card moves on); one with no client does not', async () => {
+  const events: unknown[] = []
+  const make = (db: FakeDatabase) => {
+    const app = new Hono<AppEnv>()
+    app.use('*', async (c, next) => {
+      c.set('operatorId', 'op1')
+      c.set('locationId', 'locA')
+      await next()
+    })
+    app.route('/', calendarsRoute({ db, dispatch: (e) => void events.push(e) }))
+    return app
+  }
+  const post = (app: Hono<AppEnv>, contactId?: string) =>
+    app.request('/appointments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ calendarId: 'cal1', contactId, title: 'Sesión', startsAt: '2026-06-04T15:00:00Z', endsAt: '2026-06-04T15:50:00Z' }),
+    })
+
+  const withClient = new FakeDatabase()
+  withClient.enqueue([{ id: 'cal1', location_id: 'locA', name: 'Sessions' }])
+  withClient.enqueue([{ id: 'a1', location_id: 'locA', calendar_id: 'cal1', contact_id: 'c1' }])
+  expect((await post(make(withClient), 'c1')).status).toBe(201)
+  expect(events).toEqual([{ locationId: 'locA', triggerType: 'appointment_booked', contactId: 'c1', depth: 0, payload: { appointmentId: 'a1', calendarId: 'cal1', source: 'operator' } }])
+
+  events.length = 0
+  const noClient = new FakeDatabase()
+  noClient.enqueue([{ id: 'cal1', location_id: 'locA', name: 'Sessions' }])
+  noClient.enqueue([{ id: 'a2', location_id: 'locA', calendar_id: 'cal1', contact_id: null }])
+  expect((await post(make(noClient))).status).toBe(201)
+  expect(events).toEqual([])
+})

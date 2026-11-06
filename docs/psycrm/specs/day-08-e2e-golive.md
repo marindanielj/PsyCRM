@@ -89,3 +89,24 @@ Una página con capturas:
 2. La checklist de seguridad está completa (los ítems que no apliquen, justificados).
 3. La lista go/no-go está en verde o con una excepción aceptada por escrito.
 4. La guía rápida está entregada y la terapeuta completó el ciclo una vez por sí misma.
+
+---
+
+## Estado de implementación (día 8)
+
+**Hecho y verificado** (typecheck limpio; 214 archivos (213 pasan y 1 se omite sin `PG_TEST_URL`), 1894 pruebas en verde más 9 de PostgreSQL real que se omiten sin el servidor; ver [`../RESULTADOS_DIA_8.md`](../RESULTADOS_DIA_8.md)).
+
+**Diferencias respecto a lo escrito arriba**
+- **El E2E ya no empieza con "Add contact"**: parte de la **invitación al cliente** (la doctora invita, la persona se registra en su celular) y verifica que el onboarding arranca solo. Antes del recorrido, el script hace el paso de salida a producción de la terapeuta: **activa las plantillas semilla y enciende los workflows** (nacen en borrador).
+- **El correo falso** se expone en `GET /__dev/outbox` (solo en `server/dev-server.ts`, que producción no usa). También hay `POST /__dev/close-note-window/:id` para simular las 72 h y `PORT` / `IDLE_TTL_MS` para el paso 13, que corre en un **segundo servidor con un límite de 3 s**.
+- **Hallazgo del recorrido:** una cita creada **por la terapeuta** desde la agenda **no avisaba** a las automatizaciones (solo la reserva pública y el agente lo hacían), así que la tarjeta no pasaba a "First appointment booked". Corregido: `POST /calendars/appointments` ahora emite `appointment_booked`.
+- **Hallazgos de la revisión de seguridad** (corregidos):
+  - Sin manejador global de errores, el registro habría impreso el error completo de la base de datos, que puede incluir **valores** (un correo duplicado, un nombre). Ahora `app.onError` registra solo el método y el código.
+  - `PUBLIC_BASE_URL` pasa a ser **obligatoria y https en producción**: detrás del balanceador el origen de una petición es `http://` y los enlaces de los correos saldrían mal (o envenenados por el encabezado `Host`).
+  - Los endpoints de firma y de guardado tenían límite en el código pero no en la firma y el borrador: ahora hay un límite por firmante.
+  - `npm audit --omit=dev`: de **10 vulnerabilidades (7 altas) a 0** (hono, @hono/node-server, zod, nanoid, react-router, vite y sus dependencias).
+- **Concurrencia en PostgreSQL real**: hecha (ver resultados). Antes solo se podía probar contra PGlite.
+
+**Pendiente / fuera de mi alcance** (ver la lista go/no-go en los resultados)
+- El E2E **en producción**, la **restauración de un respaldo real**, el monitoreo en AWS y el BAA son acciones sobre cuentas e infraestructura que no tengo.
+- La revisión con el skill `/security-review` no se pudo ejecutar (el repositorio no tiene `origin/HEAD`); se hizo una revisión dirigida a mano de las superficies públicas (ver resultados).

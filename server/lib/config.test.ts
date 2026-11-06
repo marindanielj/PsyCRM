@@ -15,7 +15,7 @@ test('reads provided values over defaults', () => {
   const c = loadConfig({
     SESSION_SECRET: STRONG,
     CHATWOOT_WEBHOOK_SECRET: STRONG,
-    NODE_ENV: 'production',
+    NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://app.example.com',
     DATABASE_URL: 'postgres://x?sslmode=verify-full',
   })
   expect(c.SESSION_SECRET).toBe(STRONG)
@@ -26,23 +26,23 @@ test('reads provided values over defaults', () => {
 
 test('rejects the dev-default SESSION_SECRET in production', () => {
   expect(() =>
-    loadConfig({ NODE_ENV: 'production', SESSION_SECRET: 'dev-only-change-me', CHATWOOT_WEBHOOK_SECRET: STRONG }),
+    loadConfig({ NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://app.example.com', SESSION_SECRET: 'dev-only-change-me', CHATWOOT_WEBHOOK_SECRET: STRONG }),
   ).toThrow(/SESSION_SECRET/)
 })
 
 test('rejects the dev-default CHATWOOT_WEBHOOK_SECRET in production once the chatwoot integration is on', () => {
   expect(() =>
-    loadConfig({ NODE_ENV: 'production', SESSION_SECRET: STRONG, CHATWOOT_WEBHOOK_SECRET: 'dev-secret', ENABLED_INTEGRATIONS: 'chatwoot' }),
+    loadConfig({ NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://app.example.com', SESSION_SECRET: STRONG, CHATWOOT_WEBHOOK_SECRET: 'dev-secret', ENABLED_INTEGRATIONS: 'chatwoot' }),
   ).toThrow(/CHATWOOT_WEBHOOK_SECRET/)
 })
 
 test('the chatwoot webhook secret is not needed while that integration is off', () => {
-  expect(loadConfig({ NODE_ENV: 'production', SESSION_SECRET: STRONG }).ENABLED_INTEGRATIONS).toEqual([])
+  expect(loadConfig({ NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://app.example.com', SESSION_SECRET: STRONG }).ENABLED_INTEGRATIONS).toEqual([])
 })
 
 test('rejects a too-short secret in production', () => {
   expect(() =>
-    loadConfig({ NODE_ENV: 'production', SESSION_SECRET: 'short', CHATWOOT_WEBHOOK_SECRET: STRONG }),
+    loadConfig({ NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://app.example.com', SESSION_SECRET: 'short', CHATWOOT_WEBHOOK_SECRET: STRONG }),
   ).toThrow(/32 characters/)
 })
 
@@ -64,7 +64,7 @@ test('FEDERATION_SERVICE_TOKEN passes through when set', () => {
 test('a too-short FEDERATION_SERVICE_TOKEN is rejected in production', () => {
   expect(() =>
     loadConfig({
-      NODE_ENV: 'production',
+      NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://app.example.com',
       SESSION_SECRET: 'x'.repeat(32),
       CHATWOOT_WEBHOOK_SECRET: 'y'.repeat(32),
       FEDERATION_SERVICE_TOKEN: 'short',
@@ -73,7 +73,7 @@ test('a too-short FEDERATION_SERVICE_TOKEN is rejected in production', () => {
 })
 
 const SSL_URL = 'postgres://u:p@h:5432/db?sslmode=verify-full&sslrootcert=/app/certs/rds.pem'
-const prod = { NODE_ENV: 'production', SESSION_SECRET: STRONG }
+const prod = { NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://app.example.com', SESSION_SECRET: STRONG }
 
 test('production requires a verified-SSL database URL (always, not behind a mode flag)', () => {
   expect(() => loadConfig({ ...prod, DATABASE_URL: 'postgres://u:p@h/db' })).toThrow(/sslmode=verify-full/)
@@ -104,4 +104,12 @@ test('an unknown integration name stops the boot instead of being ignored (a typ
 
 test('the old PSYCRM_MODE variable no longer does anything', () => {
   expect('PSYCRM_MODE' in loadConfig({ PSYCRM_MODE: 'true' })).toBe(false)
+})
+
+test('production needs PUBLIC_BASE_URL over https (it builds the links in emails)', () => {
+  const prod = { NODE_ENV: 'production', SESSION_SECRET: STRONG }
+  expect(() => loadConfig(prod)).toThrow(/PUBLIC_BASE_URL/)
+  expect(() => loadConfig({ ...prod, PUBLIC_BASE_URL: 'http://app.example.com' })).toThrow(/PUBLIC_BASE_URL/)
+  expect(loadConfig({ ...prod, PUBLIC_BASE_URL: 'https://app.example.com' }).PUBLIC_BASE_URL).toBe('https://app.example.com')
+  expect(loadConfig({ NODE_ENV: 'development' }).PUBLIC_BASE_URL).toBeUndefined() // dev falls back to the request's own origin
 })

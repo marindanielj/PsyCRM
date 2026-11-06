@@ -62,6 +62,8 @@ export function publicDocumentsRoute(deps: {
   const otpPerSigner = new SlidingWindowRateLimiter(3, 15 * 60_000)
   const otpPerIp = new SlidingWindowRateLimiter(10, 60 * 60_000)
   const verifyPerIp = new SlidingWindowRateLimiter(30, 15 * 60_000)
+  // A person signs a handful of documents; this only stops a script hammering the endpoints with a stolen session.
+  const writesPerSigner = new SlidingWindowRateLimiter(60, 10 * 60_000)
 
   type Valid = SignerContext & { practice: string; brand?: string }
 
@@ -213,6 +215,7 @@ export function publicDocumentsRoute(deps: {
     if (bodyTooBig(c)) return c.json({ error: 'too_large' }, 413)
     const v = await session(c)
     if (v instanceof Response) return v
+    if (!writesPerSigner.check(v.signer.id, clock().getTime()).allowed) return c.json({ error: 'rate_limited' }, 429)
     if (v.request.status !== 'sent' && v.request.status !== 'in_progress') return c.json({ error: 'request_closed' }, 409)
     const { templateId, values } = c.req.valid('json')
     const repo = new DocumentRequestsRepo(deps.db, v.locationId)
@@ -234,6 +237,7 @@ export function publicDocumentsRoute(deps: {
     if (bodyTooBig(c)) return c.json({ error: 'signature_too_large' }, 413)
     const v = await session(c)
     if (v instanceof Response) return v
+    if (!writesPerSigner.check(v.signer.id, clock().getTime()).allowed) return c.json({ error: 'rate_limited' }, 429)
     const body = c.req.valid('json')
     if (body.signaturePng) {
       const length = body.signaturePng.length

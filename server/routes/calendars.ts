@@ -160,6 +160,11 @@ export function calendarsRoute(deps: {
         })
         return created
       })
+      // A session booked by the therapist counts exactly like one a client booked: the onboarding card
+      // moves on to "First appointment booked" (a live appointment_booked workflow does it).
+      if (appointment.contact_id) {
+        await deps.dispatch?.({ locationId: loc, triggerType: 'appointment_booked', contactId: appointment.contact_id, payload: { appointmentId: appointment.id, calendarId: input.calendarId, source: 'operator' }, depth: 0 })
+      }
       return c.json({ ok: true, appointment }, 201)
     } catch (err) {
       // The no-double-book index refused this calendar+instant. An honest 409,
