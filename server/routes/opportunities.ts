@@ -52,8 +52,11 @@ export function opportunitiesRoute(deps: {
     const loc = c.get('locationId')
     const pipelineId = c.req.query('pipelineId')
     if (!pipelineId) return c.json({ error: 'pipelineId is required' }, 400)
-    const opportunities = await new OpportunitiesRepo(deps.db, loc).listByPipeline(pipelineId)
-    return c.json({ opportunities })
+    const repo = new OpportunitiesRepo(deps.db, loc)
+    const opportunities = await repo.listByPipeline(pipelineId)
+    // "Moved by Dra. X / by workflow, 2 h ago" on each card, from the audit trail.
+    const moves = await repo.lastMoves(opportunities.map((o) => o.id))
+    return c.json({ opportunities: opportunities.map((o) => ({ ...o, lastMove: moves[o.id] ?? null })) })
   })
 
   app.post('/', zValidator('json', createSchema), async (c) => {

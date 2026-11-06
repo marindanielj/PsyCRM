@@ -26,29 +26,32 @@ async function main() {
   const db = new PgliteDatabase(pg)
   await seedPracticeDemo(db)
 
+  // The same wiring the production worker has: automations can move cards, send packets and email.
+  const resolveEmail: NonNullable<Parameters<typeof createApp>[0]['resolveEmail']> = async () => ({
+    ok: true,
+    sender: {
+      name: 'dev-console',
+      sendEmail: async (m) => {
+        console.log(`\n[dev email] to=${m.to}\n[dev email] subject=${m.subject}\n${m.text.split('\n').map((l) => `[dev email] ${l}`).join('\n')}\n`)
+        return { externalId: 'dev', provider: 'dev-console' }
+      },
+    },
+  })
+  const publicBaseUrl = 'http://localhost:5273'
+  const dispatch = async (e: Parameters<typeof dispatchWorkflowEvent>[1]) => {
+    await dispatchWorkflowEvent({ db, dispatch, resolveEmail, publicBaseUrl }, e)
+  }
+
   const app = createApp({
     db,
     sessionSecret: 'dev-only-change-me',
     webhookSecret: 'dev-secret',
     secure: false,
-    // No email provider offline: print what would be sent (fictional demo data only), so the
-    // signing flow can be walked end to end — links and one-time codes show up in this log.
-    resolveEmail: async () => ({
-      ok: true,
-      sender: {
-        name: 'dev-console',
-        sendEmail: async (m) => {
-          console.log(`\n[dev email] to=${m.to}\n[dev email] subject=${m.subject}\n${m.text.split('\n').map((l) => `[dev email] ${l}`).join('\n')}\n`)
-          return { externalId: 'dev', provider: 'dev-console' }
-        },
-      },
-    }),
-    publicBaseUrl: 'http://localhost:5273',
+    resolveEmail,
+    publicBaseUrl,
     // No pg-boss against pglite — run the dispatch in-process so triggers fire
     // (and `wait` steps defer via the runner's default setTimeout) right here.
-    dispatch: async (e) => {
-      await dispatchWorkflowEvent({ db }, e)
-    },
+    dispatch,
   })
 
   const port = 8790

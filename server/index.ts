@@ -285,7 +285,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       app.use(`/api/loc/:loc/${group}/*`, moduleGate(deps.db, module))
     }
   }
-  app.route('/api/loc/:loc/contacts', contactsRoute({ db: deps.db, requireDateOfBirth: true }))
+  app.route('/api/loc/:loc/contacts', contactsRoute({ db: deps.db, requireDateOfBirth: true, dispatch: deps.dispatch }))
   app.route(
     '/api/loc/:loc/conversations',
     conversationsRoute({ db: deps.db, claude: deps.claude, sendMessage: deps.sendMessage }),
@@ -466,7 +466,7 @@ async function bootstrap() {
     // an agent-booked appointment fires appointment_booked like the public page.
     await registerAgentReplyWorker(boss, { db, claude, dispatch })
   }
-  await registerWorkflowDispatchWorker(boss, { db })
+  await registerWorkflowDispatchWorker(boss, { db, dispatch, publicBaseUrl: config.PUBLIC_BASE_URL })
 
   const app = createApp({
     db,

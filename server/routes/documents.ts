@@ -10,6 +10,7 @@ import { audit } from '../lib/audit'
 import { assignSigner, validateSignerRoles } from '../lib/document-assignment'
 import { sendLinkEmail } from '../lib/document-mail'
 import { REQUEST_TTL_DAYS, hashToken, newToken } from '../lib/document-tokens'
+import { sendDocumentPacket } from '../lib/document-send'
 import { renderDocumentHtml, renderPacketHtml, type RenderableTemplate, type RenderContact } from '../lib/document-render'
 import { type ResolvedEmailSender, resolveEmailSender } from '../lib/sending/resolve'
 import { SIGNER_ROLES, createTemplateSchema, DOCUMENT_MERGE_FIELDS, FIELD_TYPES, packetSchema, patchPacketSchema, patchTemplateSchema } from '../lib/document-vocab'
@@ -205,6 +206,17 @@ export function documentsRoute(deps: {
   const baseUrl = (c: Context<AppEnv>) => (deps.publicBaseUrl ?? new URL(c.req.url).origin).replace(/\/$/, '')
   const emailSender = (c: Context<AppEnv>) => (deps.resolveEmail ?? resolveEmailSender)(deps.db, c.get('locationId'))
 
+  app.post('/requests', zValidator('json', sendSchema), async (c) => {
+    const a = actor(c)
+    const r = await sendDocumentPacket(
+      { db: deps.db, locationId: c.get('locationId'), today, resolveEmail: deps.resolveEmail, baseUrl: baseUrl(c) },
+      c.req.valid('json'),
+      { sentBy: a.operatorId, audit: { actor: { type: 'operator', id: a.operatorId }, ip: a.ip, userAgent: a.userAgent } },
+    )
+    if (!r.ok) return c.json(r.body, r.status)
+    return c.json({ ok: true, request: r.request, signers: r.signers.map((s) => ({ ...s })), warnings: r.warnings }, 201)
+  })
+
   async function mailLink(c: Context<AppEnv>, o: { to: string; name: string; token: string }) {
     const practice = await new PracticeRepo(deps.db, c.get('locationId')).get()
     const sender = await emailSender(c)
@@ -212,62 +224,6 @@ export function documentsRoute(deps: {
     const r = await sendLinkEmail(sender.ok ? sender.sender : null, sender.ok ? undefined : sender.reason, { practice: practice.name || 'Su terapeuta', to: o.to, name: o.name, link, days: REQUEST_TTL_DAYS })
     return { link, emailed: r.sent, reason: r.reason }
   }
-
-  app.post('/requests', zValidator('json', sendSchema), async (c) => {
-    const input = c.req.valid('json')
-    const loc = c.get('locationId')
-    const contact = await new ContactsRepo(deps.db, loc).get(input.contactId)
-    if (!contact || contact.archived_at) return c.json({ error: 'unknown contact' }, 400)
-    const packet = await packets(c).get(input.packetId)
-    if (!packet || packet.archivedAt) return c.json({ error: 'unknown packet' }, 400)
-
-    // The packet follows the client's age: 18+ adult, under 18 adolescent.
-    const dob = contact.custom_fields?.date_of_birth
-    if (!isValidIsoDate(dob)) return c.json({ error: 'date_of_birth_required' }, 422)
-    const minor = isMinor(dob, today())
-    const expected = minor ? 'adolescent' : 'adult'
-    if (packet.audience !== expected) return c.json({ error: 'packet_audience_mismatch', expected, packetAudience: packet.audience }, 422)
-
-    const roleIssues = validateSignerRoles(packet.audience, input.signers.map((s) => s.role))
-    if (roleIssues.length) return c.json({ error: 'invalid_signers', issues: roleIssues }, 422)
-
-    // The versions IN FORCE are frozen into the request now; later edits never reach it.
-    const wanted = packet.familyIds.filter((f) => !input.excludeFamilyIds.includes(f))
-    const resolved = await templates(c).resolveFamilies(wanted)
-    const notActive = wanted.filter((f) => !resolved.find((r) => r.familyId === f)?.active)
-    if (notActive.length) return c.json({ error: 'template_not_active', familyIds: notActive }, 422)
-    if (resolved.length === 0) return c.json({ error: 'no_documents' }, 422)
-
-    const warnings: string[] = []
-    const kept = resolved.filter((r) => {
-      if (assignSigner(r.template.signerRoles, input.signers)) return true
-      // A document written only for the minor is skipped (with a note) when the minor is not signing.
-      if (r.template.signerRoles.every((x) => x === 'minor')) { warnings.push(`skipped_minor_document:${r.familyId}`); return false }
-      return false
-    })
-    const unassigned = resolved.filter((r) => !kept.includes(r) && !r.template.signerRoles.every((x) => x === 'minor'))
-    if (unassigned.length) return c.json({ error: 'signer_missing', familyIds: unassigned.map((r) => r.familyId) }, 422)
-    if (kept.length === 0) return c.json({ error: 'no_documents' }, 422)
-
-    const tokens = input.signers.map((s) => ({ ...s, token: newToken() }))
-    const created = await requests(c).create(
-      {
-        contactId: contact.id,
-        packet: { id: packet.id, name: packet.name, audience: packet.audience },
-        templates: kept.map((r) => ({ id: r.template.id, version: r.template.version })),
-        signers: tokens.map((t) => ({ role: t.role, name: t.name, email: t.email, tokenHash: hashToken(t.token) })),
-        warnings,
-      },
-      actor(c),
-    )
-    const out = []
-    for (const s of created.signers) {
-      const t = tokens.find((x) => x.role === s.role)!
-      const m = await mailLink(c, { to: s.email, name: s.name, token: t.token })
-      out.push({ id: s.id, role: s.role, name: s.name, email: s.email, link: m.link, emailed: m.emailed, emailIssue: m.reason ?? null })
-    }
-    return c.json({ ok: true, request: created.request, signers: out, warnings }, 201)
-  })
 
   // Past-deadline requests are closed (with a follow-up task) whenever someone looks.
   app.get('/requests', zValidator('query', requestsQuery), async (c) => {

@@ -22,7 +22,7 @@ export function AddContactDialog({
 }: {
   onCancel: () => void
   /** Saves the contact; the page owns navigating to the result. */
-  onCreate: (input: { name?: string; phone?: string; email?: string; dateOfBirth?: string }) => Promise<void>
+  onCreate: (input: { name?: string; phone?: string; email?: string; dateOfBirth?: string; skipOnboarding?: boolean }) => Promise<void>
   /** The onboarding packet is chosen by age, so a date of birth is mandatory (default). */
   requireDateOfBirth?: boolean
 }) {
@@ -30,6 +30,8 @@ export function AddContactDialog({
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
   const [dob, setDob] = useState('')
+  // On by default: a new client starts onboarding (the packet goes out by email) on its own.
+  const [sendPacket, setSendPacket] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -48,6 +50,7 @@ export function AddContactDialog({
         phone: phone.trim() || undefined,
         email: email.trim() || undefined,
         dateOfBirth: dob || undefined,
+        skipOnboarding: sendPacket ? undefined : true,
       })
     } catch (e) {
       setError(e instanceof ApiError && e.message ? e.message : 'Could not add the contact.')
@@ -118,6 +121,15 @@ export function AddContactDialog({
                 Needed to send the right onboarding documents (adult or minor).
               </p>
             </div>
+          ) : null}
+          {requireDateOfBirth ? (
+            <label className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+              <input type="checkbox" className="mt-0.5" checked={sendPacket} onChange={(e) => setSendPacket(e.target.checked)} />
+              <span>
+                <span className="font-medium">Send onboarding packet now</span>
+                <span className="block text-xs text-slate-500">Emails the documents to sign (needs an email). Untick to send them yourself later.</span>
+              </span>
+            </label>
           ) : null}
           {error ? <p className="text-xs font-medium text-rose-600">{error}</p> : null}
         </div>

@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import type { AppEnv } from '../app-env'
 import type { Database } from '../db/database'
+import type { WorkflowDispatch } from '../jobs/workflow-dispatcher'
 import { isValidIsoDate, todayIn } from '../lib/age'
 import { audit, auditContext } from '../lib/audit'
 import { coerceCustomFieldValue } from '../lib/custom-field-key'
@@ -24,6 +25,8 @@ const createContactSchema = z
     // YYYY-MM-DD. Required when the deployment says so (PsyCRM: the onboarding
     // packet is chosen by age); see deps.requireDateOfBirth.
     dateOfBirth: z.string().trim().optional(),
+    // PsyCRM: "Send onboarding packet now" unticked — the automatic onboarding workflow skips this client.
+    skipOnboarding: z.boolean().optional(),
   })
   .refine((v) => Boolean(v.name || v.phone || v.email), {
     message: 'provide a name, phone, or email',
@@ -103,6 +106,8 @@ export function contactsRoute(deps: {
   requireDateOfBirth?: boolean
   /** Injectable clock for the "not in the future" check (tests). */
   today?: () => string
+  /** Fired after a NEW client is created, so a live `contact_created` workflow (onboarding) can start. */
+  dispatch?: WorkflowDispatch
 }): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
@@ -124,13 +129,13 @@ export function contactsRoute(deps: {
   // operator-entered (vs. a Beeper/Chatwoot inbound). Never sends or charges.
   app.post('/', zValidator('json', createContactSchema), async (c) => {
     const loc = c.get('locationId')
-    const { name, phone, email, dateOfBirth } = c.req.valid('json')
+    const { name, phone, email, dateOfBirth, skipOnboarding } = c.req.valid('json')
     const dob = dateOfBirth || undefined
     if (dob !== undefined && !isValidIsoDate(dob)) return c.json({ error: 'dateOfBirth must be a valid YYYY-MM-DD date' }, 400)
     if (dob !== undefined && dob > (deps.today?.() ?? todayIn())) return c.json({ error: 'dateOfBirth cannot be in the future' }, 400)
     if (deps.requireDateOfBirth && dob === undefined) return c.json({ error: 'dateOfBirth is required' }, 400)
 
-    const { contact } = await deps.db.transaction(async (tx) => {
+    const { contact, created } = await deps.db.transaction(async (tx) => {
       const repo = new ContactsRepo(tx, loc)
       const r = await repo.upsertByMatchFlagged(
         { name: name || undefined, phone: phone || undefined, email: email || undefined },
@@ -152,6 +157,9 @@ export function contactsRoute(deps: {
       }
       return r
     })
+    if (created) {
+      await deps.dispatch?.({ locationId: loc, triggerType: 'contact_created', contactId: contact.id, payload: { source: 'manual', skipOnboarding: skipOnboarding === true }, depth: 0 })
+    }
     return c.json({ ok: true, contact }, 201)
   })
 

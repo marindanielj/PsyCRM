@@ -276,7 +276,7 @@ Orden según el riesgo: **las notas antes que el onboarding**, porque se necesit
 4. **Interfaz de la terapeuta en inglés. Documentos y páginas para clientes en español.** El modelo de datos queda preparado para varios idiomas (`locale` y `translation_group_id` en las plantillas).
 5. **Adolescentes: posibles. Adulto = 18 años o más** (para efectos de terapia, decide por sí mismo). Menor = menos de 18. Hay un paquete "Onboarding adolescente" con consentimiento del tutor + asentimiento del menor (varios firmantes por envío). **El paquete se elige según la fecha de nacimiento**, que pasa a ser un dato obligatorio al crear el cliente.
 
-Los specs de cada día están en [`specs/`](specs/README.md). La infraestructura de AWS está en [`INFRA_AWS.md`](INFRA_AWS.md). Lo ya construido está en [`RESULTADOS_DIAS_1_2.md`](RESULTADOS_DIAS_1_2.md) y [`RESULTADOS_DIA_3.md`](RESULTADOS_DIA_3.md), [`RESULTADOS_DIA_4.md`](RESULTADOS_DIA_4.md) , [`RESULTADOS_DIA_5.md`](RESULTADOS_DIA_5.md) y [`RESULTADOS_DIA_6.md`](RESULTADOS_DIA_6.md).
+Los specs de cada día están en [`specs/`](specs/README.md). La infraestructura de AWS está en [`INFRA_AWS.md`](INFRA_AWS.md). Lo ya construido está en [`RESULTADOS_DIAS_1_2.md`](RESULTADOS_DIAS_1_2.md) y [`RESULTADOS_DIA_3.md`](RESULTADOS_DIA_3.md), [`RESULTADOS_DIA_4.md`](RESULTADOS_DIA_4.md) , [`RESULTADOS_DIA_5.md`](RESULTADOS_DIA_5.md) , [`RESULTADOS_DIA_6.md`](RESULTADOS_DIA_6.md) y [`RESULTADOS_DIA_7.md`](RESULTADOS_DIA_7.md).
 
 ---
 

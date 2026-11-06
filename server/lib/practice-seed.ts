@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid'
 import type { Database } from '../db/database'
 import { seedDocuments } from './document-seed'
+import { seedOnboardingWorkflows } from './onboarding-workflows'
 import { PSYCRM_DEFAULT_MODULES } from './modules'
 import { hashPassword } from './password'
 
@@ -170,6 +171,8 @@ export async function seedPractice(db: Database, input: PracticeSeedInput): Prom
 
   // Starter document templates and packets (drafts the therapist must review).
   await seedDocuments(db, locationId)
+  // The workflows that move clients along the pipeline (drafts until the documents are in force).
+  await seedOnboardingWorkflows(db, locationId, settings.onboarding)
 
   return { locationId, operatorId: op.id, createdOwner, onboarding: settings.onboarding }
 }

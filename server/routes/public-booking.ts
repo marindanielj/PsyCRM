@@ -126,7 +126,7 @@ export function publicBookingRoute(deps: {
     // One unit: the client, the appointment, the timeline entry and the audit rows
     // commit together. Losing the double-book race (a 23505 on the appointment)
     // now also undoes the client row, instead of leaving a booking-less contact.
-    let booked: { appointment: Awaited<ReturnType<AppointmentsRepo['create']>>; contactId: string }
+    let booked: { appointment: Awaited<ReturnType<AppointmentsRepo['create']>>; contactId: string; created: boolean; calendarId: string }
     try {
       booked = await deps.db.transaction(async (tx) => {
         const contacts = new ContactsRepo(tx, loc)
@@ -172,7 +172,7 @@ export function publicBookingRoute(deps: {
           details: { calendarId: cal.id, startsAt: match.start },
           ...who,
         })
-        return { appointment, contactId: contact.id }
+        return { appointment, contactId: contact.id, created: upserted.created, calendarId: cal.id }
       })
     } catch (err) {
       // We lost the write race: between our slot snapshot above and this INSERT,
@@ -185,8 +185,9 @@ export function publicBookingRoute(deps: {
     const { appointment } = booked
     const contact = { id: booked.contactId }
 
-    // Drive the capture → automation loop: a live appointment_booked workflow runs.
-    await deps.dispatch?.({ locationId: loc, triggerType: 'appointment_booked', contactId: contact.id })
+    // Drive the capture → automation loop. A client who just appeared starts onboarding; the booking itself moves the card on.
+    if (booked.created) await deps.dispatch?.({ locationId: loc, triggerType: 'contact_created', contactId: contact.id, payload: { source: 'booking' }, depth: 0 })
+    await deps.dispatch?.({ locationId: loc, triggerType: 'appointment_booked', contactId: contact.id, payload: { appointmentId: appointment.id, calendarId: booked.calendarId }, depth: 0 })
 
     return c.json({ ok: true, appointmentId: appointment.id, contactId: contact.id })
   })

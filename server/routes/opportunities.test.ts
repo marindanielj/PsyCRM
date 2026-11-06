@@ -60,7 +60,7 @@ test('GET /?pipelineId lists opportunities for that pipeline, scoped to location
   const res = await harness(db).request('/?pipelineId=p1')
 
   expect(res.status).toBe(200)
-  expect(await res.json()).toEqual({ opportunities: [{ id: 'o1', pipeline_id: 'p1' }] })
+  expect(await res.json()).toEqual({ opportunities: [{ id: 'o1', pipeline_id: 'p1', lastMove: null }] })
   expect(db.calls[0]?.params).toEqual(['locA', 'p1'])
 })
 
@@ -202,7 +202,7 @@ test('moving a card to another stage audits it, writes the client timeline, then
   const timeline = db.calls.find((c) => /INSERT INTO timeline_events/.test(c.sql))
   expect(timeline?.params).toContain('stage_changed')
   expect(timeline?.params).toContain('c1')
-  expect(events).toEqual([{ locationId: 'locA', triggerType: 'pipeline_stage_changed', contactId: 'c1' }])
+  expect(events).toEqual([{ locationId: 'locA', triggerType: 'pipeline_stage_changed', contactId: 'c1', depth: 0, payload: expect.objectContaining({ opportunityId: 'o1', fromStageId: 's1', toStageId: 's2', origin: 'operator' }) }])
 })
 
 test('a card with no client still audits the move but writes no timeline event', async () => {
@@ -214,7 +214,7 @@ test('a card with no client still audits the move but writes no timeline event',
   expect((await patchJson(app, '/o1', { stageId: 's2' })).status).toBe(200)
   expect(db.auditEntries()).toHaveLength(1)
   expect(db.calls.some((c) => /timeline_events/.test(c.sql))).toBe(false)
-  expect(events).toEqual([{ locationId: 'locA', triggerType: 'pipeline_stage_changed', contactId: null }])
+  expect(events).toEqual([{ locationId: 'locA', triggerType: 'pipeline_stage_changed', contactId: null, depth: 0, payload: expect.objectContaining({ origin: 'operator' }) }])
 })
 
 test('moving to the stage it is already in is a no-op: nothing audited, no trigger (so automations cannot loop)', async () => {
@@ -298,4 +298,27 @@ test('against a real database a stage move is atomic: if the audit cannot be wri
   expect((await db.query<{ stage_id: string }>("SELECT stage_id FROM opportunities WHERE id='o1'"))[0]!.stage_id).toBe('s2') // rolled back
   expect(await db.query("SELECT 1 FROM timeline_events WHERE type='stage_changed'")).toHaveLength(1) // no orphan timeline row
   expect(events).toHaveLength(1) // and no second trigger
+})
+
+test('each card says who moved it last: the operator by name, an automation by its label', async () => {
+  const { freshDb, addLocation } = await import('../test-utils/pglite')
+  const { OpportunitiesRepo } = await import('../repos/opportunities-repo')
+  const { audit } = await import('../lib/audit')
+  const { db } = await freshDb()
+  const loc = await addLocation(db, 'loc_a')
+  await db.query("INSERT INTO operators (id, email, name, password_hash) VALUES ('op1','d@x.com','Dra. Rivera','h')")
+  await db.query("INSERT INTO pipelines (id, location_id, name) VALUES ('p1',$1,'O')", [loc])
+  await db.query("INSERT INTO pipeline_stages (id, location_id, pipeline_id, name, position) VALUES ('s0',$1,'p1','A',0),('s1',$1,'p1','B',1)", [loc])
+  await db.query("INSERT INTO opportunities (id, location_id, pipeline_id, stage_id, name) VALUES ('o1',$1,'p1','s0','Uno'),('o2',$1,'p1','s0','Dos'),('o3',$1,'p1','s0','Tres')", [loc])
+  const move = (id: string, actor: Parameters<typeof audit>[2]['actor']) => audit(db, loc, { action: 'pipeline.stage_changed', entityType: 'opportunity', entityId: id, details: {}, actor })
+  await move('o1', { type: 'workflow', id: 'w1', label: 'Workflow: Onboarding: new client' })
+  await move('o1', { type: 'operator', id: 'op1' }) // later: the newest wins
+  await move('o2', { type: 'workflow', id: 'w1', label: 'Workflow: Onboarding: new client' })
+  const m = await new OpportunitiesRepo(db, loc).lastMoves(['o1', 'o2', 'o3'])
+  expect(m.o1).toMatchObject({ by: 'operator', label: 'Dra. Rivera' })
+  expect(m.o2).toMatchObject({ by: 'workflow', label: 'Workflow: Onboarding: new client' })
+  expect(m.o3).toBeUndefined()
+  expect(await new OpportunitiesRepo(db, loc).lastMoves([])).toEqual({})
+  const other = await addLocation(db, 'loc_b')
+  expect(await new OpportunitiesRepo(db, other).lastMoves(['o1'])).toEqual({}) // another practice sees nothing
 })

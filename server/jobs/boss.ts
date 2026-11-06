@@ -1,3 +1,4 @@
+import { nanoid } from 'nanoid'
 import { PgBoss } from 'pg-boss'
 import { type AgentReplyDeps, type AgentReplyPayload, handleAgentReply } from './agent-reply'
 import { type WorkflowEvent, dispatchWorkflowEvent } from './workflow-dispatcher'
@@ -96,5 +97,6 @@ export async function registerWorkflowDispatchWorker(
 
 /** Enqueue a workflow event — called by routes/webhooks when a trigger fires. */
 export async function enqueueWorkflowEvent(boss: PgBoss, event: WorkflowEvent): Promise<void> {
-  await boss.send(WORKFLOW_DISPATCH_QUEUE, event)
+  // The id lets a retried job pick its runs back up instead of repeating their steps.
+  await boss.send(WORKFLOW_DISPATCH_QUEUE, { ...event, eventId: event.eventId ?? nanoid() })
 }

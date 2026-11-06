@@ -30,7 +30,7 @@ export function ContactsPage() {
   // Save a hand-entered contact, then open its record. A phone/email that
   // matched an existing contact comes back as that same row, so we de-dup the
   // list by id rather than blindly prepending a second card for one person.
-  async function handleCreate(input: { name?: string; phone?: string; email?: string; dateOfBirth?: string }) {
+  async function handleCreate(input: { name?: string; phone?: string; email?: string; dateOfBirth?: string; skipOnboarding?: boolean }) {
     if (!loc) return
     const { contact } = await api.createContact(loc, input)
     setContacts((prev) => (prev.some((c) => c.id === contact.id) ? prev : [contact, ...prev]))

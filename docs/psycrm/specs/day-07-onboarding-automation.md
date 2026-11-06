@@ -86,3 +86,29 @@ Usan los IDs guardados en `locations.settings.onboarding` (día 1) y el paquete 
 
 ## Archivos
 `server/lib/automation-vocab.ts`, `server/jobs/workflow-dispatcher.ts`, `server/jobs/workflow-runner.ts`, `server/jobs/boss.ts` (payload y depth), `server/lib/onboarding.ts` (nuevo: el servicio `moveContactToStage` compartido entre la ruta y la acción), `server/routes/opportunities.ts`, `server/routes/documents.ts` (servicio de envío reutilizable), `server/routes/contacts.ts` (`skipOnboarding`), `server/routes/public-booking.ts` (payload), `db/seed-practice.ts`, `src/features/automations/{AddStepDialog,NewWorkflowDialog,RunsRail,automation-meta}.tsx`, `src/features/contacts/AddContactDialog.tsx`, `src/features/opportunities/OpportunityCard.tsx`.
+
+---
+
+## Estado de implementación (día 7)
+
+**Hecho y verificado** (typecheck limpio; 212 archivos / 1874 pruebas en verde; recorrido en navegador: se agrega un contacto con el checkbox "Send onboarding packet now" → el paquete sale por correo, la tarjeta aparece en "Documents sent" con "Moved by workflow · just now" y la corrida muestra sus tres pasos; ver [`../RESULTADOS_DIA_7.md`](../RESULTADOS_DIA_7.md)).
+
+**Diferencias respecto a lo escrito arriba**
+- **Idempotencia por evento, no por `run_id:position`.** Al encolar, cada evento recibe un `eventId`; la corrida de un workflow tiene id determinista `run_<eventId>_<workflowId>`. Si pg-boss reintenta el job, encuentra su corrida: si terminó, la devuelve; si quedó a medias, **sigue después del último paso registrado**. Además cada acción con efectos se protege sola (el paquete no se reenvía si ya hay uno abierto o completado; la tarea no se duplica mientras siga abierta). Queda una ventana mínima: si el proceso muere entre enviar un correo y anotar el paso, `send_email` puede repetirse.
+- **Un paso `failed` detiene la corrida** (estado `failed`): nada de lo que sigue aparenta que lo anterior salió bien. Un paso que lanza una excepción se registra como `failed` sin el texto del error.
+- **Config nueva `requirePreviousDone`** (no estaba en el spec): un paso con ese flag se salta si el anterior no quedó `done`. Lo usa W1 para que el último `move_to_stage(sent)` **no** mueva a "Documents sent" a un menor o a alguien sin fecha de nacimiento, cuyo paquete se saltó.
+- **`skipOnboarding`** se resuelve en el filtro del trigger (`{ skipOnboarding: false }` pasa salvo que el payload lo traiga en `true`); no hace falta el `source` de `contact_created`. `firstOnly` se mapea a `payload.isFirst`.
+- **`contact_created` ahora se emite** desde "Add contact" del operador y desde la reserva pública cuando el cliente es nuevo (antes solo lo emitían formularios, encuestas y embudos, que no están activos en PsyCRM).
+- **`send_document_packet` crea las tareas** del §3 (menor de 18 o sin fecha de nacimiento) **dentro de la acción**, no en el workflow; también crea "Add an email to send the onboarding packet" cuando falta el correo. Si el correo no sale, el paso queda `failed` con el motivo (la solicitud ya existe y se puede **reenviar** a mano; el workflow no enviará un segundo paquete).
+- **El envío de paquete es un servicio compartido** (`server/lib/document-send.ts`): el botón del operador y la acción pasan por las mismas reglas de edad, versiones, auditoría y correo. `move_to_stage` usa `moveOpportunityToStage` (el mismo del tablero); el despacho de `pipeline_stage_changed` ahora lleva payload y profundidad.
+- **Los workflows W1–W4 se siembran en `draft`** mientras las plantillas del paquete adulto no estén activas (lo normal en un despliegue nuevo, porque las semilla son borradores) y **no se encienden solos después**: la terapeuta los activa en Automations cuando sus documentos estén listos. No hay nota en la UI. W5 (opcional) no se creó. Volver a sembrar nunca toca un workflow que ya existe (se identifica por nombre).
+- **Kanban:** `GET /opportunities` devuelve `lastMove` (quién y cuándo), leído del audit log; la tarjeta muestra "Moved by workflow · 2h ago" o "Moved by Dra. X".
+- **El constructor** ofrece los tres pasos nuevos, los filtros por trigger (paquete, documento, pipeline/etapa, calendario, "First signed note only") y oculta `send_sms`. Un `send_sms` que ya exista en un workflow sigue funcionando (solo registra).
+- `{{contact.first_name}}` y `{{event.*}}` funcionan en los textos.
+
+**Pendiente / sin verificar**
+- **Esperas durables** (`wait` sigue en memoria; la UI avisa "Waits longer than a few hours may be lost if the server restarts"). Sigue para el recordatorio A1 de la semana 2.
+- **`send_email` real depende de un proveedor de correo con BAA.** Hoy solo existe el adaptador de Brevo (sin BAA); el de SES sigue pendiente (ver día 6). Sin proveedor, el paso falla con "Email provider not configured", como pide el spec.
+- **`PUBLIC_BASE_URL` debe estar configurada en producción**: una automatización no puede adivinar el origen de los enlaces. Sin ella, `send_document_packet` falla con "PUBLIC_BASE_URL is not configured".
+- El resumen de un paso "Move to pipeline stage" en el constructor no nombra la etapa (solo describe las opciones).
+- La concurrencia real (dos eventos simultáneos sobre un mismo cliente) se prueba contra Postgres real en el día 8.

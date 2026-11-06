@@ -253,7 +253,7 @@ export function calendarsRoute(deps: {
         : c.json({ error: 'cannot_check_in', status: result.status }, 409)
     }
     if (result.changed) {
-      await deps.dispatch?.({ locationId: loc, triggerType: 'appointment_checked_in', contactId: result.appointment.contact_id ?? null })
+      await deps.dispatch?.({ locationId: loc, triggerType: 'appointment_checked_in', contactId: result.appointment.contact_id ?? null, payload: { appointmentId: result.appointment.id, calendarId: result.appointment.calendar_id }, depth: 0 })
     }
     return c.json({ ok: true, appointment: result.appointment, changed: result.changed })
   })

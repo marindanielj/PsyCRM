@@ -1,4 +1,5 @@
-import type { TriggerType } from '../lib/automation-vocab'
+import { audit } from '../lib/audit'
+import { type EventPayload, MAX_EVENT_DEPTH, type TriggerType, matchesTriggerConfig } from '../lib/automation-vocab'
 import type { WorkflowRun } from '../repos/workflow-runs-repo'
 import { WorkflowsRepo } from '../repos/workflows-repo'
 import { type WorkflowRunnerDeps, runWorkflow } from './workflow-runner'
@@ -11,6 +12,12 @@ export interface WorkflowEvent {
   locationId: string
   triggerType: TriggerType
   contactId: string | null
+  /** Plain facts about what happened (ids, flags) — what a workflow's trigger filter reads. */
+  payload?: EventPayload
+  /** 0 for a human or client action; +1 for each hop an automation caused. */
+  depth?: number
+  /** Set when the event is queued: makes a retried job pick its runs back up instead of repeating them. */
+  eventId?: string
 }
 
 /**
@@ -36,18 +43,34 @@ export async function dispatchWorkflowEvent(
   deps: WorkflowRunnerDeps,
   event: WorkflowEvent,
 ): Promise<WorkflowRun[]> {
+  // A chain of automations that keep triggering each other stops here, loudly.
+  if ((event.depth ?? 0) > MAX_EVENT_DEPTH) {
+    await audit(deps.db, event.locationId, {
+      action: 'workflow.loop_prevented',
+      entityType: 'workflow_event',
+      contactId: event.contactId,
+      details: { trigger: event.triggerType, depth: event.depth },
+      actor: { type: 'system', label: 'Automation engine' },
+    }).catch((err) => console.error('loop audit write failed', (err as { code?: string } | null)?.code ?? 'unknown'))
+    return []
+  }
+
   const live = await new WorkflowsRepo(deps.db, event.locationId).listLiveByTrigger(
     event.triggerType,
   )
 
   const runs: WorkflowRun[] = []
   for (const workflow of live) {
+    if (!matchesTriggerConfig(workflow.trigger_config, event.payload)) continue
     runs.push(
       await runWorkflow(deps, {
         locationId: event.locationId,
         workflowId: workflow.id,
         contactId: event.contactId,
         triggerType: event.triggerType,
+        event: { payload: event.payload ?? {}, depth: event.depth ?? 0 },
+        // The same event + workflow always maps to the same run, so a retried job resumes it.
+        runId: event.eventId ? `run_${event.eventId}_${workflow.id}` : undefined,
       }),
     )
   }

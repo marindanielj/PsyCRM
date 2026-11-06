@@ -147,11 +147,13 @@ test('finishing every document completes the packet once: audit as the client, o
   const { request, token } = await s.sendAdult()
   const v = await s.verified(token, ANA)
   await v.call('POST', `/${token}/sign/t_consent`, s.signBody({ values: { ini: 'AR' } }))
-  expect(s.events).toHaveLength(0)
+  expect(s.events.filter((e) => e.triggerType === 'documents_completed')).toHaveLength(0)
   const last = await v.call('POST', `/${token}/sign/t_intake`, s.signBody({ signaturePng: null, values: { first_name: 'Anita', email: 'Ana@Example.com', phone: '(787) 555-0101', dob: '1990-04-12', emergency: 'Rosa Rivera', meds: 'no' } }))
   expect(last.json).toMatchObject({ ok: true, signerCompleted: true, next: `/d/${token}` })
   await v.call('POST', `/${token}/sign/t_intake`, s.signBody({ signaturePng: null, values: { first_name: 'Anita', dob: '1990-04-12', meds: 'no' } })) // replay
-  expect(s.events).toEqual([{ locationId: 'loc_a', triggerType: 'documents_completed', contactId: 'c1' }])
+  expect(s.events.filter((e) => e.triggerType === 'documents_completed')).toEqual([{ locationId: 'loc_a', triggerType: 'documents_completed', contactId: 'c1', depth: 0, payload: { requestId: request.id, packetId: 'pk_adult' } }])
+  // one document_signed per signature (the replay of the last one adds none), with the document's family
+  expect(s.events.filter((e) => e.triggerType === 'document_signed').map((e) => e.payload?.templateFamilyId)).toEqual(['f_consent', 'f_intake'])
 
   const req = (await s.op('GET', `/requests/${request.id}`)).json.request
   expect(req.status).toBe('completed')
@@ -225,7 +227,7 @@ test('a date of birth that contradicts the record holds the packet for review; t
   await v.call('POST', `/${token}/sign/t_intake`, s.signBody({ signaturePng: null, values: { first_name: 'Ana', dob: '2011-04-12', meds: 'no' } }))
   const req = (await s.op('GET', `/requests/${request.id}`)).json.request
   expect(req).toMatchObject({ status: 'in_progress', needsReview: 'dob_mismatch' })
-  expect(s.events).toHaveLength(0)
+  expect(s.events.filter((e) => e.triggerType === 'documents_completed')).toHaveLength(0)
   expect((await s.audits()).map((a) => a.action)).toContain('packet.age_mismatch')
   const tasks = await s.db.query<{ title: string }>("SELECT title FROM contact_tasks WHERE contact_id='c1'")
   expect(tasks.map((t) => t.title)).toEqual(['Review: date of birth mismatch for Ana Rivera'])
@@ -254,10 +256,10 @@ test('a minor\'s packet: guardian and minor each see only their own documents, a
   await g.call('POST', `/${gt}/sign/t_privacy`, s.signBody({ signerName: 'Rosa Mora' }))
   expect((await s.op('GET', `/requests/${id}`)).json.request.status).toBe('in_progress') // waiting for the minor
   expect((await g.call('GET', `/${gt}`)).text).toContain('Falta que las demás personas')
-  expect(s.events).toHaveLength(0)
+  expect(s.events.filter((e) => e.triggerType === 'documents_completed')).toHaveLength(0)
   await m.call('POST', `/${mt}/sign/t_assent`, s.signBody({ signerName: 'Pedro Mora' }))
   expect((await s.op('GET', `/requests/${id}`)).json.request.status).toBe('completed')
-  expect(s.events).toHaveLength(1)
+  expect(s.events.filter((e) => e.triggerType === 'documents_completed')).toHaveLength(1)
 })
 
 test('after the deadline the link is dead and signing is refused', async () => {

@@ -437,7 +437,7 @@ test('check-in moves a scheduled appointment to checked_in, audits it, writes th
     { locationId: 'locA', actorType: 'operator', actorId: 'op1', action: 'appointment.checked_in', entityType: 'appointment', entityId: 'ap1', contactId: 'c1', details: { from: 'scheduled' } },
   ])
   expect(db.calls.find((c) => /INSERT INTO timeline_events/.test(c.sql))?.params).toContain('appointment_checked_in')
-  expect(events).toEqual([{ locationId: 'locA', triggerType: 'appointment_checked_in', contactId: 'c1' }])
+  expect(events).toEqual([{ locationId: 'locA', triggerType: 'appointment_checked_in', contactId: 'c1', depth: 0, payload: expect.objectContaining({ appointmentId: expect.any(String) }) }])
 })
 
 test('checking in twice is a harmless no-op; a cancelled, no-show or completed appointment cannot be checked in; unknown is 404', async () => {

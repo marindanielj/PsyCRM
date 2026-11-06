@@ -27,17 +27,19 @@ export interface WorkflowRunInput {
   workflowId: string
   contactId: string | null
   triggerType: string
+  /** A deterministic id (event + workflow) so a retried job finds its run again. */
+  id?: string
 }
 
 export class WorkflowRunsRepo extends LocationScopedRepo {
   async create(input: WorkflowRunInput): Promise<WorkflowRun> {
-    const id = nanoid()
+    const id = input.id ?? nanoid()
     const rows = await this.scopedWrite<WorkflowRun>(
       `INSERT INTO workflow_runs (id, location_id, workflow_id, contact_id, trigger_type)
-       VALUES ($2,$1,$3,$4,$5) RETURNING *`,
+       VALUES ($2,$1,$3,$4,$5) ON CONFLICT (id) DO NOTHING RETURNING *`,
       [id, input.workflowId, input.contactId, input.triggerType],
     )
-    return rows[0]!
+    return rows[0] ?? ((await this.get(id)) as WorkflowRun)
   }
 
   /**

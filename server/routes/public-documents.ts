@@ -248,7 +248,8 @@ export function publicDocumentsRoute(deps: {
     }
     if (!r.alreadySigned) {
       // After the commit: let live automations react once per packet, and send the copy link once per signer.
-      if (r.requestCompleted) await deps.dispatch?.({ locationId: v.locationId, triggerType: 'documents_completed', contactId: v.request.contactId })
+      await deps.dispatch?.({ locationId: v.locationId, triggerType: 'document_signed', contactId: v.request.contactId, payload: { requestId: v.request.id, templateFamilyId: r.templateFamilyId }, depth: 0 })
+      if (r.requestCompleted) await deps.dispatch?.({ locationId: v.locationId, triggerType: 'documents_completed', contactId: v.request.contactId, payload: { requestId: v.request.id, packetId: v.request.packetId }, depth: 0 })
       if (r.signerCompleted) {
         const sender = await (deps.resolveEmail ?? resolveEmailSender)(deps.db, v.locationId)
         await sendCopyEmail(sender.ok ? sender.sender : null, sender.ok ? undefined : sender.reason, { practice: v.practice || 'Su terapeuta', to: v.signer.email, name: v.signer.name, link: `${baseUrl(c)}/d/${token}` })

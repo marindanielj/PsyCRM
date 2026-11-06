@@ -609,6 +609,8 @@ export interface Opportunity {
   assignee: string | null
   created_at: string
   updated_at: string
+  /** Who moved the card last (from the audit trail), when it has been moved. */
+  lastMove?: { by: 'operator' | 'workflow' | 'client' | 'system'; label: string | null; at: string } | null
 }
 
 export interface NewOpportunity {
@@ -766,7 +768,12 @@ export type TriggerType =
   | 'trigger_link_clicked'
   | 'survey_submitted'
   | 'proposal_signed'
-export type ActionType = 'send_sms' | 'send_email' | 'add_tag' | 'wait'
+  | 'pipeline_stage_changed'
+  | 'session_note_signed'
+  | 'appointment_checked_in'
+  | 'documents_completed'
+  | 'document_signed'
+export type ActionType = 'send_sms' | 'send_email' | 'add_tag' | 'wait' | 'move_to_stage' | 'send_document_packet' | 'create_task'
 export type WorkflowStatus = 'draft' | 'live'
 
 export interface Workflow {
@@ -2203,7 +2210,7 @@ export const api = {
   // whatever comes back rather than assuming a brand-new row.
   createContact: (
     loc: string,
-    input: { name?: string; phone?: string; email?: string; dateOfBirth?: string },
+    input: { name?: string; phone?: string; email?: string; dateOfBirth?: string; skipOnboarding?: boolean },
   ) =>
     req<{ ok: true; contact: Contact }>(`/loc/${loc}/contacts`, {
       method: 'POST',

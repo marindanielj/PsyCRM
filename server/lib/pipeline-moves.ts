@@ -34,9 +34,11 @@ export async function moveOpportunityToStage(
     origin: MoveOrigin
     audit: Pick<AuditEntry, 'actor' | 'ip' | 'userAgent'>
     dispatch?: WorkflowDispatch
+    /** How many automation hops led here (0 for an operator's drag-and-drop). */
+    depth?: number
   },
 ): Promise<MoveResult> {
-  const result = await db.transaction(async (tx): Promise<MoveResult & { dispatchContactId?: string | null }> => {
+  const result = await db.transaction(async (tx): Promise<MoveResult & { dispatchContactId?: string | null; moved?: { pipelineId: string; fromStageId: string; toStageId: string } }> => {
     const opportunities = new OpportunitiesRepo(tx, locationId)
     const existing = await opportunities.get(input.opportunityId)
     if (!existing) return { ok: false, status: 404, error: 'not found' }
@@ -70,14 +72,17 @@ export async function moveOpportunityToStage(
       details: { pipelineId: stage.pipeline_id, fromStageId: existing.stage_id, toStageId: stage.id, toStage: stage.name, origin: input.origin },
       ...input.audit,
     })
-    return { ok: true, opportunity: moved, changed: true, dispatchContactId: contactId }
+    return { ok: true, opportunity: moved, changed: true, dispatchContactId: contactId, moved: { pipelineId: stage.pipeline_id, fromStageId: existing.stage_id, toStageId: stage.id } }
   })
 
   if (result.ok && result.changed) {
+    const { dispatchContactId, moved } = result as { dispatchContactId?: string | null; moved?: { pipelineId: string; fromStageId: string; toStageId: string } }
     await input.dispatch?.({
       locationId,
       triggerType: 'pipeline_stage_changed',
-      contactId: (result as { dispatchContactId?: string | null }).dispatchContactId ?? null,
+      contactId: dispatchContactId ?? null,
+      payload: { opportunityId: input.opportunityId, ...moved, origin: input.origin },
+      depth: input.depth ?? 0,
     })
   }
   if (result.ok) return { ok: true, opportunity: result.opportunity, changed: result.changed }

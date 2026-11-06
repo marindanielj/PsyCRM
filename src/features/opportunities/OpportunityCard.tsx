@@ -2,6 +2,15 @@ import { Badge } from '../../components/ui/badge'
 import type { Opportunity } from '../../lib/api'
 import { cn, formatMoney } from '../../lib/utils'
 
+/** "2h ago" — rough and honest; the exact time is in the audit log. */
+function ago(iso: string): string {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000))
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  if (mins < 48 * 60) return `${Math.round(mins / 60)}h ago`
+  return `${Math.round(mins / 1440)}d ago`
+}
+
 /** One draggable deal card on the kanban board. */
 export function OpportunityCard({
   opp,
@@ -36,6 +45,11 @@ export function OpportunityCard({
         {opp.status === 'lost' && <Badge variant="slate">Lost</Badge>}
       </div>
       {contactName && <p className="mt-1 truncate text-xs text-slate-500">{contactName}</p>}
+      {opp.lastMove && (
+        <p className="mt-1 truncate text-[11px] text-slate-400" title={new Date(opp.lastMove.at).toLocaleString()}>
+          {opp.lastMove.by === 'workflow' ? 'Moved by workflow' : opp.lastMove.by === 'operator' ? `Moved by ${opp.lastMove.label ?? 'a team member'}` : 'Moved'} · {ago(opp.lastMove.at)}
+        </p>
+      )}
       <div className="mt-2.5 flex items-center justify-between">
         <span className="text-sm font-semibold text-slate-700">{formatMoney(opp.value_cents)}</span>
         {!closed && (

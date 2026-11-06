@@ -214,7 +214,7 @@ test('signing records the signature, a timeline fact with no clinical content, t
   expect(tl).toHaveLength(1)
   expect(tl[0]).toMatchObject({ contact_id: 'c1', payload: { sessionDate: TODAY, sessionType: 'individual', late: false } })
   expect(JSON.stringify(tl)).not.toContain('trauma')
-  expect(s.events).toEqual([{ locationId: 'loc_a', triggerType: 'session_note_signed', contactId: 'c1' }])
+  expect(s.events).toEqual([{ locationId: 'loc_a', triggerType: 'session_note_signed', contactId: 'c1', depth: 0, payload: { noteId: expect.any(String), sessionType: 'individual', isFirst: true } }])
 
   // signing again is idempotent: no second audit row, timeline entry or trigger
   const again = await s.call('POST', `/${id}/sign`)

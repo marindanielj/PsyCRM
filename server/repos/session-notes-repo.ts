@@ -494,7 +494,13 @@ export class SessionNotesRepo {
       return { ok: true, note, changed: true, late, isFirst: Number(anySigned?.n ?? 0) === 0 }
     })
     if (result.ok && result.changed) {
-      await opts.dispatch?.({ locationId: this.locationId, triggerType: 'session_note_signed', contactId: result.note.contact_id })
+      await opts.dispatch?.({
+        locationId: this.locationId,
+        triggerType: 'session_note_signed',
+        contactId: result.note.contact_id,
+        payload: { noteId: result.note.id, sessionType: result.note.session_type, isFirst: result.isFirst },
+        depth: 0,
+      })
     }
     return result
   }

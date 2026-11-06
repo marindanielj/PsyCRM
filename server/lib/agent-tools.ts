@@ -225,7 +225,7 @@ export function buildAgentTools(deps: AgentToolsDeps): AgentToolset {
       refId: appointmentId,
       payload: { calendar: cal.name, start: match.start },
     })
-    await workflowDispatch?.({ locationId, triggerType: 'appointment_booked', contactId })
+    await workflowDispatch?.({ locationId, triggerType: 'appointment_booked', contactId, payload: { appointmentId, calendarId: cal.id }, depth: 0 })
 
     return { toolUseId: '', content: `Booked ${match.label} on ${dateLabel(ymd)}.` }
   }

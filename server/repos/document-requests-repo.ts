@@ -149,6 +149,8 @@ export type SignError =
 export interface SignOk {
   ok: true
   signed: SignedDocumentSummary
+  /** The family of the template just signed (what a `document_signed` workflow filters on). */
+  templateFamilyId: string
   alreadySigned: boolean
   signerCompleted: boolean
   requestCompleted: boolean
@@ -186,14 +188,14 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
       signers: { role: SignerRole; name: string; email: string; tokenHash: string }[]
       warnings: string[]
     },
-    actor: DocActorRef,
+    actor: { sentBy: string; audit: Pick<AuditEntry, 'actor' | 'ip' | 'userAgent'> },
   ): Promise<{ request: DocumentRequest; signers: (RequestSigner & { tokenHash: string })[] }> {
     const id = nanoid()
     return this.db.transaction(async (tx) => {
       const r = (await tx.query<ReqRow>(
         `INSERT INTO document_requests (id, location_id, contact_id, packet_id, packet_name, audience, template_ids, sent_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${REQ_COLS}`,
-        [id, this.locationId, input.contactId, input.packet.id, input.packet.name, input.packet.audience, input.templates.map((t) => t.id), actor.operatorId],
+        [id, this.locationId, input.contactId, input.packet.id, input.packet.name, input.packet.audience, input.templates.map((t) => t.id), actor.sentBy],
       ))[0]!
       const signers: (RequestSigner & { tokenHash: string })[] = []
       for (const s of input.signers) {
@@ -206,7 +208,7 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
       await audit(tx, this.locationId, {
         action: 'packet.sent', entityType: 'document_request', entityId: id, contactId: input.contactId,
         details: { packetId: input.packet.id, audience: input.packet.audience, templates: input.templates, signerRoles: input.signers.map((s) => s.role), warnings: input.warnings },
-        ...this.operator(actor),
+        ...actor.audit,
       })
       await new TimelineRepo(tx, this.locationId).add({ contactId: input.contactId, type: 'documents_sent', refTable: 'document_requests', refId: id, payload: { packetName: input.packet.name, documents: input.templates.length } })
       return { request: toRequest(r), signers }
@@ -246,6 +248,15 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
     params.push(Math.min(opts.limit ?? 100, 200))
     const rows = await this.db.query<ReqRow>(`SELECT ${REQ_COLS} FROM document_requests WHERE ${where} ORDER BY sent_at DESC LIMIT $${params.length}`, params)
     return this.view(rows)
+  }
+
+  /** Is there already a request for this packet that is open or done? (An automation must not send it twice.) */
+  async hasLiveRequest(contactId: string, packetId: string): Promise<boolean> {
+    const rows = await this.db.query(
+      `SELECT 1 FROM document_requests WHERE location_id = $1 AND contact_id = $2 AND packet_id = $3 AND status IN ('sent','in_progress','completed') LIMIT 1`,
+      [this.locationId, contactId, packetId],
+    )
+    return rows.length > 0
   }
 
   async get(id: string): Promise<RequestView | null> {
@@ -439,7 +450,7 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
 
       // Idempotent: signing a document twice returns the first signature untouched.
       const existing = (await tx.query<Record<string, any>>(`SELECT ${SIGNED_COLS} FROM signed_documents WHERE location_id = $1 AND signer_id = $2 AND template_id = $3`, [this.locationId, s.id, tpl.id]))[0]
-      if (existing) return { ok: true, signed: toSignedSummary(existing), alreadySigned: true, signerCompleted: s.status === 'completed', requestCompleted: r.status === 'completed', held: r.needs_review }
+      if (existing) return { ok: true, signed: toSignedSummary(existing), templateFamilyId: tpl.family_id, alreadySigned: true, signerCompleted: s.status === 'completed', requestCompleted: r.status === 'completed', held: r.needs_review }
       if ((r.status !== 'sent' && r.status !== 'in_progress') || new Date(iso(r.expires_at)!).getTime() <= now.getTime()) return { ok: false, error: 'request_closed' }
 
       if (!input.agreeTerms || !input.esignConsent) return { ok: false, error: 'consent_required' }
@@ -499,7 +510,7 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
           }
         }
       }
-      return { ok: true, signed: toSignedSummary(row), alreadySigned: false, signerCompleted, requestCompleted, held }
+      return { ok: true, signed: toSignedSummary(row), templateFamilyId: tpl.family_id, alreadySigned: false, signerCompleted, requestCompleted, held }
     })
   }
 

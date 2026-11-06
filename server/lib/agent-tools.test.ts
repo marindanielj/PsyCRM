@@ -162,7 +162,7 @@ test('book_appointment books the conversation contact, writes the timeline, and 
   const tlCall = db.calls.find((c) => /INSERT INTO timeline_events/i.test(c.sql))
   expect(tlCall?.params).toContain('appointment_booked')
   // and the automation loop was driven
-  expect(events).toEqual([{ locationId: 'locA', triggerType: 'appointment_booked', contactId: 'c1' }])
+  expect(events).toEqual([{ locationId: 'locA', triggerType: 'appointment_booked', contactId: 'c1', depth: 0, payload: { appointmentId: 'appt1', calendarId: 'cal1' } }])
 })
 
 test('book_appointment refuses a time that is not actually open', async () => {
