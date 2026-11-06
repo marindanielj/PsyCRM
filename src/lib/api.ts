@@ -146,8 +146,11 @@ export interface SessionNote {
   status: 'draft' | 'signed'
   signed_at: string | null
   signed_by: string | null
+  /** Display name of the signer (only on the single-note view). */
+  signed_by_name?: string | null
   signed_late: boolean
   created_by: string
+  created_by_name?: string | null
   created_at: string
   updated_at: string
   locks_at: string
@@ -217,6 +220,15 @@ export interface SessionNoteInput {
   riskNotes?: string | null
   interventions?: string[]
   diagnosisCodes?: string[]
+}
+
+export interface SessionWithoutNote {
+  appointment_id: string
+  title: string
+  starts_at: string
+  status: string
+  contact_id: string
+  contact_name: string | null
 }
 
 export interface ElevatedRiskClient {
@@ -608,7 +620,7 @@ export interface NewOpportunity {
   source?: string | null
 }
 
-export type AppointmentStatus = 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+export type AppointmentStatus = 'scheduled' | 'confirmed' | 'checked_in' | 'completed' | 'cancelled' | 'no_show'
 
 /** One weekly open window in the calendar's timezone (weekday 0=Sun, 'HH:MM'
  *  wall clock). Mirrors AvailabilityWindow in the server's lib/availability. */
@@ -678,6 +690,7 @@ export interface Appointment {
   starts_at: string
   ends_at: string
   status: AppointmentStatus
+  checked_in_at?: string | null
   location_text: string | null
   notes: string | null
 }
@@ -2022,6 +2035,12 @@ export const api = {
     revision: (loc: string, id: string, revision: number) =>
       req<{ revision: NoteRevisionMeta & { snapshot: Record<string, unknown> } }>(`/loc/${loc}/session-notes/${id}/revisions/${revision}`),
     printed: (loc: string, id: string) => req<void>(`/loc/${loc}/session-notes/${id}/printed`, { method: 'POST' }),
+    /** The level of the client's latest signed note (null until one is signed). */
+    latestRisk: (loc: string, contactId: string) =>
+      req<{ risk: { risk_level: string; session_date: string; note_id: string } | null }>(`/loc/${loc}/session-notes/risk/latest${qs({ contactId })}`),
+    /** Sessions that took place recently and still have no note. */
+    withoutNote: (loc: string, days = 3) =>
+      req<{ sessions: SessionWithoutNote[] }>(`/loc/${loc}/session-notes/without-note${qs({ days })}`),
     elevatedRisk: (loc: string) => req<{ elevated: ElevatedRiskClient[] }>(`/loc/${loc}/session-notes/risk/summary`),
     lockingSoon: (loc: string, hours = 24) => req<{ notes: SessionNoteSummary[] }>(`/loc/${loc}/session-notes/locking-soon${qs({ hours })}`),
   },
@@ -2386,6 +2405,9 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ startsAt, endsAt }),
     }),
+  /** Front-desk check-in: scheduled/confirmed -> checked_in. A second tap is a harmless no-op. */
+  checkInAppointment: (loc: string, id: string) =>
+    req<{ ok: true; appointment: Appointment; changed: boolean }>(`/loc/${loc}/calendars/appointments/${id}/check-in`, { method: 'POST' }),
   setAppointmentStatus: (loc: string, id: string, status: AppointmentStatus) =>
     req<{ ok: true; appointment: Appointment }>(`/loc/${loc}/calendars/appointments/${id}`, {
       method: 'PATCH',

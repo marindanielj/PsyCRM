@@ -439,3 +439,86 @@ test('after a full lifecycle the audit chain is intact and no clinical text ever
     'note.created', 'note.updated', 'note.signed', 'note.viewed', 'note.printed', 'note.addendum_added', 'note.updated', 'note.revision_viewed',
   ])
 })
+
+// --- day 4: appointment closes when its note is signed; backlog; current risk -----------------
+
+const setStatus = (s: S, id: string, status: string) => s.db.query('UPDATE appointments SET status=$2 WHERE id=$1', [id, status])
+const apptStatus = async (s: S, id: string) => (await s.db.query<{ status: string }>('SELECT status FROM appointments WHERE id=$1', [id]))[0]!.status
+
+test('signing a note linked to an appointment completes it (and says so in the audit log); cancelled/no-show stay as they are', async () => {
+  const s = await setup()
+  await setStatus(s, 'ap1', 'checked_in')
+  const id = await s.create({ appointmentId: 'ap1', ...RISK_OK })
+  expect(await apptStatus(s, 'ap1')).toBe('checked_in') // a draft does not close it
+  await s.call('POST', `/${id}/sign`)
+  expect(await apptStatus(s, 'ap1')).toBe('completed')
+  const a = (await s.audits()).find((x) => x.action === 'appointment.status_changed')!
+  expect(a).toMatchObject({ entity_id: 'ap1', contact_id: 'c1', details: { from: 'checked_in', to: 'completed', via: 'note_signed' } })
+
+  for (const [i, status] of (['cancelled', 'no_show'] as const).entries()) {
+    await s.db.query(
+      "INSERT INTO appointments (id, location_id, calendar_id, contact_id, title, starts_at, ends_at, status) VALUES ($1,$2,'cal1','c1','t',$3::timestamptz,$3::timestamptz + interval '50 minutes',$4)",
+      [`ap-${status}`, s.loc, `2026-11-2${i}T14:00:00Z`, status],
+    )
+    const n = await s.create({ appointmentId: `ap-${status}`, ...RISK_OK })
+    await s.call('POST', `/${n}/sign`)
+    expect(await apptStatus(s, `ap-${status}`)).toBe(status)
+  }
+  // a note without an appointment signs fine
+  const plain = await s.create({ ...RISK_OK })
+  expect((await s.call('POST', `/${plain}/sign`)).status).toBe(200)
+})
+
+test('the documentation backlog lists recent sessions that happened but have no live note', async () => {
+  const s = await setup()
+  const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3600_000).toISOString()
+  const addAppt = (id: string, contact: string, hoursAgo: number, status: string) =>
+    s.db.query(
+      "INSERT INTO appointments (id, location_id, calendar_id, contact_id, title, starts_at, ends_at, status) VALUES ($1,$2,'cal1',$3,$4,$5::timestamptz,$5::timestamptz + interval '50 minutes',$6)",
+      [id, s.loc, contact, `Session ${id}`, iso(hoursAgo), status],
+    )
+  await s.db.query("DELETE FROM appointments") // start clean (setup adds two future-dated ones)
+  await addAppt('done', 'c1', 5, 'completed')
+  await addAppt('arrived', 'c2', 30, 'checked_in')
+  await addAppt('old', 'c1', 24 * 10, 'completed') // outside the 3-day window
+  await addAppt('noshow', 'c1', 6, 'no_show') // never happened
+  await addAppt('cancelled', 'c1', 7, 'cancelled')
+  await addAppt('future', 'c1', -5, 'checked_in') // starts later
+  await addAppt('documented', 'c2', 8, 'completed')
+  await addAppt('deleted-note', 'c1', 9, 'completed')
+
+  const doc = await s.call('POST', '/', { contactId: 'c2', sessionDate: TODAY, appointmentId: 'documented' })
+  expect(doc.status).toBe(201)
+  const del = await s.call('POST', '/', { contactId: 'c1', sessionDate: TODAY, appointmentId: 'deleted-note' })
+  await s.call('DELETE', `/${del.json.note.id}`, { reason: 'Wrong client' })
+
+  const r = (await s.call('GET', '/without-note')).json.sessions
+  expect(r.map((x: any) => x.appointment_id)).toEqual(['done', 'deleted-note', 'arrived']) // newest first; a deleted note is not documentation
+  expect(r[0]).toMatchObject({ contact_name: 'Ana Rivera', status: 'completed' })
+  expect((await s.call('GET', '/without-note?days=14')).json.sessions.map((x: any) => x.appointment_id)).toContain('old')
+  expect((await s.call('GET', '/without-note?days=99')).status).toBe(400)
+  // another practice sees none of it
+  expect((await s.call('GET', '/without-note', undefined, s.mount(s.other))).json.sessions).toEqual([])
+})
+
+test('the current risk of a client is the level of their latest signed, live note (null until one exists)', async () => {
+  const s = await setup()
+  expect((await s.call('GET', '/risk/latest?contactId=c1')).json).toEqual({ risk: null })
+  await s.call('POST', `/${await s.create({ sessionDate: '2026-10-01', ...RISK_OK })}/sign`)
+  const mod = await s.create({ sessionDate: '2026-11-02', riskSuicidal: 'passive', riskSelfHarm: 'denied', riskHarmOthers: 'denied', riskLevel: 'moderate', riskNotes: 'Passive thoughts', riskActions: ['safety_plan_created'] })
+  expect((await s.call('GET', '/risk/latest?contactId=c1')).json.risk.risk_level).toBe('low') // a draft does not count
+  await s.call('POST', `/${mod}/sign`)
+  expect((await s.call('GET', '/risk/latest?contactId=c1')).json.risk).toMatchObject({ risk_level: 'moderate', session_date: '2026-11-02', note_id: mod })
+  await s.call('DELETE', `/${mod}`, { reason: 'Wrong client' })
+  expect((await s.call('GET', '/risk/latest?contactId=c1')).json.risk.risk_level).toBe('low') // deleted -> back to the previous one
+  expect((await s.call('GET', '/risk/latest')).status).toBe(400)
+  expect((await s.call('GET', '/risk/latest?contactId=c1', undefined, s.mount(s.other))).json).toEqual({ risk: null })
+})
+
+test('the single-note view says WHO signed and created it by name', async () => {
+  const s = await setup()
+  const id = await s.create({ ...RISK_OK })
+  await s.call('POST', `/${id}/sign`, undefined, s.mount(s.loc, 'op2'))
+  const note = (await s.call('GET', `/${id}`)).json.note
+  expect(note).toMatchObject({ created_by: 'op1', created_by_name: 'Dra. Rivera', signed_by: 'op2', signed_by_name: 'Dr. Mora' })
+})

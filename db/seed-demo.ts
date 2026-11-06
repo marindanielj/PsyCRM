@@ -2,11 +2,13 @@ import type { Database } from '../server/db/database'
 import { PRACTICE_TZ, todayIn } from '../server/lib/age'
 import { seedPractice } from '../server/lib/practice-seed'
 import { ContactsRepo } from '../server/repos/contacts-repo'
+import { SessionNotesRepo } from '../server/repos/session-notes-repo'
 
 /**
  * A believable demo practice for LOCAL development only (`npm run dev:local`): the
  * practice from seedPractice() plus four fictional clients spread across the
- * onboarding pipeline, one of them a minor, and three upcoming appointments. Every name,
+ * onboarding pipeline, one of them a minor, three upcoming appointments, a few
+ * session notes (signed, one with moderate risk, one draft) and a session without a note. Every name,
  * email and date is made up. Never run against a real database.
  */
 export const DEMO_LOGIN = { email: 'demo@psycrm.test', password: 'psycrm-demo-pass' } as const
@@ -28,7 +30,7 @@ const CLIENTS: DemoClient[] = [
 ]
 
 export async function seedPracticeDemo(db: Database): Promise<void> {
-  const { locationId, onboarding } = await seedPractice(db, {
+  const { locationId, onboarding, operatorId } = await seedPractice(db, {
     practiceName: 'Consultorio Demo',
     ownerEmail: DEMO_LOGIN.email,
     ownerName: 'Dra. Demo',
@@ -73,4 +75,56 @@ export async function seedPracticeDemo(db: Database): Promise<void> {
       [`appt_demo_${i + 1}`, locationId, calendar!.id, ids[who], `Individual session — ${who}`, startsAt],
     )
   }
+
+  // A session that already happened but has no note yet (shows in "Sessions without a note").
+  const yesterday = new Date(Date.now() - 26 * 3_600_000).toISOString()
+  await db.query(
+    `INSERT INTO appointments (id, location_id, calendar_id, contact_id, title, starts_at, ends_at, status)
+     VALUES ('appt_demo_4',$1,$2,$3,'Individual session — Luis Mora',$4::timestamptz,$4::timestamptz + interval '50 minutes','completed') ON CONFLICT DO NOTHING`,
+    [locationId, calendar!.id, ids['Luis Mora'], yesterday],
+  )
+
+  // Session notes, written through the real repository so every rule applies (and the audit log
+  // fills in). Skipped when the practice already has any, so re-running the seed changes nothing.
+  const [existing] = await db.query<{ n: string | number }>('SELECT count(*) AS n FROM session_notes WHERE location_id = $1', [locationId])
+  if (Number(existing?.n ?? 0) > 0) return
+  const notes = new SessionNotesRepo(db, locationId)
+  const actor = { operatorId, ip: null, userAgent: null }
+  const daysAgo = (n: number) => {
+    const d = new Date(`${today}T12:00:00Z`)
+    d.setUTCDate(d.getUTCDate() - n)
+    return d.toISOString().slice(0, 10)
+  }
+  const low = { riskSuicidal: 'denied', riskSelfHarm: 'denied', riskHarmOthers: 'denied', riskLevel: 'low' }
+  const demoNote = async (who: string, input: Record<string, unknown>, sign: boolean) => {
+    const created = await notes.create({ contactId: ids[who]!, modality: 'in_person', sessionType: 'individual', durationMin: 50, ...input } as never, actor)
+    if (!created.ok) throw new Error(`demo note failed: ${created.error}`)
+    if (sign) {
+      const r = await notes.sign(created.note.id, actor)
+      if (!r.ok) throw new Error(`demo note could not be signed: ${r.error}`)
+    }
+  }
+  await demoNote('Carlos Vega', {
+    sessionDate: daysAgo(14), moodRating: 5, ...low, riskFactors: ['isolation'], protectiveFactors: ['social_support', 'engaged_in_treatment'], riskActions: ['none'],
+    mse: { mood_reported: 'Tired but hopeful', affect: { values: ['congruent'] }, insight: { values: ['good'] } },
+    dataSubjective: 'Reports improved sleep after starting a wind-down routine. Still avoiding Sunday family dinners.',
+    dataObjective: 'Presented on time, engaged, good eye contact.', assessment: 'Gradual improvement in sleep; avoidance persists.',
+    plan: 'Continue behavioral activation; schedule one family dinner this month.', interventions: ['behavioral_activation', 'psychoeducation'],
+  }, true)
+  await demoNote('Carlos Vega', {
+    sessionDate: daysAgo(7), moodRating: 7, ...low, riskActions: ['none'], protectiveFactors: ['social_support'],
+    mse: { mood_reported: 'Better', affect: { values: ['full', 'congruent'] } },
+    dataSubjective: 'Attended the family dinner and stayed for an hour.', dataObjective: 'Brighter affect, spontaneous humor.',
+    assessment: 'Meaningful progress toward the goal of re-engaging socially.', plan: 'Add a weekly social activity; review in two weeks.', interventions: ['behavioral_activation'],
+  }, true)
+  await demoNote('Luis Mora', {
+    sessionDate: daysAgo(3), moodRating: 3, riskSuicidal: 'passive', riskSelfHarm: 'denied', riskHarmOthers: 'denied', riskLevel: 'moderate',
+    riskFactors: ['recent_loss', 'isolation'], protectiveFactors: ['children_dependents'], riskActions: ['safety_plan_created', 'crisis_line_provided'],
+    riskNotes: 'Passive thoughts ("it would be easier not to be here") since the loss of his job. No plan or intent. Safety plan written together; 988 and Línea PAS provided.',
+    mse: { mood_reported: 'Heavy', affect: { values: ['restricted'] }, thought_content: { values: ['hopelessness', 'worries'] } },
+    dataSubjective: 'Lost his job two weeks ago; sleeping poorly and withdrawing from friends.', dataObjective: 'Psychomotor slowing, tearful at times.',
+    assessment: 'Acute adjustment reaction with passive suicidal ideation; protective factors include his two children.', plan: 'Weekly sessions, call in 48 hours, review the safety plan next visit.',
+    interventions: ['supportive', 'problem_solving'],
+  }, true)
+  await demoNote('Ana Rivera', { sessionDate: today, moodRating: 6, dataSubjective: 'First session: reports work-related anxiety.' }, false)
 }

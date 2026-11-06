@@ -132,7 +132,7 @@ export function AppShell() {
   }, [pathname])
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-100">
+    <div className="ol-print-reset flex h-screen w-screen overflow-hidden bg-slate-100">
       {navOpen ? (
         <div
           className="fixed inset-0 z-30 bg-slate-950/60 lg:hidden"
@@ -143,7 +143,7 @@ export function AppShell() {
 
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col bg-slate-900 transition-transform duration-200 lg:static lg:translate-x-0 lg:transition-none',
+          'ol-noprint fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col bg-slate-900 transition-transform duration-200 lg:static lg:translate-x-0 lg:transition-none',
           navOpen ? 'translate-x-0' : '-translate-x-full',
         )}
       >
@@ -193,8 +193,8 @@ export function AppShell() {
         </div>
       </aside>
 
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex items-center gap-2.5 border-b border-slate-200 bg-white px-3 py-2 lg:hidden">
+      <main className="ol-print-reset flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="ol-noprint flex items-center gap-2.5 border-b border-slate-200 bg-white px-3 py-2 lg:hidden">
           <button
             type="button"
             onClick={() => setNavOpen(true)}

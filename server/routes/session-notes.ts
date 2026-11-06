@@ -14,6 +14,8 @@ const listQuery = z.object({
   includeDeleted: z.enum(['true', 'false']).optional(),
 })
 const lockingQuery = z.object({ hours: z.coerce.number().int().min(1).max(72).optional() })
+const missingQuery = z.object({ days: z.coerce.number().int().min(1).max(30).optional() })
+const latestRiskQuery = z.object({ contactId: z.string().min(1).max(64) })
 
 /** Honest HTTP answers for every way a note operation can be refused. */
 function refuse(c: Context<AppEnv>, r: NoteError) {
@@ -83,6 +85,16 @@ export function sessionNotesRoute(deps: {
 
   // Registered before /:id so these literal paths are not read as a note id.
   app.get('/risk/summary', async (c) => c.json({ elevated: await repo(c).elevatedRisk() }))
+
+  // One client's current risk level, for the badge on their record.
+  app.get('/risk/latest', zValidator('query', latestRiskQuery), async (c) => {
+    return c.json({ risk: await repo(c).latestRisk(c.req.valid('query').contactId) })
+  })
+
+  // Sessions that happened recently and still have no note.
+  app.get('/without-note', zValidator('query', missingQuery), async (c) => {
+    return c.json({ sessions: await repo(c).sessionsWithoutNote(c.req.valid('query').days ?? 3) })
+  })
 
   app.get('/locking-soon', zValidator('query', lockingQuery), async (c) => {
     return c.json({ notes: await repo(c).lockingSoon(c.req.valid('query').hours ?? 24) })

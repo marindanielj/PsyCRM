@@ -27,8 +27,8 @@ test('the demo practice has four fictional clients across the onboarding pipelin
 test('the demo appointments are always still ahead, whatever time the demo boots', async () => {
   const { db } = await freshDb()
   await seedPracticeDemo(db)
-  const rows = await db.query<{ starts_at: string | Date }>('SELECT starts_at FROM appointments ORDER BY starts_at')
-  expect(rows).toHaveLength(3)
+  const rows = await db.query<{ starts_at: string | Date }>("SELECT starts_at FROM appointments WHERE status = 'scheduled' ORDER BY starts_at")
+  expect(rows).toHaveLength(3) // plus one already-completed session without a note (below)
   for (const r of rows) expect(new Date(r.starts_at).getTime()).toBeGreaterThan(Date.now())
   expect(todayIn()).toMatch(/^\d{4}-\d{2}-\d{2}$/)
 })
@@ -42,5 +42,23 @@ test('the demo login works and re-running the seed changes nothing', async () =>
   expect(await db.query('SELECT 1 FROM operators')).toHaveLength(1)
   expect(await db.query('SELECT 1 FROM contacts')).toHaveLength(4)
   expect(await db.query('SELECT 1 FROM opportunities')).toHaveLength(4)
-  expect(await db.query('SELECT 1 FROM appointments')).toHaveLength(3)
+  expect(await db.query('SELECT 1 FROM appointments')).toHaveLength(4)
+  expect(await db.query('SELECT 1 FROM session_notes')).toHaveLength(4)
+})
+
+test('the demo notes follow the real rules: signed ones have a complete risk assessment, one client is at moderate risk, one note is still a draft', async () => {
+  const { db } = await freshDb()
+  await seedPracticeDemo(db)
+  const notes = await db.query<{ name: string; status: string; risk_level: string | null }>(
+    'SELECT c.name, n.status, n.risk_level FROM session_notes n JOIN contacts c ON c.id = n.contact_id ORDER BY n.created_at',
+  )
+  expect(notes.map((n) => [n.name, n.status, n.risk_level])).toEqual([
+    ['Carlos Vega', 'signed', 'low'],
+    ['Carlos Vega', 'signed', 'low'],
+    ['Luis Mora', 'signed', 'moderate'],
+    ['Ana Rivera', 'draft', null],
+  ])
+  // every demo note went through the audited path
+  expect(await db.query("SELECT 1 FROM audit_log WHERE action = 'note.signed'")).toHaveLength(3)
+  expect(await db.query("SELECT 1 FROM audit_log WHERE action = 'risk.level_changed'")).toHaveLength(0) // low -> low for Carlos; Luis has a single signed note
 })

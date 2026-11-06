@@ -1,5 +1,6 @@
 import { ArrowLeft, CalendarDays, ChevronDown, ExternalLink, Globe, MapPin, Plus, Settings2 } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { PageSpinner } from '../../components/ui/spinner'
@@ -11,10 +12,12 @@ import {
   type NewAppointment,
   api,
 } from '../../lib/api'
+import { moduleEnabled } from '../../lib/modules'
 import { cn, dayKey, formatDayLabel, formatTime } from '../../lib/utils'
 import { useTenant } from '../../state/location'
 import { BookingSettingsDialog } from './BookingSettingsDialog'
 import { NewAppointmentDialog } from './NewAppointmentDialog'
+import { TodayPanel } from '../session-notes/TodayPanel'
 import { MonthView } from './MonthView'
 import { hostedUrl } from '../trigger-links/link-ui'
 
@@ -34,6 +37,7 @@ const calColor = (color: string) => CAL_COLORS[color] ?? DEFAULT_CAL_COLOR
 const STATUS_META: Record<AppointmentStatus, { label: string; pill: string }> = {
   scheduled: { label: 'Scheduled', pill: 'bg-slate-100 text-slate-700' },
   confirmed: { label: 'Confirmed', pill: 'bg-brand-50 text-brand-700' },
+  checked_in: { label: 'Checked in', pill: 'bg-sky-50 text-sky-700' },
   completed: { label: 'Completed', pill: 'bg-emerald-50 text-emerald-700' },
   cancelled: { label: 'Cancelled', pill: 'bg-amber-50 text-amber-700' },
   no_show: { label: 'No-show', pill: 'bg-rose-50 text-rose-700' },
@@ -41,6 +45,7 @@ const STATUS_META: Record<AppointmentStatus, { label: string; pill: string }> = 
 const STATUS_ORDER: AppointmentStatus[] = [
   'scheduled',
   'confirmed',
+  'checked_in',
   'completed',
   'cancelled',
   'no_show',
@@ -126,6 +131,16 @@ export function CalendarsPage() {
     if (!loc) return
     const r = await api.appointments(loc)
     setAppts(r.appointments)
+  }
+
+  async function checkIn(id: string) {
+    if (!loc) return
+    try {
+      const r = await api.checkInAppointment(loc, id)
+      setAppts((prev) => prev.map((a) => (a.id === id ? r.appointment : a)))
+    } catch {
+      void reload()
+    }
   }
 
   function setStatusOf(id: string, next: AppointmentStatus) {
@@ -318,6 +333,8 @@ export function CalendarsPage() {
           </div>
         </header>
 
+        <TodayPanel />
+
         {calendars.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 text-slate-500 bg-slate-50">
             <CalendarDays className="h-12 w-12 text-slate-300" />
@@ -354,6 +371,7 @@ export function CalendarsPage() {
                           calendar={calById[appt.calendar_id]}
                           contactName={contactName(appt)}
                           onStatus={setStatusOf}
+                          onCheckIn={checkIn}
                         />
                       ))}
                     </div>
@@ -436,12 +454,16 @@ function AppointmentRow({
   calendar,
   contactName,
   onStatus,
+  onCheckIn,
 }: {
   appt: Appointment
   calendar?: Calendar
   contactName?: string
   onStatus: (id: string, next: AppointmentStatus) => void
+  onCheckIn: (id: string) => void
 }) {
+  const { current } = useTenant()
+  const notesOn = moduleEnabled(current, 'session_notes')
   const color = calColor(calendar?.color ?? 'indigo')
   const meta = STATUS_META[appt.status]
   const dimmed = appt.status === 'cancelled' || appt.status === 'no_show'
@@ -479,7 +501,17 @@ function AppointmentRow({
             )}
           </div>
         </div>
-        <div className="relative flex shrink-0 items-center self-start">
+        <div className="relative flex shrink-0 items-center gap-2 self-start">
+          {(appt.status === 'scheduled' || appt.status === 'confirmed') && appt.contact_id ? (
+            <Button size="sm" variant="outline" onClick={() => onCheckIn(appt.id)}>
+              Check in
+            </Button>
+          ) : null}
+          {(appt.status === 'checked_in' || appt.status === 'completed') && appt.contact_id && notesOn ? (
+            <Link className="text-xs font-medium text-brand-700 hover:underline" to={`/contacts/${appt.contact_id}/notes/new?appointmentId=${appt.id}`}>
+              Session note
+            </Link>
+          ) : null}
           <select
             aria-label="Appointment status"
             value={appt.status}

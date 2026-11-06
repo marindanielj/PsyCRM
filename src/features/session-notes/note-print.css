@@ -1,0 +1,76 @@
+/* Printing a session note: only the report is printed, as a clean letter-size document. */
+
+.note-report {
+  font-family: Georgia, 'Times New Roman', serif;
+}
+
+@media print {
+  @page {
+    size: letter;
+    margin: 0.6in 0.7in;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* The app frame is a fixed-height, scrolling shell: let the page flow instead of clipping to one screen. */
+  .ol-print-reset {
+    display: block !important;
+    position: static !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    width: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  .ol-noprint {
+    display: none !important;
+  }
+
+  .note-report {
+    box-shadow: none !important;
+    border: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+    font-size: 10.5pt;
+    line-height: 1.35;
+    color: #000;
+  }
+  /* A little tighter on paper so a typical note is one page. */
+  .note-report section {
+    margin-top: 9pt !important;
+  }
+  .note-report .note-sign {
+    margin-top: 12pt !important;
+    /* never strand the signature alone on a new page */
+    break-before: avoid-page;
+  }
+  .note-report section,
+  .note-report .note-keep {
+    break-inside: avoid;
+  }
+  .note-report h2 {
+    break-after: avoid;
+  }
+  .note-report .note-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    font-size: 8pt;
+    color: #555;
+    border-top: 1px solid #bbb;
+    padding-top: 4pt;
+  }
+  /* leave room so the fixed footer never covers the last lines */
+  .note-report .note-body {
+    padding-bottom: 22pt;
+  }
+}

@@ -409,3 +409,92 @@ test('against a real database the from/to come from the row itself and the audit
   expect((await patchJson(app, '/appointments/ap1', { status: 'cancelled' })).status).toBe(500)
   expect((await db.query<{ status: string }>("SELECT status FROM appointments WHERE id='ap1'"))[0]!.status).toBe('confirmed') // rolled back
 })
+
+// --- check-in ------------------------------------------------------------------------
+
+function harnessWithDispatch(db: FakeDatabase | import('../db/database').Database, locationId = 'locA') {
+  const events: unknown[] = []
+  const app = new Hono<AppEnv>()
+  app.use('*', async (c, next) => {
+    c.set('operatorId', 'op1')
+    c.set('locationId', locationId)
+    await next()
+  })
+  app.route('/', calendarsRoute({ db, dispatch: (e) => void events.push(e) }))
+  return { app, events }
+}
+const checkIn = (app: Hono<AppEnv>, id = 'ap1') => app.request(`/appointments/${id}/check-in`, { method: 'POST' })
+
+test('check-in moves a scheduled appointment to checked_in, audits it, writes the client timeline, then fires the trigger', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ id: 'ap1', contact_id: 'c1', status: 'scheduled', starts_at: '2026-11-10T14:00:00.000Z' }]) // read
+  db.enqueue([{ id: 'ap1', contact_id: 'c1', status: 'checked_in', checked_in_at: '2026-11-10T13:55:00.000Z', starts_at: '2026-11-10T14:00:00.000Z' }]) // update
+  const { app, events } = harnessWithDispatch(db)
+  const res = await checkIn(app)
+  expect(res.status).toBe(200)
+  expect(await res.json()).toMatchObject({ ok: true, changed: true, appointment: { status: 'checked_in' } })
+  expect(db.auditEntries()).toEqual([
+    { locationId: 'locA', actorType: 'operator', actorId: 'op1', action: 'appointment.checked_in', entityType: 'appointment', entityId: 'ap1', contactId: 'c1', details: { from: 'scheduled' } },
+  ])
+  expect(db.calls.find((c) => /INSERT INTO timeline_events/.test(c.sql))?.params).toContain('appointment_checked_in')
+  expect(events).toEqual([{ locationId: 'locA', triggerType: 'appointment_checked_in', contactId: 'c1' }])
+})
+
+test('checking in twice is a harmless no-op; a cancelled, no-show or completed appointment cannot be checked in; unknown is 404', async () => {
+  const again = new FakeDatabase()
+  again.enqueue([{ id: 'ap1', contact_id: 'c1', status: 'checked_in' }])
+  const a = harnessWithDispatch(again)
+  const r1 = await checkIn(a.app)
+  expect(r1.status).toBe(200)
+  expect(await r1.json()).toMatchObject({ changed: false })
+  expect(again.audits).toHaveLength(0)
+  expect(a.events).toHaveLength(0)
+
+  for (const status of ['cancelled', 'no_show', 'completed']) {
+    const db = new FakeDatabase()
+    db.enqueue([{ id: 'ap1', contact_id: 'c1', status }])
+    const { app, events } = harnessWithDispatch(db)
+    const res = await checkIn(app)
+    expect(res.status, status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'cannot_check_in', status })
+    expect(db.audits).toHaveLength(0)
+    expect(events).toHaveLength(0)
+  }
+  const none = new FakeDatabase()
+  none.enqueue([])
+  expect((await checkIn(harnessWithDispatch(none).app, 'zzz')).status).toBe(404)
+})
+
+test('against a real database check-in stamps the time, and the change, audit row and timeline entry are one unit', async () => {
+  const { db, pg } = await freshDb()
+  const loc = await addLocation(db)
+  await db.query("INSERT INTO calendars (id, location_id, name) VALUES ('cal1',$1,'Sessions')", [loc])
+  await db.query("INSERT INTO contacts (id, location_id, name) VALUES ('c1',$1,'Ana')", [loc])
+  await db.query("INSERT INTO appointments (id, location_id, calendar_id, contact_id, title, starts_at, ends_at, status) VALUES ('ap1',$1,'cal1','c1','t','2026-11-10T14:00:00Z','2026-11-10T14:50:00Z','confirmed')", [loc])
+  const { app, events } = harnessWithDispatch(db, loc)
+
+  expect((await checkIn(app)).status).toBe(200)
+  const [row] = await db.query<{ status: string; checked_in_at: Date | null }>("SELECT status, checked_in_at FROM appointments WHERE id='ap1'")
+  expect(row!.status).toBe('checked_in')
+  expect(row!.checked_in_at).toBeInstanceOf(Date)
+  expect(await db.query("SELECT 1 FROM timeline_events WHERE type='appointment_checked_in' AND contact_id='c1'")).toHaveLength(1)
+  expect((await db.query<{ details: { from: string } }>("SELECT details FROM audit_log WHERE action='appointment.checked_in'"))[0]!.details).toEqual({ from: 'confirmed' })
+  expect(events).toHaveLength(1)
+  // a second tap changes nothing
+  await checkIn(app)
+  expect(await db.query("SELECT 1 FROM audit_log WHERE action='appointment.checked_in'")).toHaveLength(1)
+  expect(events).toHaveLength(1)
+
+  // with the audit table down, a fresh check-in fails AND leaves the appointment untouched
+  await db.query("INSERT INTO appointments (id, location_id, calendar_id, contact_id, title, starts_at, ends_at) VALUES ('ap2',$1,'cal1','c1','t','2026-11-11T14:00:00Z','2026-11-11T14:50:00Z')", [loc])
+  await pg.exec('ALTER TABLE audit_log RENAME TO audit_log_gone')
+  expect((await checkIn(app, 'ap2')).status).toBe(500)
+  expect((await db.query<{ status: string }>("SELECT status FROM appointments WHERE id='ap2'"))[0]!.status).toBe('scheduled')
+  expect(events).toHaveLength(1)
+})
+
+test('checked_in is a valid appointment status for the status endpoint too', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ id: 'ap1', contact_id: 'c1', status: 'checked_in', prev_status: 'scheduled' }])
+  expect((await patchJson(harness(db), '/appointments/ap1', { status: 'checked_in' })).status).toBe(200)
+})

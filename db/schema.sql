@@ -1431,3 +1431,7 @@ CREATE TRIGGER session_note_addenda_no_truncate BEFORE TRUNCATE ON session_note_
 DROP TRIGGER IF EXISTS session_notes_no_truncate ON session_notes;
 CREATE TRIGGER session_notes_no_truncate BEFORE TRUNCATE ON session_notes
   FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
+
+-- PsyCRM day 4: front-desk check-in. `status` gains the value 'checked_in' (a plain
+-- text column, no migration needed); this records WHEN the client arrived.
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS checked_in_at timestamptz;

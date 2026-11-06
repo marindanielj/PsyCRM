@@ -293,7 +293,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // delete of pipelines and their stages, with guarded deletes (never a silent
   // cascade over live deals).
   app.route('/api/loc/:loc/pipelines', pipelinesRoute({ db: deps.db }))
-  app.route('/api/loc/:loc/calendars', calendarsRoute({ db: deps.db }))
+  app.route('/api/loc/:loc/calendars', calendarsRoute({ db: deps.db, dispatch: deps.dispatch }))
   app.route('/api/loc/:loc/campaigns', campaignsRoute({ db: deps.db }))
   app.route('/api/loc/:loc/workflows', workflowsRoute({ db: deps.db }))
   app.route('/api/loc/:loc/reporting', reportingRoute({ db: deps.db }))

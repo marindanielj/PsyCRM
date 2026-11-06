@@ -128,3 +128,21 @@ CSS de impresión:
 
 ## Archivos
 `src/features/session-notes/*` (nuevo), `src/features/contacts/ContactDetail.tsx`, `src/features/contacts/ContactsPage.tsx`, `src/features/calendars/{CalendarsPage,MonthView,NewAppointmentDialog}.tsx`, `src/features/calendars/TodayPanel.tsx` (nuevo), `src/App.tsx`, `src/lib/api.ts`, `server/routes/calendars.ts`, `server/repos/appointments-repo.ts`, `db/schema.sql`.
+
+---
+
+## Estado de implementación (día 4)
+
+**Hecho y verificado** (typecheck limpio; 200 archivos / 1780 pruebas en verde; recorrido completo en navegador real con Playwright; ver [`../RESULTADOS_DIA_4.md`](../RESULTADOS_DIA_4.md)).
+
+**Diferencias respecto a lo escrito arriba**
+- **Al firmar, la cita ligada pasa a `completed`** (scheduled/confirmed/checked_in), con auditoría `appointment.status_changed` `{via:'note_signed'}`.
+- **Endpoints extra:** `GET /session-notes/risk/latest?contactId=` y `GET /session-notes/without-note?days=`; `POST /appointments/:id/check-in` (409 `cannot_check_in`).
+- **Tras el primer autosave la URL se reemplaza** por `/contacts/:id/notes/:noteId/edit` (`replaceState`), para que recargar no cree un borrador duplicado.
+- **Las notas legacy de contacto se ocultan** cuando el módulo `session_notes` está activo.
+- **CSS de impresión:** `@page` carta con márgenes 0.6in/0.7in, fuente 10.5pt, firma con `break-before: avoid-page`; el PDF cabe en una página.
+
+**Pendiente / sin verificar**
+- Los números de crisis (988, Línea PAS 1-800-981-0023, 911) **no están verificados**: confirmar antes de producción.
+- La agenda y el panel "Today" muestran horas en la zona del navegador, no forzada a `America/Puerto_Rico`.
+- El payload del disparador `appointment_checked_in` no se consume hasta el día 7.

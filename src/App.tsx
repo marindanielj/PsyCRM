@@ -3,6 +3,8 @@ import { Spinner } from './components/ui/spinner'
 import { AffiliatesPage } from './features/affiliates/AffiliatesPage'
 import { AssistantPage } from './features/assistant/AssistantPage'
 import { AuditLogPage } from './features/audit/AuditLogPage'
+import { NoteReportPage } from './features/session-notes/NoteReportPage'
+import { NoteWizardPage } from './features/session-notes/NoteWizard'
 import { AutomationsPage } from './features/automations/AutomationsPage'
 import { IdleTimeout } from './features/auth/IdleTimeout'
 import { LoginPage } from './features/auth/LoginPage'
@@ -88,6 +90,9 @@ export default function App() {
           <Route path="conversations/:id" element={<RequireModule module="conversations"><InboxPage /></RequireModule>} />
           <Route path="contacts" element={<RequireModule module="contacts"><ContactsPage /></RequireModule>} />
           <Route path="contacts/:id" element={<RequireModule module="contacts"><ContactsPage /></RequireModule>} />
+          <Route path="contacts/:id/notes/new" element={<RequireModule module="session_notes"><NoteWizardPage mode="new" /></RequireModule>} />
+          <Route path="contacts/:id/notes/:noteId" element={<RequireModule module="session_notes"><NoteReportPage /></RequireModule>} />
+          <Route path="contacts/:id/notes/:noteId/edit" element={<RequireModule module="session_notes"><NoteWizardPage mode="edit" /></RequireModule>} />
           <Route path="tags" element={<RequireModule module="tags"><TagsPage /></RequireModule>} />
           <Route path="settings" element={<SettingsLayout />}>
             <Route index element={<Navigate to="/settings/practice" replace />} />

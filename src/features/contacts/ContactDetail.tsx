@@ -4,7 +4,11 @@ import { Avatar } from '../../components/ui/avatar'
 import { Button } from '../../components/ui/button'
 import { PageSpinner } from '../../components/ui/spinner'
 import { type Contact, type TimelineEvent, api } from '../../lib/api'
+import { moduleEnabled } from '../../lib/modules'
 import { formatPhone } from '../../lib/utils'
+import { useTenant } from '../../state/location'
+import { ClientRiskBadge } from '../session-notes/RiskBadge'
+import { NotesTab } from '../session-notes/NotesTab'
 import { ContactAudit } from '../audit/ContactAudit'
 import { ConfirmDeleteContactDialog } from './ConfirmDeleteContactDialog'
 import { ContactCustomFields } from './ContactCustomFields'
@@ -33,6 +37,8 @@ export function ContactDetail({
   const [data, setData] = useState<Loaded | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [confirming, setConfirming] = useState(false)
+  const { current } = useTenant()
+  const clinicalNotes = moduleEnabled(current, 'session_notes')
 
   useEffect(() => {
     let active = true
@@ -71,7 +77,10 @@ export function ContactDetail({
           <Avatar name={name} size="lg" />
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-xl font-semibold text-slate-900">{name}</h2>
-            <p className="text-sm text-slate-500">{contact.source ? `via ${contact.source}` : 'Contact'}</p>
+            <p className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
+              <span>{contact.source ? `via ${contact.source}` : 'Contact'}</span>
+              <ClientRiskBadge contactId={contactId} />
+            </p>
           </div>
           {onArchived && (
             <Button
@@ -126,9 +135,17 @@ export function ContactDetail({
           <Tasks locationId={locationId} contactId={contactId} />
         </div>
 
-        <div className="mt-8">
-          <Notes locationId={locationId} contactId={contactId} />
-        </div>
+        {clinicalNotes ? (
+          // Clinical session notes replace the free-text "Notes" panel: those can be edited
+          // and deleted forever, which is exactly what a clinical record must not allow.
+          <div className="mt-8">
+            <NotesTab locationId={locationId} contactId={contactId} />
+          </div>
+        ) : (
+          <div className="mt-8">
+            <Notes locationId={locationId} contactId={contactId} />
+          </div>
+        )}
 
         <div className="mt-8">
           <h3 className="mb-3 text-sm font-semibold text-slate-900">Activity</h3>

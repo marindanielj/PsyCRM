@@ -56,6 +56,8 @@ export interface NoteLock {
   msRemaining: number
 }
 export type SessionNoteWithLock = SessionNote & { lock: NoteLock }
+/** The note as the record view needs it: also says WHO signed (the display name, not just the id). */
+export type SessionNoteDetail = SessionNoteWithLock & { signed_by_name: string | null; created_by_name: string | null }
 
 /** A note without its clinical text: for lists, risk summaries and the "locking soon" panel. */
 export interface SessionNoteSummary {
@@ -164,13 +166,18 @@ export class SessionNotesRepo {
     return rows.map(withLock) as unknown as SessionNoteSummary[]
   }
 
-  async get(id: string): Promise<(SessionNoteWithLock & { addenda: Addendum[]; revisionCount: number }) | undefined> {
+  async get(id: string): Promise<(SessionNoteDetail & { addenda: Addendum[]; revisionCount: number }) | undefined> {
     const rows = await this.db.query<SessionNote & LockCols>(
       `SELECT ${NOTE_COLS}, ${LOCK_SQL} FROM session_notes WHERE location_id = $1 AND id = $2`,
       [this.locationId, id],
     )
     if (!rows[0]) return undefined
     const note = withLock(rows[0]) as SessionNoteWithLock
+    const names = await this.db.query<{ id: string; name: string }>(
+      'SELECT id, COALESCE(name, email) AS name FROM operators WHERE id = ANY($1::text[])',
+      [[note.signed_by, note.created_by].filter((x): x is string => !!x)],
+    )
+    const nameOf = (id: string | null) => names.find((n) => n.id === id)?.name ?? null
     const addenda = await this.db.query<Addendum>(
       `SELECT a.id, a.note_id, a.body, a.author, COALESCE(o.name, o.email) AS author_name, a.created_at
        FROM session_note_addenda a LEFT JOIN operators o ON o.id = a.author
@@ -178,7 +185,7 @@ export class SessionNotesRepo {
       [this.locationId, id],
     )
     const [count] = await this.db.query<{ n: string | number }>('SELECT count(*) AS n FROM session_note_revisions WHERE location_id = $1 AND note_id = $2', [this.locationId, id])
-    return { ...note, addenda, revisionCount: Number(count?.n ?? 0) }
+    return { ...note, signed_by_name: nameOf(note.signed_by), created_by_name: nameOf(note.created_by), addenda, revisionCount: Number(count?.n ?? 0) }
   }
 
   async listRevisions(id: string): Promise<RevisionMeta[]> {
@@ -208,6 +215,41 @@ export class SessionNotesRepo {
        WHERE location_id = $1 AND status = 'signed' AND deleted_at IS NULL AND risk_level IS NOT NULL
        ORDER BY contact_id, session_date DESC, created_at DESC`,
       [this.locationId],
+    )
+  }
+
+  /** One client's current risk: the level of their latest signed, live note (or null if none yet). */
+  async latestRisk(contactId: string): Promise<{ risk_level: string; session_date: string; note_id: string } | null> {
+    const rows = await this.db.query<{ risk_level: string; session_date: string; note_id: string }>(
+      `SELECT risk_level, session_date::text AS session_date, id AS note_id
+       FROM session_notes
+       WHERE location_id = $1 AND contact_id = $2 AND status = 'signed' AND deleted_at IS NULL AND risk_level IS NOT NULL
+       ORDER BY session_date DESC, created_at DESC LIMIT 1`,
+      [this.locationId, contactId],
+    )
+    return rows[0] ?? null
+  }
+
+  /**
+   * Sessions that took place (client checked in, or marked completed) in the last
+   * `days` days that still have NO note: the documentation backlog. A deleted note
+   * does not count as documentation.
+   */
+  async sessionsWithoutNote(days = 3): Promise<
+    { appointment_id: string; title: string; starts_at: string; status: string; contact_id: string; contact_name: string | null }[]
+  > {
+    return this.db.query(
+      `SELECT a.id AS appointment_id, a.title, a.starts_at, a.status, a.contact_id,
+              COALESCE(c.name, NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), '')) AS contact_name
+       FROM appointments a
+       JOIN contacts c ON c.id = a.contact_id AND c.location_id = a.location_id
+       WHERE a.location_id = $1 AND a.status IN ('checked_in', 'completed')
+         AND a.starts_at >= now() - ($2::int * interval '1 day') AND a.starts_at <= now()
+         AND NOT EXISTS (
+           SELECT 1 FROM session_notes n
+           WHERE n.location_id = a.location_id AND n.appointment_id = a.id AND n.deleted_at IS NULL)
+       ORDER BY a.starts_at DESC`,
+      [this.locationId, days],
     )
   }
 
@@ -419,6 +461,27 @@ export class SessionNotesRepo {
           details: { from: prior.risk_level, to: note.risk_level, previousNoteId: prior.id },
           ...this.auditCtx(actor),
         })
+      }
+      // A session that now has a signed note has happened: close its appointment
+      // (unless it was cancelled or marked a no-show, which is a different story).
+      if (note.appointment_id) {
+        const closed = await tx.query<{ id: string; prev: string }>(
+          `WITH old AS (SELECT status FROM appointments WHERE location_id = $1 AND id = $2)
+           UPDATE appointments SET status = 'completed', updated_at = now()
+           WHERE location_id = $1 AND id = $2 AND status IN ('scheduled','confirmed','checked_in')
+           RETURNING id, (SELECT status FROM old) AS prev`,
+          [this.locationId, note.appointment_id],
+        )
+        if (closed[0]) {
+          await audit(tx, this.locationId, {
+            action: 'appointment.status_changed',
+            entityType: 'appointment',
+            entityId: closed[0].id,
+            contactId: note.contact_id,
+            details: { from: closed[0].prev, to: 'completed', via: 'note_signed' },
+            ...this.auditCtx(actor),
+          })
+        }
       }
       // Fact only on the client's timeline — never clinical content.
       await new TimelineRepo(tx, this.locationId).add({
