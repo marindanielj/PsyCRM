@@ -53,6 +53,7 @@ const NAV: NavItem[] = [
   { to: '/assistant', label: 'Assistant', icon: Sparkles, module: 'assistant' },
   { to: '/conversations', label: 'Conversations', icon: MessageSquare, module: 'conversations' },
   { to: '/contacts', label: 'Contacts', icon: Users, module: 'contacts' },
+  { to: '/documents', label: 'Documents', icon: FileSignature, module: 'documents' },
   { to: '/tags', label: 'Tags', icon: Tags, module: 'tags' },
   { to: '/opportunities', label: 'Opportunities', icon: Target, module: 'opportunities' },
   { to: '/tasks', label: 'Tasks', icon: ListTodo, module: 'tasks' },

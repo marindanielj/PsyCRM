@@ -254,3 +254,17 @@ test('the session-notes API sits behind the session_notes module: on by default,
   expect((await app(off).request('/api/loc/locA/session-notes?contactId=c1', { headers: cookie() })).status).toBe(404)
   expect(off.calls.some((c) => /session_notes/.test(c.sql))).toBe(false) // never reached the notes table
 })
+
+test('the documents API sits behind the documents module: on by default, 404 for a practice that turned it off', async () => {
+  const on = new FakeDatabase()
+  on.enqueue([{ id: 'locA' }]) // hasAccess
+  on.enqueue([{ settings: {} }]) // module gate -> PsyCRM defaults include documents
+  on.enqueue([]) // the (empty) template list
+  expect((await app(on).request('/api/loc/locA/documents/templates', { headers: cookie() })).status).toBe(200)
+
+  const off = new FakeDatabase()
+  off.enqueue([{ id: 'locA' }])
+  off.enqueue([{ settings: { enabledModules: ['contacts'] } }])
+  expect((await app(off).request('/api/loc/locA/documents/templates', { headers: cookie() })).status).toBe(404)
+  expect(off.calls.some((c) => /document_templates/.test(c.sql))).toBe(false)
+})

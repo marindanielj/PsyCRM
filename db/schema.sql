@@ -1435,3 +1435,76 @@ CREATE TRIGGER session_notes_no_truncate BEFORE TRUNCATE ON session_notes
 -- PsyCRM day 4: front-desk check-in. `status` gains the value 'checked_in' (a plain
 -- text column, no migration needed); this records WHEN the client arrived.
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS checked_in_at timestamptz;
+
+-- PsyCRM day 5: document templates (versioned, immutable once active) and packets.
+CREATE TABLE IF NOT EXISTS document_templates (
+  id                   text PRIMARY KEY,
+  location_id          text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  family_id            text NOT NULL,
+  translation_group_id text NOT NULL,
+  locale               text NOT NULL DEFAULT 'es' CHECK (locale IN ('es','en')),
+  version              int  NOT NULL DEFAULT 1 CHECK (version >= 1),
+  status               text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','active','retired')),
+  kind                 text NOT NULL CHECK (kind IN ('agreement','intake_form')),
+  title                text NOT NULL,
+  body_md              text NOT NULL DEFAULT '',
+  fields               jsonb NOT NULL DEFAULT '[]',
+  signature            jsonb NOT NULL DEFAULT '{"required":true,"drawn":true}',
+  signer_roles         text[] NOT NULL DEFAULT '{client}',
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  updated_at           timestamptz NOT NULL DEFAULT now(),
+  activated_at         timestamptz,
+  UNIQUE (location_id, family_id, version),
+  CHECK (signer_roles <@ ARRAY['client','guardian','minor']::text[] AND cardinality(signer_roles) >= 1)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS document_templates_one_active
+  ON document_templates(location_id, family_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS document_templates_family ON document_templates(location_id, family_id, version DESC);
+
+-- An active or retired version is what a signed document points to: its content never changes.
+CREATE OR REPLACE FUNCTION document_template_guard() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.status <> 'draft' THEN
+      RAISE EXCEPTION 'document_template_immutable' USING ERRCODE = 'P0001';
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF OLD.status = 'draft' THEN
+    -- identity never changes; everything else is editable until activation
+    IF NEW.id <> OLD.id OR NEW.location_id <> OLD.location_id OR NEW.family_id <> OLD.family_id
+       OR NEW.version <> OLD.version OR NEW.translation_group_id <> OLD.translation_group_id THEN
+      RAISE EXCEPTION 'document_template_immutable' USING ERRCODE = 'P0001';
+    END IF;
+    IF NEW.status = 'active' AND OLD.status = 'draft' THEN NEW.activated_at := now(); END IF;
+    RETURN NEW;
+  END IF;
+  IF NEW.id <> OLD.id OR NEW.location_id <> OLD.location_id OR NEW.family_id <> OLD.family_id
+     OR NEW.version <> OLD.version OR NEW.translation_group_id <> OLD.translation_group_id
+     OR NEW.locale <> OLD.locale OR NEW.kind <> OLD.kind OR NEW.title <> OLD.title
+     OR NEW.body_md <> OLD.body_md OR NEW.fields <> OLD.fields OR NEW.signature <> OLD.signature
+     OR NEW.signer_roles <> OLD.signer_roles
+     OR NEW.activated_at IS DISTINCT FROM OLD.activated_at THEN
+    RAISE EXCEPTION 'document_template_immutable' USING ERRCODE = 'P0001';
+  END IF;
+  IF NEW.status <> OLD.status AND NOT (OLD.status = 'active' AND NEW.status = 'retired') THEN
+    RAISE EXCEPTION 'document_template_status' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS document_template_guard ON document_templates;
+CREATE TRIGGER document_template_guard BEFORE UPDATE OR DELETE ON document_templates
+  FOR EACH ROW EXECUTE FUNCTION document_template_guard();
+
+CREATE TABLE IF NOT EXISTS document_packets (
+  id           text PRIMARY KEY,
+  location_id  text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  name         text NOT NULL,
+  description  text,
+  family_ids   text[] NOT NULL DEFAULT '{}',
+  audience     text NOT NULL DEFAULT 'adult' CHECK (audience IN ('adult','adolescent')),
+  archived_at  timestamptz,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS document_packets_location ON document_packets(location_id);

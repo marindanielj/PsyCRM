@@ -2,6 +2,9 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { Spinner } from './components/ui/spinner'
 import { AffiliatesPage } from './features/affiliates/AffiliatesPage'
 import { AssistantPage } from './features/assistant/AssistantPage'
+import { DocumentsPage } from './features/documents/DocumentsPage'
+import { PacketEditorPage } from './features/documents/PacketEditorPage'
+import { TemplateEditorPage } from './features/documents/TemplateEditorPage'
 import { AuditLogPage } from './features/audit/AuditLogPage'
 import { NoteReportPage } from './features/session-notes/NoteReportPage'
 import { NoteWizardPage } from './features/session-notes/NoteWizard'
@@ -93,6 +96,10 @@ export default function App() {
           <Route path="contacts/:id/notes/new" element={<RequireModule module="session_notes"><NoteWizardPage mode="new" /></RequireModule>} />
           <Route path="contacts/:id/notes/:noteId" element={<RequireModule module="session_notes"><NoteReportPage /></RequireModule>} />
           <Route path="contacts/:id/notes/:noteId/edit" element={<RequireModule module="session_notes"><NoteWizardPage mode="edit" /></RequireModule>} />
+          <Route path="documents" element={<RequireModule module="documents"><DocumentsPage tab="templates" /></RequireModule>} />
+          <Route path="documents/packets" element={<RequireModule module="documents"><DocumentsPage tab="packets" /></RequireModule>} />
+          <Route path="documents/templates/:id" element={<RequireModule module="documents"><TemplateEditorPage /></RequireModule>} />
+          <Route path="documents/packets/:id" element={<RequireModule module="documents"><PacketEditorPage /></RequireModule>} />
           <Route path="tags" element={<RequireModule module="tags"><TagsPage /></RequireModule>} />
           <Route path="settings" element={<SettingsLayout />}>
             <Route index element={<Navigate to="/settings/practice" replace />} />

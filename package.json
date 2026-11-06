@@ -18,6 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed:practice": "tsx db/seed-practice.ts",
+    "seed:documents": "tsx db/seed-documents.ts",
     "start": "tsx server/index.ts"
   },
   "dependencies": {

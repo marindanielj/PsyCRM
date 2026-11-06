@@ -36,6 +36,12 @@ export async function seedPracticeDemo(db: Database): Promise<void> {
     ownerName: 'Dra. Demo',
     ownerPassword: DEMO_LOGIN.password,
   })
+  // A complete (fictional) practice profile so the document previews read naturally.
+  await db.query(
+    `UPDATE locations SET settings = jsonb_set(settings, '{practice}', $2::jsonb, true)
+      WHERE id = $1 AND COALESCE(settings->'practice'->>'therapist', '') = ''`,
+    [locationId, JSON.stringify({ name: 'Consultorio Demo', therapist: 'Dra. Demo', license: '0000', address: 'Calle Ejemplo 1, San Juan, PR', phone: '787-555-0100', email: '', fees: { session: '$100', intake: '$150', late_cancel: '$50' }, policy: { cancel_hours: '24' } })],
+  )
   const [calendar] = await db.query<{ id: string }>('SELECT id FROM calendars WHERE location_id=$1 LIMIT 1', [locationId])
   const today = todayIn(PRACTICE_TZ)
   const thisYear = Number(today.slice(0, 4))

@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid'
 import type { Database } from '../db/database'
+import { seedDocuments } from './document-seed'
 import { PSYCRM_DEFAULT_MODULES } from './modules'
 import { hashPassword } from './password'
 
@@ -166,6 +167,9 @@ export async function seedPractice(db: Database, input: PracticeSeedInput): Prom
      WHERE id=$1`,
     [locationId, JSON.stringify({ enabledModules: settings.enabledModules, timezone: settings.timezone, practice: settings.practice }), JSON.stringify(settings.onboarding)],
   )
+
+  // Starter document templates and packets (drafts the therapist must review).
+  await seedDocuments(db, locationId)
 
   return { locationId, operatorId: op.id, createdOwner, onboarding: settings.onboarding }
 }

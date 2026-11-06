@@ -1998,6 +1998,59 @@ export interface NewReferral {
 
 // ---- Endpoints ----
 
+
+// ---- Documents (day 5) ----
+
+export type DocFieldType =
+  | 'text' | 'textarea' | 'email' | 'phone' | 'date' | 'number' | 'select' | 'radio'
+  | 'checkbox' | 'checkbox_group' | 'yes_no' | 'initials' | 'heading' | 'paragraph'
+export type SignerRole = 'client' | 'guardian' | 'minor'
+
+export interface DocTemplateField {
+  key: string
+  type: DocFieldType
+  label: string
+  help?: string
+  required?: boolean
+  options?: { value: string; label: string }[]
+  showIf?: { key: string; equals: string | boolean }
+  mapsTo?: string
+  signerRole?: SignerRole
+}
+
+export interface DocTemplate {
+  id: string
+  familyId: string
+  translationGroupId: string
+  locale: 'es' | 'en'
+  version: number
+  status: 'draft' | 'active' | 'retired'
+  kind: 'agreement' | 'intake_form'
+  title: string
+  bodyMd: string
+  fields: DocTemplateField[]
+  signature: { required: boolean; drawn: boolean }
+  signerRoles: SignerRole[]
+  createdAt: string
+  updatedAt: string
+  activatedAt: string | null
+}
+export type DocTemplateSummary = Omit<DocTemplate, 'bodyMd' | 'fields'> & { activeVersion: number | null; fieldCount: number }
+export type DocTemplateInput = Partial<Pick<DocTemplate, 'title' | 'kind' | 'bodyMd' | 'fields' | 'signature' | 'signerRoles' | 'locale'>>
+
+export interface DocPacket {
+  id: string
+  name: string
+  description: string | null
+  familyIds: string[]
+  audience: 'adult' | 'adolescent'
+  archivedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+export interface DocPacketItem { familyId: string; templateId: string; title: string; version: number; status: string; active: boolean }
+export interface DocMeta { mergeFields: { token: string; label: string }[]; fieldTypes: DocFieldType[] }
+
 export const api = {
   login: (email: string, password: string) =>
     req<{ ok: true; operator: Operator }>('/auth/login', {
@@ -2014,6 +2067,32 @@ export const api = {
   auditVerify: (loc: string) => req<AuditVerification>(`/loc/${loc}/audit/verify`),
   /** A same-origin URL the browser can navigate to (it carries the session cookie). */
   auditExportUrl: (loc: string, filters: AuditFilters = {}) => `/api/loc/${loc}/audit/export.csv${qs(filters)}`,
+
+  documents: {
+    meta: (loc: string) => req<DocMeta>(`/loc/${loc}/documents/meta`),
+    templates: (loc: string) => req<{ templates: DocTemplateSummary[] }>(`/loc/${loc}/documents/templates`),
+    template: (loc: string, id: string) => req<{ template: DocTemplate }>(`/loc/${loc}/documents/templates/${id}`),
+    history: (loc: string, familyId: string) => req<{ versions: DocTemplate[] }>(`/loc/${loc}/documents/templates/families/${familyId}`),
+    create: (loc: string, input: DocTemplateInput & { title: string; kind: DocTemplate['kind'] }) =>
+      req<{ ok: true; template: DocTemplate }>(`/loc/${loc}/documents/templates`, { method: 'POST', body: JSON.stringify(input) }),
+    update: (loc: string, id: string, input: DocTemplateInput) =>
+      req<{ ok: true; template: DocTemplate }>(`/loc/${loc}/documents/templates/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    newVersion: (loc: string, id: string) => req<{ ok: true; template: DocTemplate }>(`/loc/${loc}/documents/templates/${id}/new-version`, { method: 'POST' }),
+    activate: (loc: string, id: string) =>
+      req<{ ok: true; template: DocTemplate; retiredVersion: number | null }>(`/loc/${loc}/documents/templates/${id}/activate`, { method: 'POST' }),
+    retire: (loc: string, id: string) => req<{ ok: true; template: DocTemplate }>(`/loc/${loc}/documents/templates/${id}/retire`, { method: 'POST' }),
+    preview: (loc: string, id: string, contactId?: string) =>
+      req<{ html: string }>(`/loc/${loc}/documents/templates/${id}/preview`, { method: 'POST', body: JSON.stringify({ contactId }) }),
+    packets: (loc: string, includeArchived = false) =>
+      req<{ packets: (DocPacket & { inactiveFamilyIds: string[] })[] }>(`/loc/${loc}/documents/packets${qs({ includeArchived: includeArchived ? 'true' : undefined })}`),
+    packet: (loc: string, id: string) => req<{ packet: DocPacket; documents: DocPacketItem[] }>(`/loc/${loc}/documents/packets/${id}`),
+    createPacket: (loc: string, input: { name: string; description?: string | null; familyIds: string[]; audience: DocPacket['audience'] }) =>
+      req<{ ok: true; packet: DocPacket }>(`/loc/${loc}/documents/packets`, { method: 'POST', body: JSON.stringify(input) }),
+    updatePacket: (loc: string, id: string, input: Partial<{ name: string; description: string | null; familyIds: string[]; audience: DocPacket['audience']; archived: boolean }>) =>
+      req<{ ok: true; packet: DocPacket }>(`/loc/${loc}/documents/packets/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    previewPacket: (loc: string, id: string, contactId?: string) =>
+      req<{ html: string }>(`/loc/${loc}/documents/packets/${id}/preview`, { method: 'POST', body: JSON.stringify({ contactId }) }),
+  },
 
   sessionNotes: {
     list: (loc: string, contactId: string, includeDeleted = false) =>

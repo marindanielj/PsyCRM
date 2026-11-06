@@ -152,3 +152,26 @@ Se crean como **borradores**. **Deben ser revisadas y adaptadas por la terapeuta
 
 ## Archivos
 `db/schema.sql`, `db/seed-documents.ts` (nuevo), `server/lib/document-vocab.ts` (nuevo), `server/lib/document-render.ts` (nuevo), `server/lib/merge-fields.ts`, `server/lib/page-html.ts`, `server/repos/document-templates-repo.ts` (nuevo), `server/repos/document-packets-repo.ts` (nuevo), `server/routes/documents.ts` (nuevo), `server/index.ts`, `src/features/documents/*` (nuevo), `src/features/settings/*` (Practice: honorarios), `src/features/shell/AppShell.tsx`, `src/App.tsx`, `src/lib/api.ts`.
+
+---
+
+## Estado de implementación (día 5)
+
+**Hecho y verificado** (typecheck limpio; 204 archivos / 1814 pruebas en verde; recorrido en navegador con Playwright; ver [`../RESULTADOS_DIA_5.md`](../RESULTADOS_DIA_5.md)).
+
+**Diferencias respecto a lo escrito arriba**
+- **Los campos se ubican en el texto con `{{field:clave}}`** (una línea sola). Los que no se ubican se agregan después del texto, en orden. Así las iniciales quedan junto a la cláusula.
+- **La semilla vive en `server/lib/document-seed.ts`** (y el contenido en `document-seed-content.ts`), con un envoltorio `db/seed-documents.ts` (`npm run seed:documents`). `seedPractice()` la llama, así que toda práctica nueva recibe las 9 plantillas y 2 paquetes. Los ids son estables (`seed_<slug>`), por lo que correrla de nuevo no duplica ni pisa lo que la terapeuta editó.
+- **El renderer es propio** (`document-render.ts`, ~250 líneas, sin dependencias) y devuelve un documento HTML completo; la vista previa lo muestra en un `iframe` con `sandbox=""` (sin scripts).
+- **La vista previa marca en amarillo** un campo de combinación desconocido **y** un valor de la práctica (`practice.*`, `fees.*`, `policy.*`) que sigue vacío, para que un texto legal no salga con un hueco.
+- **El editor guarda solo** (borradores, 1,2 s después del último cambio). El field builder reordena con flechas, no con arrastrar.
+- **Un borrador se puede borrar a nivel de BD** (solo borradores; no hay ruta). Activas y retiradas no se pueden borrar ni cambiar (trigger).
+- **Activar** retira la versión anterior en la misma transacción y audita ambas (`template.retired` con `via: 'replaced_by_activation'`).
+- Honorarios y políticas ya existían en **Settings → Practice** desde el día 1.
+- Al editar un campo `showIf`, para los Sí/No el valor es `yes` o `no`.
+
+**Pendiente / sin verificar**
+- **Los textos semilla no son asesoría legal.** Llevan una advertencia visible en el editor; la terapeuta o un asesor deben revisarlos antes de activarlos. Los números de crisis (988, Línea PAS 1-800-981-0023, 911) siguen **sin verificar**; también *validar con la Ley 408-2000* el consentimiento del menor.
+- Los `mapsTo` (copiar la respuesta al cliente) se guardan en la plantilla, pero **se aplican en el día 6**.
+- La vista previa con un cliente real lee su nombre y fecha de nacimiento y **no deja rastro en la auditoría**; si se quiere, se añade `contact.viewed`.
+- Idiomas: solo se escribieron plantillas en español; el modelo (`locale`, `translation_group_id`) ya permite las versiones en inglés (C1).
