@@ -26,6 +26,8 @@ async function main() {
       ownerEmail,
       ownerName: process.env.OWNER_NAME,
       ownerPassword: process.env.OWNER_PASSWORD,
+      // With a verified SES sender configured for the deployment, new practices send through Amazon SES.
+      emailProvider: process.env.SES_FROM_ADDRESS ? 'ses' : undefined,
     })
     console.log(
       `psycrm: practice ready (location ${r.locationId}, owner ${r.createdOwner ? 'created' : 'already existed'})`,

@@ -51,7 +51,7 @@ Se levantó un servidor real y se corrió `server/db/real-postgres.test.ts` (se 
 | # | Ítem | Responsable | Estado |
 |---|---|---|---|
 | 1 | BAA de AWS aceptado en Artifact y servicios verificados contra la lista HIPAA Eligible (incluido **SES**) | Admin | ⬜ pendiente |
-| 2 | **Proveedor de correo con BAA** (hoy solo existe el adaptador de Brevo, sin BAA). Sin él, ni las invitaciones, ni los paquetes, ni los códigos de verificación llegan al cliente. Hace falta el adaptador de SES | Admin + terapeuta | ⬜ **bloquea el uso con clientes reales** |
+| 2 | **Proveedor de correo con BAA.** El **adaptador de SES ya está escrito y probado** ([`CORREO_SES.md`](CORREO_SES.md)); falta lo que depende de AWS: la cuenta, la identidad de envío verificada, salir del *sandbox* y una prueba de envío real | Admin + terapeuta | ⬜ **bloquea el uso con clientes reales** (la parte de código ya no) |
 | 3 | Plantillas revisadas por la terapeuta y un asesor legal (Ley 408-2000, confidencialidad, retención) y **activadas**; luego **encender los workflows** | Terapeuta | ⬜ pendiente |
 | 4 | Datos de la práctica, licencia, honorarios y política de cancelación en Settings → Practice | Terapeuta | ⬜ pendiente |
 | 5 | Números de crisis verificados (988, Línea PAS 1-800-981-0023, 911) | Terapeuta | ⬜ pendiente |
@@ -74,7 +74,7 @@ Se levantó un servidor real y se corrió `server/db/real-postgres.test.ts` (se 
 - Correos de desarrollo en `/__dev/outbox` (solo en el servidor de desarrollo).
 
 ## 6. Pendientes priorizados para la semana 2 (sin cambios, más lo aprendido)
-1. **Adaptador de correo con BAA (SES)** — desbloquea todo lo demás.
+1. ~~Adaptador de correo con BAA (SES)~~ — **hecho** después del día 8; falta la configuración en AWS.
 2. **MFA (TOTP)** para el inicio de sesión.
 3. Esperas durables en las automatizaciones (base de los recordatorios de citas).
 4. **Entrega del asentimiento del menor** (hoy el paquete adolescente va solo al tutor).

@@ -354,7 +354,7 @@ export interface PaymentsSettingsPatch {
 }
 
 /** Which outbound providers carry this location's campaigns (Module 49). */
-export type EmailProvider = 'brevo' | 'none'
+export type EmailProvider = 'brevo' | 'ses' | 'none'
 export type SmsProvider = 'twilio' | 'none'
 
 /** Honest per-channel readout: connected only when the chosen provider's keys
@@ -2433,6 +2433,9 @@ export const api = {
       body: JSON.stringify(patch),
     }),
   sendingSettings: (loc: string) => req<SendingSettings>(`/loc/${loc}/settings/sending`),
+  /** Sends one fixed test message to `to`; `reason` says why not when the connection is not working. */
+  sendTestEmail: (loc: string, to: string) =>
+    req<{ ok: boolean; reason?: string }>(`/loc/${loc}/settings/sending/test`, { method: 'POST', body: JSON.stringify({ to }) }),
   updateSendingSettings: (loc: string, patch: SendingSettingsPatch) =>
     req<{ ok: true } & SendingSettings>(`/loc/${loc}/settings/sending`, {
       method: 'PATCH',

@@ -12,6 +12,7 @@ import {
   api,
 } from '../../lib/api'
 import { cn } from '../../lib/utils'
+import { useAuth } from '../../state/auth'
 import { useTenant } from '../../state/location'
 
 interface SendingForm {
@@ -157,7 +158,13 @@ export function SendingSettingsPage() {
               </div>
               <ChannelBadge dirty={dirty} status={view?.email} />
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <ProviderCard
+                active={form.emailProvider === 'ses'}
+                onClick={() => patch({ emailProvider: 'ses' })}
+                title="Amazon SES"
+                body="Email through the platform's AWS account, covered by its HIPAA agreement. No API key to manage."
+              />
               <ProviderCard
                 active={form.emailProvider === 'brevo'}
                 onClick={() => patch({ emailProvider: 'brevo' })}
@@ -172,12 +179,14 @@ export function SendingSettingsPage() {
               />
             </div>
 
-            {form.emailProvider === 'brevo' ? (
+            {form.emailProvider === 'brevo' || form.emailProvider === 'ses' ? (
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <div>
                   <Label htmlFor="from-email">From email</Label>
                   <p className="mb-2 mt-1 text-xs text-slate-500">
-                    Must be a sender verified in the Brevo account.
+                    {form.emailProvider === 'ses'
+                      ? "Must be an address or domain verified in SES. Leave it empty to use the platform's default sender."
+                      : 'Must be a sender verified in the Brevo account.'}
                   </p>
                   <Input
                     id="from-email"
@@ -203,6 +212,9 @@ export function SendingSettingsPage() {
               </div>
             ) : null}
           </section>
+
+          {/* A real message proves the connection works before a client depends on it */}
+          {form.emailProvider !== 'none' ? <TestEmail locationId={loc} connected={view?.email.connected === true && !dirty} /> : null}
 
           {/* SMS channel */}
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -266,7 +278,10 @@ export function SendingSettingsPage() {
                   <code className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">{name}</code>
                 </li>
               ))}
-              {form.emailProvider !== 'brevo' && form.smsProvider !== 'twilio' ? (
+              {form.emailProvider === 'ses' ? (
+                <li className="text-xs text-slate-500">Amazon SES needs no key here: it uses the platform's AWS role, limited to sending from the verified sender.</li>
+              ) : null}
+              {form.emailProvider !== 'brevo' && form.emailProvider !== 'ses' && form.smsProvider !== 'twilio' ? (
                 <li className="text-xs text-slate-400">Choose a provider above to see its key names.</li>
               ) : null}
             </ul>
@@ -333,3 +348,43 @@ function ProviderCard({
   )
 }
 
+
+/** Send one test message to an address the operator types (their own, by default). */
+function TestEmail({ locationId, connected }: { locationId: string; connected: boolean }) {
+  const { operator } = useAuth()
+  const [to, setTo] = useState(operator?.email ?? '')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<{ ok: boolean; reason?: string } | null>(null)
+
+  async function send() {
+    if (busy || !to.trim()) return
+    setBusy(true)
+    setResult(null)
+    try {
+      setResult(await api.sendTestEmail(locationId, to.trim()))
+    } catch {
+      setResult({ ok: false, reason: 'Could not reach the server.' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Send a test email">
+      <h2 className="text-sm font-semibold text-slate-900">Test the connection</h2>
+      <p className="mb-3 mt-1 text-xs text-slate-500">
+        Sends one short message. With a new Amazon SES account, only addresses verified in SES can receive it until AWS approves production access.
+        {connected ? '' : ' Save your changes first.'}
+      </p>
+      <div className="flex gap-2">
+        <Input aria-label="Send the test to" type="email" value={to} placeholder="you@example.com" onChange={(e) => setTo(e.target.value)} />
+        <Button type="button" variant="outline" disabled={busy || !to.trim() || !connected} onClick={() => void send()}>{busy ? 'Sending…' : 'Send test email'}</Button>
+      </div>
+      {result ? (
+        <p role="status" className={cn('mt-2 text-xs font-medium', result.ok ? 'text-emerald-600' : 'text-rose-600')}>
+          {result.ok ? 'Sent. Check the inbox (and spam).' : `Not sent: ${result.reason ?? 'unknown reason'}`}
+        </p>
+      ) : null}
+    </section>
+  )
+}

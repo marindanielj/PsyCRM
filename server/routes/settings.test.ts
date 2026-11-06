@@ -465,3 +465,32 @@ test('PATCH /voice rejects an unknown provider and never accepts credentials', a
   expect(JSON.parse(db.calls[0]?.params[1] as string)).toEqual({})
 })
 
+
+// ---- Amazon SES: choosing it, and the "send a test email" check --------------------------------
+
+test('PATCH /sending accepts Amazon SES as the email provider', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ settings: { sending: { emailProvider: 'ses', fromEmail: 'no-reply@consultorio.example', fromName: 'Consultorio' } } }])
+  const res = await sendJson(sendingHarness(db, EMAIL_OK, SMS_OFF), '/sending', 'PATCH', { emailProvider: 'ses', fromEmail: 'no-reply@consultorio.example', fromName: 'Consultorio' })
+  expect(res.status).toBe(200)
+  expect(await res.json()).toMatchObject({ ok: true, emailProvider: 'ses', fromEmail: 'no-reply@consultorio.example' })
+  expect(db.calls[0]?.params[1]).toContain('"emailProvider":"ses"')
+  expect((await sendJson(sendingHarness(new FakeDatabase(), EMAIL_OK, SMS_OFF), '/sending', 'PATCH', { emailProvider: 'mailgun' })).status).toBe(400)
+})
+
+test('POST /sending/test sends one fixed message to the typed address through the practice provider', async () => {
+  const sent: unknown[] = []
+  const ok: ResolvedEmailSender = { ok: true, sender: { name: 'ses', sendEmail: async (m) => (sent.push(m), { externalId: 'x', provider: 'ses' }) } }
+  const res = await sendJson(sendingHarness(new FakeDatabase(), ok, SMS_OFF), '/sending/test', 'POST', { to: 'dra@example.com' })
+  expect(await res.json()).toEqual({ ok: true })
+  expect(sent).toEqual([{ to: 'dra@example.com', subject: 'Prueba de correo', text: expect.stringContaining('mensaje de prueba') }])
+})
+
+test('POST /sending/test says why when nothing is connected, and returns only the kind of a provider failure', async () => {
+  const off = await sendJson(sendingHarness(new FakeDatabase(), EMAIL_OFF, SMS_OFF), '/sending/test', 'POST', { to: 'dra@example.com' })
+  expect(await off.json()).toMatchObject({ ok: false, reason: expect.any(String) })
+  const boom: ResolvedEmailSender = { ok: true, sender: { name: 'ses', sendEmail: async () => { throw new Error('ses send failed: MessageRejected') } } }
+  const res = await sendJson(sendingHarness(new FakeDatabase(), boom, SMS_OFF), '/sending/test', 'POST', { to: 'dra@example.com' })
+  expect(await res.json()).toEqual({ ok: false, reason: 'MessageRejected' })
+  expect((await sendJson(sendingHarness(new FakeDatabase(), EMAIL_OK, SMS_OFF), '/sending/test', 'POST', { to: 'not-an-email' })).status).toBe(400)
+})

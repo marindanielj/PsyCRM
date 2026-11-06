@@ -15,7 +15,7 @@ Cada spec se puede implementar por sí solo y en orden. Parte de [`../PLAN_MVP.m
 
 Extras posteriores al día 7: [invitación al cliente](extra-client-invite.md) · [marca por práctica](extra-branding.md).
 
-**Resultados:** [días 1 y 2](../RESULTADOS_DIAS_1_2.md) · [día 3](../RESULTADOS_DIA_3.md) · [día 4](../RESULTADOS_DIA_4.md) · [día 5](../RESULTADOS_DIA_5.md) · [día 6](../RESULTADOS_DIA_6.md) · [día 7](../RESULTADOS_DIA_7.md) · [invitación](../RESULTADOS_INVITACION.md) · [día 8](../RESULTADOS_DIA_8.md) · [marca](../RESULTADOS_MARCA.md). Operación: [`OPERACIONES.md`](../OPERACIONES.md) · guía: [`GUIA_RAPIDA.md`](../GUIA_RAPIDA.md).
+**Resultados:** [días 1 y 2](../RESULTADOS_DIAS_1_2.md) · [día 3](../RESULTADOS_DIA_3.md) · [día 4](../RESULTADOS_DIA_4.md) · [día 5](../RESULTADOS_DIA_5.md) · [día 6](../RESULTADOS_DIA_6.md) · [día 7](../RESULTADOS_DIA_7.md) · [invitación](../RESULTADOS_INVITACION.md) · [día 8](../RESULTADOS_DIA_8.md) · [marca](../RESULTADOS_MARCA.md) · [correo SES](../RESULTADOS_SES.md). Operación: [`OPERACIONES.md`](../OPERACIONES.md) · guía: [`GUIA_RAPIDA.md`](../GUIA_RAPIDA.md).
 
 ## Convenciones para todos los días
 

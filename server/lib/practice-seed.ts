@@ -37,6 +37,8 @@ export interface PracticeSeedInput {
   ownerName?: string
   /** Only used when the owner does not exist yet; an existing password is never touched. */
   ownerPassword?: string
+  /** Start the practice on Amazon SES (the deployment's SES_FROM_ADDRESS is its sender). Fills the setting only if it is missing. */
+  emailProvider?: 'ses'
 }
 
 export interface PracticeSeedResult {
@@ -158,6 +160,7 @@ export async function seedPractice(db: Database, input: PracticeSeedInput): Prom
     enabledModules: [...PSYCRM_DEFAULT_MODULES],
     timezone: tz,
     practice: { name: input.practiceName.trim() },
+    ...(input.emailProvider === 'ses' ? { sending: { emailProvider: 'ses' as const, fromName: input.practiceName.trim() } } : {}),
     onboarding: { pipelineId: pipeline.id, stages },
   }
   // `||` puts the existing settings on the right, so anything already set wins;
@@ -166,7 +169,7 @@ export async function seedPractice(db: Database, input: PracticeSeedInput): Prom
     `UPDATE locations
      SET settings = $2::jsonb || COALESCE(settings, '{}'::jsonb) || jsonb_build_object('onboarding', $3::jsonb)
      WHERE id=$1`,
-    [locationId, JSON.stringify({ enabledModules: settings.enabledModules, timezone: settings.timezone, practice: settings.practice }), JSON.stringify(settings.onboarding)],
+    [locationId, JSON.stringify({ enabledModules: settings.enabledModules, timezone: settings.timezone, practice: settings.practice, ...(settings.sending ? { sending: settings.sending } : {}) }), JSON.stringify(settings.onboarding)],
   )
 
   // Starter document templates and packets (drafts the therapist must review).

@@ -57,7 +57,7 @@ Estos módulos están **apagados por defecto** (no están en la lista de arriba 
 | `reputation` | Google y Facebook (reseñas) | — | Las reseñas son públicas; no responder con datos clínicos |
 | `sites`, `forms`, `surveys`, `proposals`, `blog`, `communities`, `memberships`, `trigger_links`, `affiliates` | Páginas públicas sin sesión | `public_pages` | Revisar qué datos personales recogen y añadir el texto de privacidad; las páginas públicas llevan un script en línea, por lo que hoy salen **sin** política CSP |
 | `calendar_sync` (semana 2, **por construir**) | Calendarios del teléfono de la terapeuta (Google o iCloud) por URL `.ics`, **sin OAuth** | `calendar_sync` | Sin BAA: solo cruzan bloques de tiempo, nunca datos de clientes (ver §3.1) |
-| `documents` (día 5-6) | Correo de Amazon SES para enviar los enlaces | — | Cubierto por el BAA de AWS **si** SES figura en la lista de servicios elegibles (tarea 1.4 de `INFRA_AWS.md`) |
+| `documents` (día 5-6) y la invitación al cliente | Correo de Amazon SES para enviar los enlaces y los códigos (adaptador **ya escrito**; ver [`CORREO_SES.md`](CORREO_SES.md)) | — | Cubierto por el BAA de AWS **si** SES figura en la lista de servicios elegibles (tarea 1.4 de `INFRA_AWS.md`). Falta la cuenta de AWS, la identidad verificada y salir del *sandbox* |
 
 ### 3.1 Sincronización de calendario por `.ics` (semana 2)
 

@@ -59,7 +59,7 @@ CI/CD:  GitHub (repo) ──Actions──► [OIDC] ──► ECR (push) ──�
 
 **Flujo de una petición:** navegador → Route 53 → ALB (termina TLS con el certificado de ACM) → tarea de Fargate (puerto 8790) → RDS. El servidor sirve tanto la API (`/api/*`) como la app web (archivos de `dist/`); no hay servidor aparte para el front-end.
 
-**Flujo del correo:** la app llama a SES (`lib/sending/ses-adapter.ts`, por escribir en el día 6) → SES envía el email al cliente con el enlace de firma. El cuerpo nunca lleva datos clínicos.
+**Flujo del correo:** la app llama a SES (`server/lib/sending/ses-adapter.ts`, **ya escrito**; guía en [`CORREO_SES.md`](CORREO_SES.md)) → SES envía el email al cliente con el enlace de firma. El cuerpo nunca lleva datos clínicos.
 
 ---
 
@@ -146,7 +146,9 @@ Esto es parte de la protección del log de auditoría (día 2): el rol de la app
 | `STATIC_DIR` | imagen | `/app/dist` (ya viene en el `Dockerfile`; el servidor sirve la app web desde ahí) |
 | `TMPDIR` | imagen | `/tmp` (ya viene en el `Dockerfile`) |
 | `AWS_REGION` | texto | `us-east-1` |
-| `SES_FROM_ADDRESS` | texto | Remitente verificado, p. ej. `no-reply@<dominio>` (día 6) |
+| `SES_FROM_ADDRESS` | texto | Remitente verificado, p. ej. `no-reply@<dominio>`. Con esta variable, `seed:practice` deja las prácticas nuevas en Amazon SES |
+| `SES_REGION` | texto | Región de SES (por omisión `AWS_REGION`, y si no, `us-east-1`) |
+| `SES_CONFIGURATION_SET` | texto | (opcional) conjunto de configuración con eventos de rebote y queja |
 | `PUBLIC_BASE_URL` | texto | URL pública (dominio o DNS del ALB), para los enlaces de los emails |
 
 > **SSL a la base (resuelto en el día 1):** `pg` y `pg-boss` leen `sslmode` y `sslrootcert` de la propia `DATABASE_URL`, así que no hizo falta cambiar la conexión. El `Dockerfile` descarga el certificado raíz de RDS a `/app/certs/rds-global-bundle.pem`, y la URL del secreto debe terminar en `?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem`. En producción el servidor **se niega a arrancar** si la URL no usa `sslmode=verify-full` (o `verify-ca`).
@@ -314,8 +316,8 @@ Leyenda: **[Tú]** = acción en la consola o la cuenta de AWS (requiere ser due�
 - [ ] **6.1 [Tú]** Crear el proveedor OIDC de GitHub en IAM y el rol `psycrm-github-deploy` (§3.8), limitado al repositorio `marindanielj/PsyCRM` y la rama `main`.
 - [ ] **6.2 [Claude]** Workflow de GitHub Actions (`.github/workflows/deploy.yml`): pruebas → imagen → ECR → tarea de migración → actualización del servicio (§4).
 - [ ] **6.3 [Tú]** Configurar en GitHub el entorno `production` con aprobación manual.
-- [x] **6.4 [Claude]** *(hecho en el día 1)* SSL verificado por la URL de la base y variables nuevas en `config.ts` (`ENABLED_INTEGRATIONS`, `PUBLIC_BASE_URL`, `STATIC_DIR`). Falta `SES_FROM_ADDRESS` (día 6).
-- [ ] **6.5 [Claude]** `lib/sending/ses-adapter.ts` y su registro en `lib/sending/resolve.ts` (día 6). Prueba de envío real a una dirección verificada.
+- [x] **6.4 [Claude]** SSL verificado por la URL de la base y variables nuevas en `config.ts` (`ENABLED_INTEGRATIONS`, `PUBLIC_BASE_URL` —obligatoria y https en producción—, `STATIC_DIR`, `SES_FROM_ADDRESS`, `SES_REGION`, `SES_CONFIGURATION_SET`).
+- [x] **6.5 [Claude]** `server/lib/sending/ses-adapter.ts` y su registro en `server/lib/sending/resolve.ts`, con el botón **Send test email** en Settings → Email & SMS. **Falta [Tú]:** la prueba de envío real a una dirección verificada, cuando exista la cuenta de AWS (ver [`CORREO_SES.md`](CORREO_SES.md)).
 - [ ] **6.6 [Ambos]** Ejecutar `npm run seed:practice` una vez en producción (tarea única) para crear la práctica, el usuario de la terapeuta y el pipeline (día 1).
 - [ ] **6.7 [Ambos]** Cerrar o conservar el RDS viejo: **no apagarlo** hasta confirmar que no depende nada de él; entonces crear una instantánea final y eliminarlo.
 

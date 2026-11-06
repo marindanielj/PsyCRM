@@ -10,6 +10,7 @@ El servidor **no arranca** si falta o está mal alguna (`server/lib/config.ts`):
 | `SESSION_SECRET` | 32 caracteres o más, distinta del valor de desarrollo; en AWS Secrets Manager |
 | `DATABASE_URL` | con `sslmode=verify-full` y el certificado raíz de RDS (`/app/certs/rds-global-bundle.pem`) |
 | `PUBLIC_BASE_URL` | la dirección **https** de la aplicación. Se usa en los enlaces de los correos (firma e invitación); sin ella el servidor no arranca |
+| `SES_FROM_ADDRESS` / `SES_REGION` | El remitente verificado en SES y su región (ver [`CORREO_SES.md`](CORREO_SES.md)) |
 | `ENABLED_INTEGRATIONS` | **vacía**. El registro de arranque debe decir `integrations enabled: none` |
 | `STATIC_DIR` | `/app/dist` (ya fijada en la imagen) |
 
@@ -54,7 +55,7 @@ El servidor **no arranca** si falta o está mal alguna (`server/lib/config.ts`):
 ## 6. Si algo falla
 | Síntoma | Qué mirar |
 |---|---|
-| El cliente no recibe el correo | Settings → Email: ¿hay proveedor? Sin proveedor la invitación y el paquete **se crean igual** y el enlace aparece en pantalla (Copy link / Resend) para enviarlo a mano |
+| El cliente no recibe el correo | Settings → Email & SMS: ¿hay proveedor (Amazon SES)? Use **Send test email**; la guía de errores está en [`CORREO_SES.md`](CORREO_SES.md). ¿Hay proveedor? Sin proveedor la invitación y el paquete **se crean igual** y el enlace aparece en pantalla (Copy link / Resend) para enviarlo a mano |
 | Una corrida de automatización aparece como *Failed* | Automations → el flujo → Recent runs: el paso fallido dice por qué (correo sin configurar, plantilla sin versión activa, `PUBLIC_BASE_URL`…). Corregir y volver a enviar desde la ficha del cliente |
 | Un paquete "retenido para revisión" | Ficha del cliente → Documents: la fecha de nacimiento respondida no coincide con el expediente. Revisar y **Accept as complete**, o corregir y reenviar |
 | Se perdió una contraseña | `scripts/rotate-op-password.ts` (con `DATABASE_URL`, `ROTATE_OPERATOR_ID` y `ROTATE_NEW_PASSWORD` como variables de entorno). Registrar el cambio |

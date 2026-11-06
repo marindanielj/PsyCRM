@@ -101,3 +101,20 @@ test('refuses to create a new owner without a strong password', async () => {
   await expect(seedPractice(db, { ...input, ownerPassword: undefined })).rejects.toThrow(/ownerPassword is required/)
   await expect(seedPractice(db, { ...input, ownerPassword: 'short' })).rejects.toThrow(/at least 12/)
 })
+
+test('with a deployment SES sender, a new practice starts on Amazon SES; an existing choice is never overwritten', async () => {
+  const db = await freshDb()
+  const first = await seedPractice(db, { ...input, emailProvider: 'ses' })
+  const sending = async () => (await db.query<{ s: any }>("SELECT settings->'sending' AS s FROM locations WHERE id=$1", [first.locationId]))[0]!.s
+  expect(await sending()).toEqual({ emailProvider: 'ses', fromName: 'Consultorio Prueba' })
+
+  // she later chooses another provider; running the seed again (every deploy) leaves it alone
+  await db.query(`UPDATE locations SET settings = jsonb_set(settings, '{sending}', '{"emailProvider":"none"}') WHERE id=$1`, [first.locationId])
+  await seedPractice(db, { ...input, emailProvider: 'ses' })
+  expect(await sending()).toEqual({ emailProvider: 'none' })
+
+  // with no SES sender configured, nothing is preset
+  const plain = await freshDb()
+  const p = await seedPractice(plain, input)
+  expect((await plain.query<{ s: unknown }>("SELECT settings->'sending' AS s FROM locations WHERE id=$1", [p.locationId]))[0]!.s).toBeNull()
+})

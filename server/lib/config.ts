@@ -44,6 +44,10 @@ const EnvSchema = z.object({
     }),
   // Public origin used to build links in outbound email (document signing, etc.).
   PUBLIC_BASE_URL: z.string().url().optional(),
+  /** Amazon SES: the verified sender and region (the task's IAM role is the credential; there is no key). */
+  SES_FROM_ADDRESS: z.string().optional(),
+  SES_REGION: z.string().optional(),
+  SES_CONFIGURATION_SET: z.string().optional(),
   // Directory holding the built web app (vite build output) to serve from the API
   // process. Empty = serve no static files (dev: Vite serves the SPA itself).
   STATIC_DIR: z.string().optional(),

@@ -59,7 +59,7 @@ const paymentsPatchSchema = z.object({
  * never the credentials, which live in the vault and resolve by name.
  */
 const sendingPatchSchema = z.object({
-  emailProvider: z.enum(['brevo', 'none']).optional(),
+  emailProvider: z.enum(['brevo', 'ses', 'none']).optional(),
   fromEmail: z.string().trim().max(320).nullish(),
   fromName: z.string().trim().max(200).nullish(),
   smsProvider: z.enum(['twilio', 'none']).optional(),
@@ -163,6 +163,25 @@ export function settingsRoute(deps: {
     const loc = c.get('locationId')
     const view = await new LocationSettingsRepo(deps.db, loc).getSendingSettings()
     return c.json({ ...view, ...(await sendingStatus(loc)) })
+  })
+
+  // "Send a test email": proves the connection (sandbox identity, IAM permission, sender) before a client depends on it.
+  // It only ever sends one fixed message, to an address the operator types.
+  app.post('/sending/test', zValidator('json', z.object({ to: z.string().trim().email().max(320) })), async (c) => {
+    const loc = c.get('locationId')
+    const sender = await resolveEmail(deps.db, loc)
+    if (!sender.ok) return c.json({ ok: false, reason: sender.reason }, 200)
+    try {
+      await sender.sender.sendEmail({
+        to: c.req.valid('json').to,
+        subject: 'Prueba de correo',
+        text: 'Este es un mensaje de prueba. Si lo recibe, el envío de correo está bien configurado.',
+      })
+      return c.json({ ok: true })
+    } catch (err) {
+      // Only the kind of failure (e.g. MessageRejected), never the provider's message.
+      return c.json({ ok: false, reason: String((err as { message?: unknown } | null)?.message ?? 'send failed').replace(/^.*?: /, '').slice(0, 80) }, 200)
+    }
   })
 
   app.patch('/sending', zValidator('json', sendingPatchSchema), async (c) => {
