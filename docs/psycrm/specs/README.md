@@ -4,14 +4,16 @@ Cada spec se puede implementar por sí solo y en orden. Parte de [`../PLAN_MVP.m
 
 | Día | Spec | Depende de |
 |---|---|---|
-| 1 | [Base: deploy, módulos, sesión, seed](day-01-foundation.md) | — |
-| 2 | [Log de auditoría](day-02-audit-log.md) | 1 |
+| 1 | [Base: deploy, módulos, sesión, seed](day-01-foundation.md) · ✅ hecho | — |
+| 2 | [Log de auditoría](day-02-audit-log.md) · ✅ hecho | 1 |
 | 3 | [Notas de sesión: backend](day-03-session-notes-backend.md) | 2 |
 | 4 | [Notas de sesión: UI, reporte, riesgo y check-in](day-04-session-notes-ui.md) | 3 |
 | 5 | [Plantillas y paquetes de documentos](day-05-document-templates.md) | 2 |
 | 6 | [Firma pública de documentos](day-06-public-signing.md) | 5 |
 | 7 | [Automatización del pipeline de onboarding](day-07-onboarding-automation.md) | 2, 4, 6 |
 | 8 | [Prueba completa, endurecimiento y salida a producción](day-08-e2e-golive.md) | todos |
+
+**Resultados de los días 1 y 2:** [`../RESULTADOS_DIAS_1_2.md`](../RESULTADOS_DIAS_1_2.md).
 
 ## Convenciones para todos los días
 

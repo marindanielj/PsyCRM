@@ -182,3 +182,13 @@ test('serves the built web app with an SPA fallback, without shadowing the API',
   expect(((await a.request('/api/nope')).headers.get('content-type') ?? '')).toContain('json')
   expect(await (await a.request('/health')).json()).toMatchObject({ ok: true, service: 'psycrm' })
 })
+
+test('PsyCRM mode: public pages get the framing/referrer protections but no CSP (they inline a small script); API and app get the strict CSP', async () => {
+  const pub = await psycrmApp().request('/api/public/booking/locA/none')
+  expect(pub.headers.get('x-frame-options')).toBe('DENY')
+  expect(pub.headers.get('referrer-policy')).toBe('no-referrer')
+  expect(pub.headers.get('content-security-policy')).toBeNull()
+  expect(pub.headers.get('x-robots-tag')).toBe('noindex')
+  expect(pub.headers.get('cache-control')).toBe('no-store')
+  expect((await psycrmApp().request('/api/locations')).headers.get('content-security-policy')).toContain("default-src 'self'")
+})
