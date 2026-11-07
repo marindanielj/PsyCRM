@@ -1,5 +1,4 @@
 import { nanoid } from 'nanoid'
-import type { Database } from '../db/database'
 import { type AuditEntry, audit } from '../lib/audit'
 import type { CreateTemplateInput, PatchTemplateInput, SignerRole, TemplateField } from '../lib/document-vocab'
 import { LocationScopedRepo } from './base-repo'

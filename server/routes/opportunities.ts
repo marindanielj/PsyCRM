@@ -96,8 +96,6 @@ export function opportunitiesRoute(deps: {
     const loc = c.get('locationId')
     const id = c.req.param('id')
     const body = c.req.valid('json')
-    const repo = new OpportunitiesRepo(deps.db, loc)
-
     // One concern per call: move (drag-drop) > status (won/lost) > field edit.
     let opportunity
     if (body.stageId !== undefined) {

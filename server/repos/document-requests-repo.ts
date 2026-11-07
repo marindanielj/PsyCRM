@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { nanoid } from 'nanoid'
 import type { Database } from '../db/database'
 import { isMinor, isValidIsoDate, todayIn } from '../lib/age'
@@ -7,7 +6,7 @@ import { normalizeEmail, normalizePhone } from '../lib/contact-match'
 import { cleanAnswers } from '../lib/document-answers'
 import { type RequestAudience, assignSigner } from '../lib/document-assignment'
 import { documentShell, renderDocumentBody, renderSignatureBlock } from '../lib/document-render'
-import { maskEmail } from '../lib/document-tokens'
+import { maskEmail, sha256Hex } from '../lib/document-tokens'
 import type { SignerRole, TemplateField } from '../lib/document-vocab'
 import { LocationScopedRepo } from './base-repo'
 import { PracticeRepo } from './practice-repo'
@@ -92,7 +91,7 @@ export interface SignedDocument extends SignedDocumentSummary {
   fieldValues: Record<string, unknown>
   signerIp: string
   verifiedVia: string
-  /** sha256(renderedHtml) recomputed now equals the stored hash: the record is intact. */
+  /** sha256Hex(renderedHtml) recomputed now equals the stored hash: the record is intact. */
   intact: boolean
 }
 
@@ -128,7 +127,6 @@ const toSignedSummary = (r: Record<string, any>): SignedDocumentSummary => ({
   templateTitle: r.template_title, templateVersion: num(r.template_version), locale: r.locale, signedAt: iso(r.signed_at)!, contentSha256: r.content_sha256,
 })
 
-const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
 /** A PNG data URL of at most 100 KB, and nothing else: it goes into a stored HTML snapshot. */
 export const MAX_SIGNATURE_BYTES = 100 * 1024
 export function isSignaturePng(v: unknown): v is string {
@@ -272,7 +270,7 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
   async getSigned(id: string): Promise<SignedDocument | null> {
     const r = (await this.db.query<Record<string, any>>(`SELECT ${SIGNED_COLS}, rendered_html, field_values, signer_ip, verified_via FROM signed_documents WHERE location_id = $1 AND id = $2`, [this.locationId, id]))[0]
     if (!r) return null
-    return { ...toSignedSummary(r), renderedHtml: r.rendered_html, fieldValues: r.field_values, signerIp: r.signer_ip, verifiedVia: r.verified_via, intact: sha256(r.rendered_html) === r.content_sha256 }
+    return { ...toSignedSummary(r), renderedHtml: r.rendered_html, fieldValues: r.field_values, signerIp: r.signer_ip, verifiedVia: r.verified_via, intact: sha256Hex(r.rendered_html) === r.content_sha256 }
   }
 
   // --- operator actions ------------------------------------------------------
@@ -476,7 +474,7 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
         body + renderSignatureBlock({ signerName: name, signedAt: now, ip: actor.ip, maskedEmail: maskEmail(s.email), signaturePng: tpl.signature.drawn ? input.signaturePng : null, documentId: docId, locale: tpl.locale }),
         tpl.locale,
       )
-      const hash = sha256(renderedHtml)
+      const hash = sha256Hex(renderedHtml)
 
       const row = (await tx.query<Record<string, any>>(
         `INSERT INTO signed_documents (id, location_id, contact_id, request_id, signer_id, signer_role, template_id, template_title, template_version, locale, field_values, rendered_html, content_sha256, signer_name, signature_png, esign_consent, signer_ip, signer_user_agent, verified_via, signed_at)

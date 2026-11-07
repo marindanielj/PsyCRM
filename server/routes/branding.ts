@@ -3,7 +3,7 @@ import { type Context, Hono } from 'hono'
 import { z } from 'zod'
 import type { AppEnv } from '../app-env'
 import type { Database } from '../db/database'
-import { clientIp } from '../lib/client-ip'
+import { auditContext } from '../lib/audit'
 import { BRAND_NAME_MAX, HEX_COLOR, MAX_LOGO_BYTES, decodeDataUrl, detectLogoType, logoUrl } from '../lib/branding'
 import { BrandingRepo, readLogo } from '../repos/branding-repo'
 
@@ -20,10 +20,7 @@ const logoSchema = z.object({ dataUrl: z.string().max(Math.ceil((MAX_LOGO_BYTES 
 export function brandingRoute(deps: { db: Database }): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
   const repo = (c: Context<AppEnv>) => new BrandingRepo(deps.db, c.get('locationId'))
-  const ctx = (c: Context<AppEnv>) => {
-    const ip = clientIp(c)
-    return { actor: { type: 'operator' as const, id: c.get('operatorId') }, ip: ip === 'unknown' ? null : ip, userAgent: c.req.header('user-agent') ?? null }
-  }
+  const ctx = auditContext
   const view = (c: Context<AppEnv>, b: Awaited<ReturnType<BrandingRepo['get']>>) => ({ ...b, logoUrl: logoUrl(c.get('locationId'), b) })
 
   app.get('/', async (c) => c.json({ branding: view(c, await repo(c).get()) }))

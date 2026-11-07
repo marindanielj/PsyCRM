@@ -103,7 +103,6 @@ export const AUDIT_CATEGORIES = [
   { key: 'audit', label: 'Audit log', prefixes: ['audit.'] },
 ] as const
 
-export type AuditCategoryKey = (typeof AUDIT_CATEGORIES)[number]['key']
 
 export function auditLabel(action: string): string {
   return (AUDIT_ACTIONS as Record<string, string>)[action] ?? action

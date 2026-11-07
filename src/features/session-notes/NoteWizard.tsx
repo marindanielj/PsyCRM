@@ -10,7 +10,6 @@ import { cn } from '../../lib/utils'
 import { useAuth } from '../../state/auth'
 import { useTenant } from '../../state/location'
 import { LockBadge } from './LockBadge'
-import { NoteReport } from './NoteReport'
 import { type NoteForm, changedInput, emptyForm, formFromNote, formToInput, formatLockRemaining, reviewChecklist, riskStatus, todayInPractice } from './note-utils'
 import { buildReport, fieldsFromForm } from './report-model'
 import { ContextStep } from './steps/ContextStep'
@@ -111,7 +110,7 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [lock, setLock] = useState<NoteLock | null>(existing?.lock ?? null)
-  const [status, setStatus] = useState<'draft' | 'signed'>(existing?.status ?? 'draft')
+  const status: 'draft' | 'signed' = existing?.status ?? 'draft'
 
   const noteIdRef = useRef<string | null>(existing?.id ?? null)
   const baselineRef = useRef<SessionNoteInput>(formToInput(initialForm)) // what the server has (or, for a new note, the untouched form)

@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto'
 import type { Database } from '../db/database'
 import { type AuditEntry, audit } from '../lib/audit'
+import { sha256Hex } from '../lib/document-tokens'
 import { type Branding, type LogoType, normalizeBranding } from '../lib/branding'
 
 type Ctx = Pick<AuditEntry, 'actor' | 'ip' | 'userAgent'>
@@ -32,7 +32,7 @@ export class BrandingRepo {
   }
 
   async putLogo(type: LogoType, data: Buffer, ctx: Ctx): Promise<Branding> {
-    const version = createHash('sha256').update(data).digest('hex').slice(0, 8)
+    const version = sha256Hex(data).slice(0, 8)
     return this.db.transaction(async (tx) => {
       await tx.query(
         `INSERT INTO location_logos (location_id, content_type, data) VALUES ($1,$2,$3)

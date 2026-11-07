@@ -4,7 +4,8 @@ import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 
 
 /** A fresh link token. Only its sha256 is stored, so a database leak does not leak links. */
 export const newToken = (): string => randomBytes(32).toString('base64url')
-export const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex')
+export const sha256Hex = (s: string | Buffer): string => createHash('sha256').update(s).digest('hex')
+export const hashToken = sha256Hex
 /** Tokens are 43 base64url characters; anything else is rejected before touching the database. */
 export const looksLikeToken = (s: string): boolean => /^[A-Za-z0-9_-]{43}$/.test(s)
 
@@ -17,18 +18,16 @@ export const REQUEST_TTL_DAYS = 14
 /** Six digits, uniformly random. */
 export const newOtp = (): string => String(randomInt(0, 1_000_000)).padStart(6, '0')
 
-const sha = (s: string) => createHash('sha256').update(s).digest('hex')
-
 /** `salt:sha256(salt + code)`. A six-digit code has 10^6 values, so the salt and the attempt limit do the real work. */
 export function hashOtp(code: string, salt: string = randomBytes(8).toString('hex')): string {
-  return `${salt}:${sha(`${salt}:${code}`)}`
+  return `${salt}:${sha256Hex(`${salt}:${code}`)}`
 }
 
 export function checkOtp(code: string, stored: string | null): boolean {
   if (!stored || !/^\d{6}$/.test(code)) return false
   const [salt, hash] = stored.split(':')
   if (!salt || !hash) return false
-  const a = Buffer.from(sha(`${salt}:${code}`))
+  const a = Buffer.from(sha256Hex(`${salt}:${code}`))
   const b = Buffer.from(hash)
   return a.length === b.length && timingSafeEqual(a, b)
 }

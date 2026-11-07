@@ -1,6 +1,6 @@
 import type { Database } from '../db/database'
 import { type AuditEntry, audit } from '../lib/audit'
-import { type Contact, ContactsRepo } from '../repos/contacts-repo'
+import { ContactsRepo } from '../repos/contacts-repo'
 import { CustomValuesRepo } from '../repos/custom-values-repo'
 import { WorkflowActionsRepo } from '../repos/workflow-actions-repo'
 import {

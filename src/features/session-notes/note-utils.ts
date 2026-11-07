@@ -2,6 +2,7 @@ import type { SessionNote, SessionNoteInput } from '../../lib/api'
 import {
   MSE_DOMAIN_KEYS, MSE_DOMAIN_LABELS, type MseDomain, type RiskIssue, label, validateRiskForSign,
 } from '../../lib/clinical-vocab'
+import { PRACTICE_TZ, todayInPractice } from '../../lib/age'
 
 /** Everything in this file is pure (no React, no network): the rules the wizard and the report share. */
 
@@ -40,14 +41,12 @@ export function formatSessionDate(ymd: string): string {
 /** Practice-local date-time ("Nov 5, 2026, 2:03 PM AST"). */
 export function formatStamp(iso: string): string {
   return new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Puerto_Rico', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+    timeZone: PRACTICE_TZ, month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
   }).format(new Date(iso))
 }
 
 /** Today (YYYY-MM-DD) in Puerto Rico. */
-export function todayInPractice(now = new Date()): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Puerto_Rico', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now)
-}
+export { todayInPractice }
 
 // ---- risk presentation -----------------------------------------------------------------
 
