@@ -1,8 +1,9 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
-import type { ActionType, WorkflowActionInput } from '../../lib/api'
+import { type ActionType, type DocPacket, type Pipeline, type WorkflowActionInput, api } from '../../lib/api'
+import { useTenant } from '../../state/location'
 import { ACTIONS, actionMeta } from './automation-meta'
 
 const selectClass =
@@ -20,17 +21,41 @@ export function AddStepDialog({
   onCancel: () => void
   onAdd: (step: WorkflowActionInput) => void
 }) {
-  const [type, setType] = useState<ActionType>('send_sms')
+  const { current } = useTenant()
+  const loc = current?.id
+  const [type, setType] = useState<ActionType>('send_email')
   const [body, setBody] = useState('')
   const [subject, setSubject] = useState('')
   const [tag, setTag] = useState('')
   const [minutes, setMinutes] = useState('5')
+  const [pipelines, setPipelines] = useState<Pipeline[]>([])
+  const [packets, setPackets] = useState<DocPacket[]>([])
+  const [pipelineId, setPipelineId] = useState('')
+  const [stageId, setStageId] = useState('')
+  const [createIfMissing, setCreateIfMissing] = useState(true)
+  const [onlyForward, setOnlyForward] = useState(true)
+  const [packetId, setPacketId] = useState('')
+  const [taskTitle, setTaskTitle] = useState('')
+  const [taskDays, setTaskDays] = useState('')
+
+  // What the pickers offer: the practice's pipelines and its (adult) packets.
+  useEffect(() => {
+    if (!loc) return
+    let live = true
+    api.pipelines(loc).then((r) => live && setPipelines(r.pipelines)).catch(() => {})
+    api.documents.packets(loc).then((r) => live && setPackets(r.packets)).catch(() => {})
+    return () => { live = false }
+  }, [loc])
+  const stages = pipelines.find((p) => p.id === pipelineId)?.stages ?? []
 
   const valid =
     (type === 'send_sms' && body.trim().length > 0) ||
     (type === 'send_email' && subject.trim().length > 0 && body.trim().length > 0) ||
     (type === 'add_tag' && tag.trim().length > 0) ||
-    (type === 'wait' && Number(minutes) > 0)
+    (type === 'wait' && Number(minutes) > 0) ||
+    (type === 'move_to_stage' && pipelineId !== '' && stageId !== '') ||
+    (type === 'send_document_packet' && packetId !== '') ||
+    (type === 'create_task' && taskTitle.trim().length > 0)
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -40,6 +65,9 @@ export function AddStepDialog({
     else if (type === 'send_email') config = { subject: subject.trim(), body: body.trim() }
     else if (type === 'add_tag') config = { tag: tag.trim() }
     else if (type === 'wait') config = { minutes: Number(minutes) }
+    else if (type === 'move_to_stage') config = { pipelineId, stageId, createIfMissing, onlyForward }
+    else if (type === 'send_document_packet') config = { packetId }
+    else if (type === 'create_task') config = { title: taskTitle.trim(), ...(taskDays !== '' && Number(taskDays) >= 0 ? { dueInDays: Number(taskDays) } : {}) }
     onAdd({ type, config })
   }
 
@@ -114,6 +142,51 @@ export function AddStepDialog({
             </div>
           )}
 
+          {type === 'move_to_stage' && (
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor="step-pipeline">Pipeline</Label>
+                <select id="step-pipeline" className={selectClass} value={pipelineId} onChange={(e) => { setPipelineId(e.target.value); setStageId('') }}>
+                  <option value="">Choose a pipeline…</option>
+                  {pipelines.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <Label htmlFor="step-stage">Stage</Label>
+                <select id="step-stage" className={selectClass} value={stageId} disabled={!pipelineId} onChange={(e) => setStageId(e.target.value)}>
+                  <option value="">Choose a stage…</option>
+                  {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={createIfMissing} onChange={(e) => setCreateIfMissing(e.target.checked)} /> Create the card if the client has none</label>
+              <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={onlyForward} onChange={(e) => setOnlyForward(e.target.checked)} /> Only move forward (never back)</label>
+            </div>
+          )}
+
+          {type === 'send_document_packet' && (
+            <div>
+              <Label htmlFor="step-packet">Packet</Label>
+              <select id="step-packet" className={selectClass} value={packetId} onChange={(e) => setPacketId(e.target.value)}>
+                <option value="">Choose a packet…</option>
+                {packets.filter((p) => p.audience === 'adult').map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <p className="mt-1.5 text-xs text-slate-500">Emails the signing link to the client. Adult packets only: a minor's packet needs a guardian, so it is sent by hand. It is skipped if the client has no email or date of birth, or was already sent this packet.</p>
+            </div>
+          )}
+
+          {type === 'create_task' && (
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor="step-task">Task title</Label>
+                <Input id="step-task" value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} placeholder="Schedule first appointment with {{contact.first_name}}" autoFocus />
+              </div>
+              <div>
+                <Label htmlFor="step-days">Due in (days, optional)</Label>
+                <Input id="step-days" type="number" min={0} value={taskDays} onChange={(e) => setTaskDays(e.target.value)} />
+              </div>
+            </div>
+          )}
+
           {type === 'wait' && (
             <div>
               <Label htmlFor="step-minutes">Wait (minutes)</Label>
@@ -124,6 +197,7 @@ export function AddStepDialog({
                 value={minutes}
                 onChange={(e) => setMinutes(e.target.value)}
               />
+              <p className="mt-1.5 text-xs text-amber-700">Waits longer than a few hours may be lost if the server restarts.</p>
             </div>
           )}
         </div>

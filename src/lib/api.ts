@@ -5,10 +5,22 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** The parsed JSON error body, when there was one (e.g. `{ error: 'risk_incomplete', missing: [...] }`). */
+    public body?: unknown,
   ) {
     super(message)
     this.name = 'ApiError'
   }
+}
+
+/** `?a=1&b=2` from the defined, non-empty entries (or ''). */
+function qs(params: object): string {
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(params as Record<string, unknown>)) {
+    if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
+  }
+  const s = q.toString()
+  return s ? `?${s}` : ''
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -17,15 +29,20 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
     ...init,
   })
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    window.dispatchEvent(new Event('ol:unauthorized'))
+  }
   if (!res.ok) {
     let message = `request failed (${res.status})`
+    let body: unknown
     try {
       const data = (await res.json()) as { error?: string }
+      body = data
       if (data.error) message = data.error
     } catch {
       /* non-JSON error body — keep the status message */
     }
-    throw new ApiError(res.status, message)
+    throw new ApiError(res.status, message, body)
   }
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
@@ -47,6 +64,179 @@ export interface Location {
   client_slug: string | null
   branding: Record<string, unknown>
   settings: Record<string, unknown>
+  /** Modules turned on for this location (nav + route gating). */
+  enabledModules?: string[]
+}
+
+export interface PracticeProfile {
+  name: string
+  therapist: string
+  license: string
+  address: string
+  phone: string
+  email: string
+  fees: { session: string; intake: string; late_cancel: string }
+  policy: { cancel_hours: string }
+}
+
+export interface AuditEntry {
+  seq: number
+  occurredAt: string
+  actorType: 'operator' | 'client' | 'system' | 'workflow'
+  actorId: string | null
+  actorName: string | null
+  action: string
+  entityType: string
+  entityId: string | null
+  contactId: string | null
+  contactName: string | null
+  details: Record<string, unknown>
+  ip: string | null
+}
+
+export interface AuditFilters {
+  from?: string
+  to?: string
+  contactId?: string
+  category?: string
+  actorType?: string
+}
+
+export interface AuditVerification {
+  ok: boolean
+  count: number
+  brokenAtSeq: number | null
+}
+
+export type RiskIssue = 'risk_suicidal' | 'risk_self_harm' | 'risk_harm_others' | 'risk_level' | 'risk_notes' | 'risk_actions'
+
+export interface NoteLock {
+  locked: boolean
+  locksAt: string
+  /** Time left in the 72 h edit window, by the database clock. */
+  msRemaining: number
+}
+
+export interface SessionNote {
+  id: string
+  contact_id: string
+  appointment_id: string | null
+  /** YYYY-MM-DD */
+  session_date: string
+  start_time: string | null
+  duration_min: number | null
+  modality: string
+  session_type: string
+  data_subjective: string | null
+  data_objective: string | null
+  assessment: string | null
+  plan: string | null
+  mse: Record<string, { values: string[]; note?: string } | string>
+  mood_rating: number | null
+  risk_suicidal: string | null
+  risk_self_harm: string | null
+  risk_harm_others: string | null
+  risk_level: string | null
+  risk_factors: string[]
+  protective_factors: string[]
+  risk_actions: string[]
+  risk_notes: string | null
+  interventions: string[]
+  diagnosis_codes: string[]
+  status: 'draft' | 'signed'
+  signed_at: string | null
+  signed_by: string | null
+  /** Display name of the signer (only on the single-note view). */
+  signed_by_name?: string | null
+  signed_late: boolean
+  created_by: string
+  created_by_name?: string | null
+  created_at: string
+  updated_at: string
+  locks_at: string
+  deleted_at: string | null
+  lock: NoteLock
+}
+
+/** A note without its clinical text (lists, risk summary, "locking soon"). */
+export interface SessionNoteSummary {
+  id: string
+  contact_id: string
+  contact_name: string | null
+  appointment_id: string | null
+  session_date: string
+  session_type: string
+  modality: string
+  status: 'draft' | 'signed'
+  signed_late: boolean
+  risk_level: string | null
+  created_at: string
+  updated_at: string
+  locks_at: string
+  deleted_at: string | null
+  delete_reason: string | null
+  lock: NoteLock
+}
+
+export interface NoteAddendum {
+  id: string
+  note_id: string
+  body: string
+  author: string
+  author_name: string | null
+  created_at: string
+}
+
+export interface NoteRevisionMeta {
+  revision: number
+  kind: 'create' | 'update' | 'autosave' | 'sign' | 'delete'
+  changed_by: string
+  changed_by_name: string | null
+  changed_at: string
+  change_reason: string | null
+}
+
+/** Editable fields of a note (request body, camelCase). All optional on update. */
+export interface SessionNoteInput {
+  appointmentId?: string | null
+  sessionDate?: string
+  startTime?: string | null
+  durationMin?: number | null
+  modality?: string
+  sessionType?: string
+  dataSubjective?: string | null
+  dataObjective?: string | null
+  assessment?: string | null
+  plan?: string | null
+  mse?: Record<string, unknown>
+  moodRating?: number | null
+  riskSuicidal?: string | null
+  riskSelfHarm?: string | null
+  riskHarmOthers?: string | null
+  riskLevel?: string | null
+  riskFactors?: string[]
+  protectiveFactors?: string[]
+  riskActions?: string[]
+  riskNotes?: string | null
+  interventions?: string[]
+  diagnosisCodes?: string[]
+}
+
+export interface SessionWithoutNote {
+  appointment_id: string
+  title: string
+  starts_at: string
+  status: string
+  contact_id: string
+  contact_name: string | null
+}
+
+export interface ElevatedRiskClient {
+  contact_id: string
+  contact_name: string | null
+  risk_level: string
+  session_date: string
+  note_id: string
 }
 
 export interface Contact {
@@ -164,7 +354,7 @@ export interface PaymentsSettingsPatch {
 }
 
 /** Which outbound providers carry this location's campaigns (Module 49). */
-export type EmailProvider = 'brevo' | 'none'
+export type EmailProvider = 'brevo' | 'ses' | 'none'
 export type SmsProvider = 'twilio' | 'none'
 
 /** Honest per-channel readout: connected only when the chosen provider's keys
@@ -419,6 +609,8 @@ export interface Opportunity {
   assignee: string | null
   created_at: string
   updated_at: string
+  /** Who moved the card last (from the audit trail), when it has been moved. */
+  lastMove?: { by: 'operator' | 'workflow' | 'client' | 'system'; label: string | null; at: string } | null
 }
 
 export interface NewOpportunity {
@@ -430,7 +622,7 @@ export interface NewOpportunity {
   source?: string | null
 }
 
-export type AppointmentStatus = 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+export type AppointmentStatus = 'scheduled' | 'confirmed' | 'checked_in' | 'completed' | 'cancelled' | 'no_show'
 
 /** One weekly open window in the calendar's timezone (weekday 0=Sun, 'HH:MM'
  *  wall clock). Mirrors AvailabilityWindow in the server's lib/availability. */
@@ -500,6 +692,7 @@ export interface Appointment {
   starts_at: string
   ends_at: string
   status: AppointmentStatus
+  checked_in_at?: string | null
   location_text: string | null
   notes: string | null
 }
@@ -575,7 +768,12 @@ export type TriggerType =
   | 'trigger_link_clicked'
   | 'survey_submitted'
   | 'proposal_signed'
-export type ActionType = 'send_sms' | 'send_email' | 'add_tag' | 'wait'
+  | 'pipeline_stage_changed'
+  | 'session_note_signed'
+  | 'appointment_checked_in'
+  | 'documents_completed'
+  | 'document_signed'
+export type ActionType = 'send_sms' | 'send_email' | 'add_tag' | 'wait' | 'move_to_stage' | 'send_document_packet' | 'create_task'
 export type WorkflowStatus = 'draft' | 'live'
 
 export interface Workflow {
@@ -1807,6 +2005,135 @@ export interface NewReferral {
 
 // ---- Endpoints ----
 
+
+// ---- Documents (day 5) ----
+
+export type DocFieldType =
+  | 'text' | 'textarea' | 'email' | 'phone' | 'date' | 'number' | 'select' | 'radio'
+  | 'checkbox' | 'checkbox_group' | 'yes_no' | 'initials' | 'heading' | 'paragraph'
+export type SignerRole = 'client' | 'guardian' | 'minor'
+
+export interface DocTemplateField {
+  key: string
+  type: DocFieldType
+  label: string
+  help?: string
+  required?: boolean
+  options?: { value: string; label: string }[]
+  showIf?: { key: string; equals: string | boolean }
+  mapsTo?: string
+  signerRole?: SignerRole
+}
+
+export interface DocTemplate {
+  id: string
+  familyId: string
+  translationGroupId: string
+  locale: 'es' | 'en'
+  version: number
+  status: 'draft' | 'active' | 'retired'
+  kind: 'agreement' | 'intake_form'
+  title: string
+  bodyMd: string
+  fields: DocTemplateField[]
+  signature: { required: boolean; drawn: boolean }
+  signerRoles: SignerRole[]
+  createdAt: string
+  updatedAt: string
+  activatedAt: string | null
+}
+export type DocTemplateSummary = Omit<DocTemplate, 'bodyMd' | 'fields'> & { activeVersion: number | null; fieldCount: number }
+export type DocTemplateInput = Partial<Pick<DocTemplate, 'title' | 'kind' | 'bodyMd' | 'fields' | 'signature' | 'signerRoles' | 'locale'>>
+
+export interface DocPacket {
+  id: string
+  name: string
+  description: string | null
+  familyIds: string[]
+  audience: 'adult' | 'adolescent'
+  archivedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+export interface DocPacketItem { familyId: string; templateId: string; title: string; version: number; status: string; active: boolean }
+export interface DocMeta { mergeFields: { token: string; label: string }[]; fieldTypes: DocFieldType[] }
+
+export type DocRequestStatus = 'sent' | 'in_progress' | 'completed' | 'expired' | 'voided'
+export interface DocRequestSigner {
+  id: string
+  role: SignerRole
+  name: string
+  email: string
+  status: 'pending' | 'viewed' | 'in_progress' | 'completed'
+  verifiedAt: string | null
+  firstViewedAt: string | null
+  completedAt: string | null
+  locked: boolean
+}
+export interface DocRequestDocument {
+  templateId: string
+  familyId: string
+  title: string
+  version: number
+  signerId: string | null
+  signerRole: SignerRole | null
+  signedDocumentId: string | null
+  signedAt: string | null
+}
+export interface DocRequest {
+  id: string
+  contactId: string
+  contactName: string | null
+  packetId: string | null
+  packetName: string
+  audience: 'adult' | 'adolescent'
+  status: DocRequestStatus
+  sentAt: string
+  expiresAt: string
+  completedAt: string | null
+  voidedAt: string | null
+  voidReason: string | null
+  needsReview: string | null
+  signers: DocRequestSigner[]
+  documents: DocRequestDocument[]
+}
+export interface SentSigner { id: string; role: SignerRole; name: string; email: string; link: string; emailed: boolean; emailIssue: string | null }
+export interface SignedDocSummary {
+  id: string
+  requestId: string
+  contactId: string
+  signerRole: SignerRole
+  signerName: string
+  templateId: string
+  templateTitle: string
+  templateVersion: number
+  locale: 'es' | 'en'
+  signedAt: string
+  contentSha256: string
+}
+export interface SignedDoc extends SignedDocSummary { renderedHtml: string; fieldValues: Record<string, unknown>; signerIp: string; verifiedVia: string; intact: boolean }
+
+export interface ClientInvite {
+  id: string
+  kind: 'adult' | 'guardian'
+  name: string
+  email: string
+  status: 'sent' | 'completed' | 'expired' | 'voided'
+  sentAt: string
+  expiresAt: string
+  openedAt: string | null
+  completedAt: string | null
+  contactId: string | null
+}
+export interface InviteSendResult { ok: true; invite: ClientInvite; link: string; emailed: boolean; emailIssue: string | null }
+
+export interface Branding {
+  name: string | null
+  color: string | null
+  logoVersion: string | null
+  logoUrl: string | null
+}
+
 export const api = {
   login: (email: string, password: string) =>
     req<{ ok: true; operator: Operator }>('/auth/login', {
@@ -1818,11 +2145,111 @@ export const api = {
 
   locations: () => req<{ locations: Location[] }>('/locations'),
 
+  auditLog: (loc: string, filters: AuditFilters & { before?: number; limit?: number } = {}) =>
+    req<{ entries: AuditEntry[]; nextBefore: number | null }>(`/loc/${loc}/audit${qs(filters)}`),
+  auditVerify: (loc: string) => req<AuditVerification>(`/loc/${loc}/audit/verify`),
+  /** A same-origin URL the browser can navigate to (it carries the session cookie). */
+  auditExportUrl: (loc: string, filters: AuditFilters = {}) => `/api/loc/${loc}/audit/export.csv${qs(filters)}`,
+
+  branding: {
+    get: (loc: string) => req<{ branding: Branding }>(`/loc/${loc}/branding`),
+    save: (loc: string, input: { name?: string | null; color?: string | null }) =>
+      req<{ ok: true; branding: Branding }>(`/loc/${loc}/branding`, { method: 'PUT', body: JSON.stringify(input) }),
+    uploadLogo: (loc: string, dataUrl: string) =>
+      req<{ ok: true; branding: Branding }>(`/loc/${loc}/branding/logo`, { method: 'PUT', body: JSON.stringify({ dataUrl }) }),
+    removeLogo: (loc: string) => req<{ ok: true; branding: Branding }>(`/loc/${loc}/branding/logo`, { method: 'DELETE' }),
+  },
+
+  invites: {
+    list: (loc: string) => req<{ invites: ClientInvite[] }>(`/loc/${loc}/invites`),
+    create: (loc: string, input: { name: string; email: string; kind: 'adult' | 'guardian' }) =>
+      req<InviteSendResult>(`/loc/${loc}/invites`, { method: 'POST', body: JSON.stringify(input) }),
+    resend: (loc: string, id: string) => req<InviteSendResult>(`/loc/${loc}/invites/${id}/resend`, { method: 'POST' }),
+    void: (loc: string, id: string) => req<{ ok: true }>(`/loc/${loc}/invites/${id}/void`, { method: 'POST' }),
+  },
+
+  documents: {
+    meta: (loc: string) => req<DocMeta>(`/loc/${loc}/documents/meta`),
+    templates: (loc: string) => req<{ templates: DocTemplateSummary[] }>(`/loc/${loc}/documents/templates`),
+    template: (loc: string, id: string) => req<{ template: DocTemplate }>(`/loc/${loc}/documents/templates/${id}`),
+    history: (loc: string, familyId: string) => req<{ versions: DocTemplate[] }>(`/loc/${loc}/documents/templates/families/${familyId}`),
+    create: (loc: string, input: DocTemplateInput & { title: string; kind: DocTemplate['kind'] }) =>
+      req<{ ok: true; template: DocTemplate }>(`/loc/${loc}/documents/templates`, { method: 'POST', body: JSON.stringify(input) }),
+    update: (loc: string, id: string, input: DocTemplateInput) =>
+      req<{ ok: true; template: DocTemplate }>(`/loc/${loc}/documents/templates/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    newVersion: (loc: string, id: string) => req<{ ok: true; template: DocTemplate }>(`/loc/${loc}/documents/templates/${id}/new-version`, { method: 'POST' }),
+    activate: (loc: string, id: string) =>
+      req<{ ok: true; template: DocTemplate; retiredVersion: number | null }>(`/loc/${loc}/documents/templates/${id}/activate`, { method: 'POST' }),
+    retire: (loc: string, id: string) => req<{ ok: true; template: DocTemplate }>(`/loc/${loc}/documents/templates/${id}/retire`, { method: 'POST' }),
+    preview: (loc: string, id: string, contactId?: string) =>
+      req<{ html: string }>(`/loc/${loc}/documents/templates/${id}/preview`, { method: 'POST', body: JSON.stringify({ contactId }) }),
+    packets: (loc: string, includeArchived = false) =>
+      req<{ packets: (DocPacket & { inactiveFamilyIds: string[] })[] }>(`/loc/${loc}/documents/packets${qs({ includeArchived: includeArchived ? 'true' : undefined })}`),
+    packet: (loc: string, id: string) => req<{ packet: DocPacket; documents: DocPacketItem[] }>(`/loc/${loc}/documents/packets/${id}`),
+    createPacket: (loc: string, input: { name: string; description?: string | null; familyIds: string[]; audience: DocPacket['audience'] }) =>
+      req<{ ok: true; packet: DocPacket }>(`/loc/${loc}/documents/packets`, { method: 'POST', body: JSON.stringify(input) }),
+    updatePacket: (loc: string, id: string, input: Partial<{ name: string; description: string | null; familyIds: string[]; audience: DocPacket['audience']; archived: boolean }>) =>
+      req<{ ok: true; packet: DocPacket }>(`/loc/${loc}/documents/packets/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    previewPacket: (loc: string, id: string, contactId?: string) =>
+      req<{ html: string }>(`/loc/${loc}/documents/packets/${id}/preview`, { method: 'POST', body: JSON.stringify({ contactId }) }),
+    requests: (loc: string, filters: { contactId?: string; status?: DocRequestStatus } = {}) =>
+      req<{ requests: DocRequest[] }>(`/loc/${loc}/documents/requests${qs(filters)}`),
+    sendPacket: (loc: string, input: { contactId: string; packetId: string; excludeFamilyIds: string[]; signers: { role: SignerRole; name: string; email: string }[] }) =>
+      req<{ ok: true; request: DocRequest; signers: SentSigner[]; warnings: string[] }>(`/loc/${loc}/documents/requests`, { method: 'POST', body: JSON.stringify(input) }),
+    resend: (loc: string, requestId: string, signerId: string) =>
+      req<{ ok: true; signer: { id: string; role: SignerRole; link: string; emailed: boolean; emailIssue: string | null } }>(`/loc/${loc}/documents/requests/${requestId}/resend`, { method: 'POST', body: JSON.stringify({ signerId }) }),
+    voidRequest: (loc: string, requestId: string, reason: string) =>
+      req<{ ok: true }>(`/loc/${loc}/documents/requests/${requestId}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    acceptReview: (loc: string, requestId: string) => req<{ ok: true }>(`/loc/${loc}/documents/requests/${requestId}/accept-review`, { method: 'POST' }),
+    signedList: (loc: string, contactId: string) => req<{ documents: SignedDocSummary[] }>(`/loc/${loc}/documents/signed${qs({ contactId })}`),
+    signed: (loc: string, id: string) => req<{ document: SignedDoc }>(`/loc/${loc}/documents/signed/${id}`),
+  },
+
+  sessionNotes: {
+    list: (loc: string, contactId: string, includeDeleted = false) =>
+      req<{ notes: SessionNoteSummary[] }>(`/loc/${loc}/session-notes${qs({ contactId, includeDeleted: includeDeleted ? 'true' : undefined })}`),
+    get: (loc: string, id: string) =>
+      req<{ note: SessionNote; addenda: NoteAddendum[]; revisionCount: number; lock: NoteLock }>(`/loc/${loc}/session-notes/${id}`),
+    create: (loc: string, input: SessionNoteInput & { contactId: string; sessionDate: string }) =>
+      req<{ ok: true; note: SessionNote }>(`/loc/${loc}/session-notes`, { method: 'POST', body: JSON.stringify(input) }),
+    /** `autosave` for the editor's background save (drafts only); `changeReason` is required once the note is signed. */
+    update: (loc: string, id: string, input: SessionNoteInput & { autosave?: boolean; changeReason?: string }) =>
+      req<{ ok: true; note: SessionNote; changed: string[] }>(`/loc/${loc}/session-notes/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    /** A 422 `risk_incomplete` carries `missing` (see ApiError.body). */
+    sign: (loc: string, id: string) => req<{ ok: true; note: SessionNote; late: boolean }>(`/loc/${loc}/session-notes/${id}/sign`, { method: 'POST' }),
+    remove: (loc: string, id: string, reason: string) =>
+      req<void>(`/loc/${loc}/session-notes/${id}`, { method: 'DELETE', body: JSON.stringify({ reason }) }),
+    addAddendum: (loc: string, id: string, body: string) =>
+      req<{ ok: true; addendum: NoteAddendum }>(`/loc/${loc}/session-notes/${id}/addenda`, { method: 'POST', body: JSON.stringify({ body }) }),
+    revisions: (loc: string, id: string) => req<{ revisions: NoteRevisionMeta[] }>(`/loc/${loc}/session-notes/${id}/revisions`),
+    revision: (loc: string, id: string, revision: number) =>
+      req<{ revision: NoteRevisionMeta & { snapshot: Record<string, unknown> } }>(`/loc/${loc}/session-notes/${id}/revisions/${revision}`),
+    printed: (loc: string, id: string) => req<void>(`/loc/${loc}/session-notes/${id}/printed`, { method: 'POST' }),
+    /** The level of the client's latest signed note (null until one is signed). */
+    latestRisk: (loc: string, contactId: string) =>
+      req<{ risk: { risk_level: string; session_date: string; note_id: string } | null }>(`/loc/${loc}/session-notes/risk/latest${qs({ contactId })}`),
+    /** Sessions that took place recently and still have no note. */
+    withoutNote: (loc: string, days = 3) =>
+      req<{ sessions: SessionWithoutNote[] }>(`/loc/${loc}/session-notes/without-note${qs({ days })}`),
+    elevatedRisk: (loc: string) => req<{ elevated: ElevatedRiskClient[] }>(`/loc/${loc}/session-notes/risk/summary`),
+    lockingSoon: (loc: string, hours = 24) => req<{ notes: SessionNoteSummary[] }>(`/loc/${loc}/session-notes/locking-soon${qs({ hours })}`),
+  },
+
+  practice: (loc: string) => req<{ practice: PracticeProfile }>(`/loc/${loc}/practice`),
+  savePractice: (loc: string, practice: PracticeProfile) =>
+    req<{ ok: true; practice: PracticeProfile }>(`/loc/${loc}/practice`, {
+      method: 'PUT',
+      body: JSON.stringify(practice),
+    }),
+
   contacts: (loc: string) => req<{ contacts: Contact[] }>(`/loc/${loc}/contacts`),
   // Operator adds a contact by hand. A phone/email that already belongs to a
   // contact resolves to THAT record (no duplicate), so the caller navigates to
   // whatever comes back rather than assuming a brand-new row.
-  createContact: (loc: string, input: { name?: string; phone?: string; email?: string }) =>
+  createContact: (
+    loc: string,
+    input: { name?: string; phone?: string; email?: string; dateOfBirth?: string; skipOnboarding?: boolean },
+  ) =>
     req<{ ok: true; contact: Contact }>(`/loc/${loc}/contacts`, {
       method: 'POST',
       body: JSON.stringify(input),
@@ -2006,6 +2433,9 @@ export const api = {
       body: JSON.stringify(patch),
     }),
   sendingSettings: (loc: string) => req<SendingSettings>(`/loc/${loc}/settings/sending`),
+  /** Sends one fixed test message to `to`; `reason` says why not when the connection is not working. */
+  sendTestEmail: (loc: string, to: string) =>
+    req<{ ok: boolean; reason?: string }>(`/loc/${loc}/settings/sending/test`, { method: 'POST', body: JSON.stringify({ to }) }),
   updateSendingSettings: (loc: string, patch: SendingSettingsPatch) =>
     req<{ ok: true } & SendingSettings>(`/loc/${loc}/settings/sending`, {
       method: 'PATCH',
@@ -2168,6 +2598,9 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ startsAt, endsAt }),
     }),
+  /** Front-desk check-in: scheduled/confirmed -> checked_in. A second tap is a harmless no-op. */
+  checkInAppointment: (loc: string, id: string) =>
+    req<{ ok: true; appointment: Appointment; changed: boolean }>(`/loc/${loc}/calendars/appointments/${id}/check-in`, { method: 'POST' }),
   setAppointmentStatus: (loc: string, id: string, status: AppointmentStatus) =>
     req<{ ok: true; appointment: Appointment }>(`/loc/${loc}/calendars/appointments/${id}`, {
       method: 'PATCH',

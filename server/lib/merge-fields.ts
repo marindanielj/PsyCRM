@@ -42,6 +42,7 @@ export function renderTemplate(
   body: string,
   contact: MergeContact | null,
   customValues: Record<string, string> = {},
+  event: Record<string, string> = {},
 ): string {
   const values: Record<string, string> = {
     first_name: contact?.first_name ?? '',
@@ -57,8 +58,12 @@ export function renderTemplate(
     const key = rawKey.toLowerCase()
     const dot = key.indexOf('.')
     if (dot !== -1) {
-      if (key.slice(0, dot) !== 'custom_values') return match // unknown namespace
+      const ns = key.slice(0, dot)
       const vKey = key.slice(dot + 1)
+      // {{contact.first_name}} is the same as {{first_name}}; {{event.*}} reads the trigger's payload.
+      if (ns === 'contact') return vKey in values ? values[vKey]! : match
+      if (ns === 'event') return vKey in event ? event[vKey]! : match
+      if (ns !== 'custom_values') return match // unknown namespace
       return vKey in customValues ? customValues[vKey]! : match // unknown value -> as-is
     }
     return key in values ? values[key]! : match // unknown contact token -> as-is

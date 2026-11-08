@@ -104,3 +104,31 @@ describe('resolveSmsSender', () => {
     expect(await resolveSmsSender(db, 'nope')).toEqual({ ok: false, reason: 'location not found' })
   })
 })
+
+describe('resolveEmailSender with Amazon SES', () => {
+  it('builds an SES sender from the practice sender when the practice chose SES', async () => {
+    const r = await resolveEmailSender(dbWithLocation({ sending: { emailProvider: 'ses', fromEmail: 'no-reply@consultorio.example', fromName: 'Consultorio' } }), 'locA', {})
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.sender.name).toBe('ses')
+  })
+
+  it("falls back to the deployment's verified sender (SES_FROM_ADDRESS) when the practice sets none", async () => {
+    const r = await resolveEmailSender(dbWithLocation({ sending: { emailProvider: 'ses' } }), 'locA', { SES_FROM_ADDRESS: 'no-reply@platform.example' })
+    expect(r.ok).toBe(true)
+  })
+
+  it('needs no API key: there is nothing to look up in the vault', async () => {
+    delete process.env.ACME_SES_API_KEY
+    const r = await resolveEmailSender(dbWithLocation({ sending: { emailProvider: 'ses', fromEmail: 'no-reply@consultorio.example' } }), 'locA', {})
+    expect(r.ok).toBe(true)
+  })
+
+  it('says so when there is no sender anywhere, or the sender is not a real address', async () => {
+    expect(await resolveEmailSender(dbWithLocation({ sending: { emailProvider: 'ses' } }), 'locA', {})).toEqual({ ok: false, reason: 'sender email is not configured' })
+    expect(await resolveEmailSender(dbWithLocation({ sending: { emailProvider: 'ses', fromEmail: 'x, y@evil.example' } }), 'locA', {})).toEqual({ ok: false, reason: 'sender email is not valid' })
+  })
+
+  it('a practice that chose "none" is not switched to SES by the deployment default', async () => {
+    expect(await resolveEmailSender(dbWithLocation({ sending: { emailProvider: 'none' } }), 'locA', { SES_FROM_ADDRESS: 'no-reply@platform.example' })).toEqual({ ok: false, reason: 'no email provider connected' })
+  })
+})

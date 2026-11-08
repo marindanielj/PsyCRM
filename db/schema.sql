@@ -1094,3 +1094,525 @@ CREATE UNIQUE INDEX IF NOT EXISTS push_tokens_token_unique
   ON push_tokens(token);
 CREATE INDEX IF NOT EXISTS push_tokens_by_operator
   ON push_tokens(operator_id);
+
+-- =============================================================================
+-- PsyCRM audit log (day 2). Append-only, tamper-evident record of who did what to
+-- which client and when. Enforced IN THE DATABASE, not just the app:
+--   * BEFORE INSERT chains every row to the previous one of the same location
+--     (hash of the previous row's hash + this row's content), under an advisory
+--     lock so concurrent writers cannot fork the chain, and stamps occurred_at
+--     itself (a caller can never backdate a row);
+--   * BEFORE UPDATE/DELETE/TRUNCATE are rejected;
+--   * location_id is ON DELETE RESTRICT (a location with history cannot vanish);
+--   * contact_id has no foreign key on purpose, so the log outlives any contact.
+-- The chain is ordered by chain_seq (assigned inside the lock), NOT by the bigserial
+-- id: a sequence value is taken before the trigger runs, so id order can differ
+-- from chain order under concurrency.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id           bigserial PRIMARY KEY,
+  location_id  text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  chain_seq    bigint NOT NULL DEFAULT 0,
+  occurred_at  timestamptz NOT NULL DEFAULT now(),
+  actor_type   text NOT NULL CHECK (actor_type IN ('operator','client','system','workflow')),
+  actor_id     text,
+  actor_label  text,
+  action       text NOT NULL,
+  entity_type  text NOT NULL,
+  entity_id    text,
+  contact_id   text,
+  details      jsonb NOT NULL DEFAULT '{}',
+  ip           text,
+  user_agent   text,
+  prev_hash    text,
+  row_hash     text NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS audit_chain ON audit_log(location_id, chain_seq);
+CREATE INDEX IF NOT EXISTS audit_by_time ON audit_log(location_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS audit_by_contact ON audit_log(location_id, contact_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS audit_by_entity ON audit_log(location_id, entity_type, entity_id);
+
+-- The one definition of a row's hash, shared by the trigger and the verifier.
+-- The timestamp is rendered in UTC with a fixed format so the hash never depends
+-- on a session's TimeZone setting.
+CREATE OR REPLACE FUNCTION audit_row_hash(
+  prev text, loc text, seq bigint, at timestamptz, a_type text, a_id text,
+  act text, e_type text, e_id text, c_id text, det jsonb
+) RETURNS text AS $$
+  SELECT encode(sha256(convert_to(
+    coalesce(prev, '') || '|' || loc || '|' || seq::text || '|' ||
+    to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') || '|' ||
+    a_type || '|' || coalesce(a_id, '') || '|' || act || '|' || e_type || '|' ||
+    coalesce(e_id, '') || '|' || coalesce(c_id, '') || '|' || det::text, 'UTF8')), 'hex')
+$$ LANGUAGE sql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION audit_log_chain() RETURNS trigger AS $$
+DECLARE
+  last_hash text;
+  last_seq bigint;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('audit:' || NEW.location_id));
+  SELECT row_hash, chain_seq INTO last_hash, last_seq
+    FROM audit_log WHERE location_id = NEW.location_id
+    ORDER BY chain_seq DESC LIMIT 1;
+  NEW.chain_seq   := coalesce(last_seq, 0) + 1;
+  NEW.prev_hash   := last_hash;
+  NEW.occurred_at := clock_timestamp();
+  NEW.row_hash    := audit_row_hash(NEW.prev_hash, NEW.location_id, NEW.chain_seq, NEW.occurred_at,
+                       NEW.actor_type, NEW.actor_id, NEW.action, NEW.entity_type, NEW.entity_id,
+                       NEW.contact_id, NEW.details);
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS audit_log_chain ON audit_log;
+CREATE TRIGGER audit_log_chain BEFORE INSERT ON audit_log
+  FOR EACH ROW EXECUTE FUNCTION audit_log_chain();
+
+-- Generic "this table is append-only" guard; reused by later days' tables.
+CREATE OR REPLACE FUNCTION reject_mutation() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = 'P0001';
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS audit_log_immutable ON audit_log;
+CREATE TRIGGER audit_log_immutable BEFORE UPDATE OR DELETE ON audit_log
+  FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS audit_log_no_truncate ON audit_log;
+CREATE TRIGGER audit_log_no_truncate BEFORE TRUNCATE ON audit_log
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
+
+-- Recompute the whole chain for one location. Returns NULL when intact, otherwise
+-- the chain_seq of the FIRST broken row (content changed, link broken, or a gap).
+-- Cannot detect rows removed from the very end of the log; the immutability
+-- triggers (and revoking TRUNCATE/DELETE from the app role) cover that.
+CREATE OR REPLACE FUNCTION audit_log_verify(loc text) RETURNS bigint AS $$
+  SELECT min(chain_seq) FROM (
+    SELECT chain_seq, prev_hash, row_hash,
+           lag(row_hash)  OVER w AS expected_prev,
+           lag(chain_seq) OVER w AS prev_seq,
+           audit_row_hash(prev_hash, location_id, chain_seq, occurred_at, actor_type, actor_id,
+                          action, entity_type, entity_id, contact_id, details) AS recomputed
+    FROM audit_log WHERE location_id = loc
+    WINDOW w AS (ORDER BY chain_seq)
+  ) t
+  WHERE recomputed <> row_hash
+     OR prev_hash IS DISTINCT FROM expected_prev
+     OR (prev_seq IS NOT NULL AND chain_seq <> prev_seq + 1)
+     OR (prev_seq IS NULL AND chain_seq <> 1)
+$$ LANGUAGE sql STABLE;
+
+-- =============================================================================
+-- PsyCRM session notes (day 3): DAP progress notes with a mental status exam and a
+-- MANDATORY risk assessment. The rules that protect a clinical record live in the
+-- database, so a bug in the app (or a hand-run SQL statement) cannot bypass them:
+--   * a note is editable for 72 h from creation, then frozen: no edit, no delete;
+--   * a note is never physically deleted — "delete" is a soft delete with a reason,
+--     allowed only inside the 72 h window;
+--   * a note cannot be signed without a complete risk assessment (CHECKs below);
+--   * EVERY change (create, edit, autosave, sign, delete) leaves a full snapshot in
+--     session_note_revisions, written by a trigger, attributed to the person who
+--     made it (a change with no attributed actor is rejected);
+--   * after the window the only way to add to a note is an addendum, append-only.
+-- Callers must run each write inside a transaction that first sets the actor:
+--   SELECT set_config('psycrm.actor', '<operator id>', true);
+-- and may set 'psycrm.change_kind' ('update' | 'autosave') and
+-- 'psycrm.change_reason' the same way.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS session_notes (
+  id              text PRIMARY KEY,
+  location_id     text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id      text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  -- RESTRICT (not SET NULL): an appointment tied to a clinical note must not vanish,
+  -- and a SET NULL would try to UPDATE a possibly frozen note.
+  appointment_id  text REFERENCES appointments(id) ON DELETE RESTRICT,
+  session_date    date NOT NULL,
+  start_time      time,
+  duration_min    int CHECK (duration_min BETWEEN 1 AND 600),
+  modality        text NOT NULL DEFAULT 'in_person'
+                  CONSTRAINT session_notes_modality CHECK (modality IN ('in_person','telehealth_video','phone')),
+  session_type    text NOT NULL DEFAULT 'individual'
+                  CONSTRAINT session_notes_type CHECK (session_type IN ('intake','individual','couple','family','crisis','collateral')),
+  -- DAP
+  data_subjective text,
+  data_objective  text,
+  assessment      text,
+  plan            text,
+  -- mental status exam (validated against the vocabulary by the API)
+  mse             jsonb NOT NULL DEFAULT '{}',
+  mood_rating     smallint CHECK (mood_rating BETWEEN 1 AND 10),
+  -- risk assessment: three dimensions + overall level, each an explicit answer
+  risk_suicidal       text CONSTRAINT session_notes_risk_si CHECK (risk_suicidal IS NULL OR risk_suicidal IN ('denied','passive','active_no_plan','active_plan','active_plan_intent')),
+  risk_self_harm      text CONSTRAINT session_notes_risk_sh CHECK (risk_self_harm IS NULL OR risk_self_harm IN ('denied','history','urges','recent','current')),
+  risk_harm_others    text CONSTRAINT session_notes_risk_hi CHECK (risk_harm_others IS NULL OR risk_harm_others IN ('denied','ideation','ideation_plan','intent')),
+  risk_level          text CONSTRAINT session_notes_risk_level CHECK (risk_level IS NULL OR risk_level IN ('low','moderate','high','imminent')),
+  risk_factors        text[] NOT NULL DEFAULT '{}'
+                      CONSTRAINT session_notes_risk_factors CHECK (risk_factors <@ ARRAY['prior_attempt','access_to_means','substance_use','isolation','recent_loss','chronic_pain_illness','impulsivity','hopelessness','family_history','legal_financial_stress','abuse_history']::text[]),
+  protective_factors  text[] NOT NULL DEFAULT '{}'
+                      CONSTRAINT session_notes_protective CHECK (protective_factors <@ ARRAY['social_support','children_dependents','religious_beliefs','engaged_in_treatment','future_plans','coping_skills','pets','employment_school']::text[]),
+  risk_actions        text[] NOT NULL DEFAULT '{}'
+                      CONSTRAINT session_notes_risk_actions CHECK (risk_actions <@ ARRAY['none','safety_plan_created','safety_plan_reviewed','means_restriction_counseling','increased_session_frequency','emergency_contact_notified','crisis_line_provided','er_referral','duty_to_warn','consultation']::text[]),
+  risk_notes          text,
+  interventions   text[] NOT NULL DEFAULT '{}'
+                  CONSTRAINT session_notes_interventions CHECK (interventions <@ ARRAY['cbt','dbt_skills','act','mindfulness','psychoeducation','motivational_interviewing','emdr','supportive','behavioral_activation','exposure','problem_solving','relaxation_training']::text[]),
+  diagnosis_codes text[] NOT NULL DEFAULT '{}',
+  status          text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','signed')),
+  signed_at       timestamptz,
+  signed_by       text,
+  signed_late     boolean NOT NULL DEFAULT false,
+  created_by      text NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  locks_at        timestamptz NOT NULL DEFAULT now() + interval '72 hours',
+  deleted_at      timestamptz,
+  deleted_by      text,
+  delete_reason   text,
+
+  -- Risk is mandatory to sign: all three dimensions and the overall level answered.
+  CONSTRAINT session_notes_risk_required CHECK (status = 'draft' OR (
+    risk_suicidal IS NOT NULL AND risk_self_harm IS NOT NULL AND risk_harm_others IS NOT NULL AND risk_level IS NOT NULL)),
+  -- Moderate or worse: a written rationale and at least one action actually taken.
+  CONSTRAINT session_notes_risk_elevated CHECK (status = 'draft' OR risk_level = 'low' OR (
+    coalesce(length(trim(risk_notes)), 0) > 0 AND cardinality(array_remove(risk_actions, 'none')) > 0)),
+  -- "Low" with any positive dimension needs a rationale (self-harm "history" alone is a past fact).
+  CONSTRAINT session_notes_risk_low_justified CHECK (status = 'draft' OR risk_level <> 'low' OR
+    (risk_suicidal = 'denied' AND risk_self_harm IN ('denied','history') AND risk_harm_others = 'denied') OR
+    coalesce(length(trim(risk_notes)), 0) > 0),
+  -- "none" means no action was needed, so it cannot sit next to a real action.
+  CONSTRAINT session_notes_actions_none_alone CHECK (NOT ('none' = ANY(risk_actions) AND cardinality(risk_actions) > 1)),
+  CONSTRAINT session_notes_signed_fields CHECK (status = 'draft' OR (signed_at IS NOT NULL AND signed_by IS NOT NULL)),
+  CONSTRAINT session_notes_delete_reason CHECK (deleted_at IS NULL OR coalesce(length(trim(delete_reason)), 0) > 0)
+);
+CREATE INDEX IF NOT EXISTS session_notes_by_contact
+  ON session_notes(location_id, contact_id, session_date DESC, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS session_notes_locking
+  ON session_notes(location_id, locks_at) WHERE status = 'draft' AND deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS session_note_revisions (
+  id            text PRIMARY KEY,
+  location_id   text NOT NULL,
+  note_id       text NOT NULL REFERENCES session_notes(id) ON DELETE RESTRICT,
+  revision      int NOT NULL,
+  kind          text NOT NULL CHECK (kind IN ('create','update','autosave','sign','delete')),
+  snapshot      jsonb NOT NULL,
+  changed_by    text NOT NULL,
+  changed_at    timestamptz NOT NULL DEFAULT now(),
+  change_reason text,
+  UNIQUE (note_id, revision)
+);
+
+CREATE TABLE IF NOT EXISTS session_note_addenda (
+  id          text PRIMARY KEY,
+  location_id text NOT NULL,
+  note_id     text NOT NULL REFERENCES session_notes(id) ON DELETE RESTRICT,
+  body        text NOT NULL CHECK (length(trim(body)) > 0),
+  author      text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS session_note_addenda_by_note ON session_note_addenda(note_id, created_at);
+
+-- A new note is always a fresh draft with the clock started by the database: the
+-- caller cannot pre-sign it, backdate it, or shorten/lengthen the edit window.
+CREATE OR REPLACE FUNCTION session_note_before_insert() RETURNS trigger AS $$
+BEGIN
+  NEW.created_at     := now();
+  NEW.updated_at     := now();
+  NEW.locks_at       := now() + interval '72 hours';
+  NEW.status         := 'draft';
+  NEW.signed_at      := NULL;
+  NEW.signed_by      := NULL;
+  NEW.signed_late    := false;
+  NEW.deleted_at     := NULL;
+  NEW.deleted_by     := NULL;
+  NEW.delete_reason  := NULL;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS session_note_before_insert ON session_notes;
+CREATE TRIGGER session_note_before_insert BEFORE INSERT ON session_notes
+  FOR EACH ROW EXECUTE FUNCTION session_note_before_insert();
+
+CREATE OR REPLACE FUNCTION session_note_guard() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'session_note_no_delete' USING ERRCODE = 'P0001';
+  END IF;
+  -- columns that never change, whatever the statement says
+  NEW.id := OLD.id; NEW.location_id := OLD.location_id; NEW.contact_id := OLD.contact_id;
+  NEW.created_at := OLD.created_at; NEW.created_by := OLD.created_by; NEW.locks_at := OLD.locks_at;
+  IF OLD.deleted_at IS NOT NULL THEN
+    RAISE EXCEPTION 'session_note_deleted' USING ERRCODE = 'P0001';
+  END IF;
+  IF OLD.status = 'signed' AND NEW.status = 'draft' THEN
+    RAISE EXCEPTION 'session_note_unsign' USING ERRCODE = 'P0001';
+  END IF;
+  IF now() >= OLD.locks_at THEN
+    -- The single exception once the window has closed: a DRAFT that was never signed
+    -- may still be signed (late), provided nothing but the signature columns changes.
+    IF OLD.status = 'draft' AND NEW.status = 'signed'
+       AND (to_jsonb(NEW) - ARRAY['status','signed_at','signed_by','signed_late','updated_at'])
+         = (to_jsonb(OLD) - ARRAY['status','signed_at','signed_by','signed_late','updated_at']) THEN
+      NEW.signed_late := true;
+      NEW.updated_at  := now();
+      RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'session_note_locked' USING ERRCODE = 'P0001';
+  END IF;
+  NEW.updated_at := now();
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS session_note_guard ON session_notes;
+CREATE TRIGGER session_note_guard BEFORE UPDATE OR DELETE ON session_notes
+  FOR EACH ROW EXECUTE FUNCTION session_note_guard();
+
+-- Every change leaves a full snapshot, attributed to whoever made it. Runs AFTER the
+-- guard, so only changes that were actually allowed are recorded. A write with no
+-- actor set is refused: nothing may change a clinical note anonymously.
+CREATE OR REPLACE FUNCTION session_note_record_revision() RETURNS trigger AS $$
+DECLARE
+  who text := nullif(current_setting('psycrm.actor', true), '');
+  why text := nullif(current_setting('psycrm.change_reason', true), '');
+  what text := nullif(current_setting('psycrm.change_kind', true), '');
+  rev int;
+BEGIN
+  IF who IS NULL THEN
+    RAISE EXCEPTION 'session_note_actor_required' USING ERRCODE = 'P0001';
+  END IF;
+  IF TG_OP = 'INSERT' THEN what := 'create';
+  ELSIF NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL THEN what := 'delete';
+  ELSIF OLD.status = 'draft' AND NEW.status = 'signed' THEN what := 'sign';
+  ELSIF what IS DISTINCT FROM 'autosave' THEN what := 'update';
+  END IF;
+  -- Autosave fires every few seconds while typing: keep one revision per author per 5 minutes.
+  IF what = 'autosave' AND EXISTS (
+       SELECT 1 FROM session_note_revisions
+       WHERE note_id = NEW.id AND changed_by = who AND kind IN ('create','autosave')
+         AND changed_at > now() - interval '5 minutes') THEN
+    RETURN NEW;
+  END IF;
+  SELECT coalesce(max(revision), 0) + 1 INTO rev FROM session_note_revisions WHERE note_id = NEW.id;
+  INSERT INTO session_note_revisions (id, location_id, note_id, revision, kind, snapshot, changed_by, change_reason)
+  VALUES (gen_random_uuid()::text, NEW.location_id, NEW.id, rev, what, to_jsonb(NEW), who, why);
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS session_note_record_revision ON session_notes;
+CREATE TRIGGER session_note_record_revision AFTER INSERT OR UPDATE ON session_notes
+  FOR EACH ROW EXECUTE FUNCTION session_note_record_revision();
+
+-- An addendum belongs to a live note of the same practice, and is stamped by the database.
+CREATE OR REPLACE FUNCTION session_note_addendum_guard() RETURNS trigger AS $$
+DECLARE n record;
+BEGIN
+  SELECT location_id, deleted_at INTO n FROM session_notes WHERE id = NEW.note_id;
+  IF NOT FOUND OR n.location_id <> NEW.location_id THEN
+    RAISE EXCEPTION 'session_note_not_found' USING ERRCODE = 'P0001';
+  END IF;
+  IF n.deleted_at IS NOT NULL THEN
+    RAISE EXCEPTION 'session_note_deleted' USING ERRCODE = 'P0001';
+  END IF;
+  NEW.created_at := now();
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS session_note_addendum_guard ON session_note_addenda;
+CREATE TRIGGER session_note_addendum_guard BEFORE INSERT ON session_note_addenda
+  FOR EACH ROW EXECUTE FUNCTION session_note_addendum_guard();
+
+-- Revisions and addenda are append-only (reject_mutation() is defined with the audit log).
+DROP TRIGGER IF EXISTS session_note_revisions_immutable ON session_note_revisions;
+CREATE TRIGGER session_note_revisions_immutable BEFORE UPDATE OR DELETE ON session_note_revisions
+  FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS session_note_revisions_no_truncate ON session_note_revisions;
+CREATE TRIGGER session_note_revisions_no_truncate BEFORE TRUNCATE ON session_note_revisions
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS session_note_addenda_immutable ON session_note_addenda;
+CREATE TRIGGER session_note_addenda_immutable BEFORE UPDATE OR DELETE ON session_note_addenda
+  FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS session_note_addenda_no_truncate ON session_note_addenda;
+CREATE TRIGGER session_note_addenda_no_truncate BEFORE TRUNCATE ON session_note_addenda
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS session_notes_no_truncate ON session_notes;
+CREATE TRIGGER session_notes_no_truncate BEFORE TRUNCATE ON session_notes
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
+
+-- PsyCRM day 4: front-desk check-in. `status` gains the value 'checked_in' (a plain
+-- text column, no migration needed); this records WHEN the client arrived.
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS checked_in_at timestamptz;
+
+-- PsyCRM day 5: document templates (versioned, immutable once active) and packets.
+CREATE TABLE IF NOT EXISTS document_templates (
+  id                   text PRIMARY KEY,
+  location_id          text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  family_id            text NOT NULL,
+  translation_group_id text NOT NULL,
+  locale               text NOT NULL DEFAULT 'es' CHECK (locale IN ('es','en')),
+  version              int  NOT NULL DEFAULT 1 CHECK (version >= 1),
+  status               text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','active','retired')),
+  kind                 text NOT NULL CHECK (kind IN ('agreement','intake_form')),
+  title                text NOT NULL,
+  body_md              text NOT NULL DEFAULT '',
+  fields               jsonb NOT NULL DEFAULT '[]',
+  signature            jsonb NOT NULL DEFAULT '{"required":true,"drawn":true}',
+  signer_roles         text[] NOT NULL DEFAULT '{client}',
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  updated_at           timestamptz NOT NULL DEFAULT now(),
+  activated_at         timestamptz,
+  UNIQUE (location_id, family_id, version),
+  CHECK (signer_roles <@ ARRAY['client','guardian','minor']::text[] AND cardinality(signer_roles) >= 1)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS document_templates_one_active
+  ON document_templates(location_id, family_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS document_templates_family ON document_templates(location_id, family_id, version DESC);
+
+-- An active or retired version is what a signed document points to: its content never changes.
+CREATE OR REPLACE FUNCTION document_template_guard() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.status <> 'draft' THEN
+      RAISE EXCEPTION 'document_template_immutable' USING ERRCODE = 'P0001';
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF OLD.status = 'draft' THEN
+    -- identity never changes; everything else is editable until activation
+    IF NEW.id <> OLD.id OR NEW.location_id <> OLD.location_id OR NEW.family_id <> OLD.family_id
+       OR NEW.version <> OLD.version OR NEW.translation_group_id <> OLD.translation_group_id THEN
+      RAISE EXCEPTION 'document_template_immutable' USING ERRCODE = 'P0001';
+    END IF;
+    IF NEW.status = 'active' AND OLD.status = 'draft' THEN NEW.activated_at := now(); END IF;
+    RETURN NEW;
+  END IF;
+  IF NEW.id <> OLD.id OR NEW.location_id <> OLD.location_id OR NEW.family_id <> OLD.family_id
+     OR NEW.version <> OLD.version OR NEW.translation_group_id <> OLD.translation_group_id
+     OR NEW.locale <> OLD.locale OR NEW.kind <> OLD.kind OR NEW.title <> OLD.title
+     OR NEW.body_md <> OLD.body_md OR NEW.fields <> OLD.fields OR NEW.signature <> OLD.signature
+     OR NEW.signer_roles <> OLD.signer_roles
+     OR NEW.activated_at IS DISTINCT FROM OLD.activated_at THEN
+    RAISE EXCEPTION 'document_template_immutable' USING ERRCODE = 'P0001';
+  END IF;
+  IF NEW.status <> OLD.status AND NOT (OLD.status = 'active' AND NEW.status = 'retired') THEN
+    RAISE EXCEPTION 'document_template_status' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS document_template_guard ON document_templates;
+CREATE TRIGGER document_template_guard BEFORE UPDATE OR DELETE ON document_templates
+  FOR EACH ROW EXECUTE FUNCTION document_template_guard();
+
+CREATE TABLE IF NOT EXISTS document_packets (
+  id           text PRIMARY KEY,
+  location_id  text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  name         text NOT NULL,
+  description  text,
+  family_ids   text[] NOT NULL DEFAULT '{}',
+  audience     text NOT NULL DEFAULT 'adult' CHECK (audience IN ('adult','adolescent')),
+  archived_at  timestamptz,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS document_packets_location ON document_packets(location_id);
+
+-- PsyCRM day 6: sending a packet for signature. A request freezes the EXACT template
+-- versions at send time; each signer gets a one-time link (only sha256(token) is stored);
+-- a signature is an immutable record with its evidence.
+CREATE TABLE IF NOT EXISTS document_requests (
+  id           text PRIMARY KEY,
+  location_id  text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id   text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  packet_id    text REFERENCES document_packets(id) ON DELETE SET NULL,
+  packet_name  text NOT NULL,
+  audience     text NOT NULL DEFAULT 'adult' CHECK (audience IN ('adult','adolescent')),
+  template_ids text[] NOT NULL,
+  status       text NOT NULL DEFAULT 'sent' CHECK (status IN ('sent','in_progress','completed','expired','voided')),
+  sent_by      text NOT NULL,
+  sent_at      timestamptz NOT NULL DEFAULT now(),
+  expires_at   timestamptz NOT NULL DEFAULT now() + interval '14 days',
+  completed_at timestamptz,
+  voided_at    timestamptz,
+  void_reason  text,
+  needs_review text
+);
+CREATE INDEX IF NOT EXISTS document_requests_contact ON document_requests(location_id, contact_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS document_requests_open ON document_requests(location_id, status, expires_at);
+
+CREATE TABLE IF NOT EXISTS document_signers (
+  id             text PRIMARY KEY,
+  location_id    text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  request_id     text NOT NULL REFERENCES document_requests(id) ON DELETE RESTRICT,
+  role           text NOT NULL CHECK (role IN ('client','guardian','minor')),
+  name           text NOT NULL,
+  email          text NOT NULL,
+  token_hash     text NOT NULL UNIQUE,
+  status         text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','viewed','in_progress','completed')),
+  otp_hash       text,
+  otp_expires_at timestamptz,
+  otp_attempts   int NOT NULL DEFAULT 0,
+  verified_at    timestamptz,
+  first_viewed_at timestamptz,
+  completed_at   timestamptz,
+  draft_values   jsonb NOT NULL DEFAULT '{}',
+  UNIQUE (request_id, role)
+);
+CREATE INDEX IF NOT EXISTS document_signers_request ON document_signers(request_id);
+
+CREATE TABLE IF NOT EXISTS signed_documents (
+  id                text PRIMARY KEY,
+  location_id       text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id        text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  request_id        text NOT NULL REFERENCES document_requests(id) ON DELETE RESTRICT,
+  signer_id         text NOT NULL REFERENCES document_signers(id) ON DELETE RESTRICT,
+  signer_role       text NOT NULL,
+  template_id       text NOT NULL REFERENCES document_templates(id) ON DELETE RESTRICT,
+  template_title    text NOT NULL,
+  template_version  int NOT NULL,
+  locale            text NOT NULL,
+  field_values      jsonb NOT NULL,
+  rendered_html     text NOT NULL,
+  content_sha256    text NOT NULL,
+  signer_name       text NOT NULL,
+  signature_png     text,
+  esign_consent     boolean NOT NULL CHECK (esign_consent),
+  signer_ip         text NOT NULL,
+  signer_user_agent text NOT NULL,
+  verified_via      text NOT NULL,
+  signed_at         timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (signer_id, template_id)
+);
+CREATE INDEX IF NOT EXISTS signed_documents_contact ON signed_documents(location_id, contact_id, signed_at DESC);
+CREATE INDEX IF NOT EXISTS signed_documents_request ON signed_documents(request_id);
+
+-- A signature is evidence: never edited, never removed (reject_mutation() is defined with the audit log).
+DROP TRIGGER IF EXISTS signed_documents_immutable ON signed_documents;
+CREATE TRIGGER signed_documents_immutable BEFORE UPDATE OR DELETE ON signed_documents
+  FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+DROP TRIGGER IF EXISTS signed_documents_no_truncate ON signed_documents;
+CREATE TRIGGER signed_documents_no_truncate BEFORE TRUNCATE ON signed_documents
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
+
+-- PsyCRM: a client invitation. The therapist enters a name and an email; the person gets a one-time
+-- link, fills in their own details (and date of birth) and only THEN does a contact exist, so the
+-- record always starts complete. Only sha256(token) is stored.
+CREATE TABLE IF NOT EXISTS client_invites (
+  id           text PRIMARY KEY,
+  location_id  text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  kind         text NOT NULL CHECK (kind IN ('adult','guardian')),
+  name         text NOT NULL,
+  email        text NOT NULL,
+  token_hash   text NOT NULL UNIQUE,
+  status       text NOT NULL DEFAULT 'sent' CHECK (status IN ('sent','completed','expired','voided')),
+  sent_by      text NOT NULL,
+  sent_at      timestamptz NOT NULL DEFAULT now(),
+  expires_at   timestamptz NOT NULL DEFAULT now() + interval '14 days',
+  opened_at    timestamptz,
+  completed_at timestamptz,
+  voided_at    timestamptz,
+  contact_id   text REFERENCES contacts(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS client_invites_location ON client_invites(location_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS client_invites_open ON client_invites(location_id, status, expires_at);
+
+-- A practice's own logo (shown in the app and on the pages its clients see). Kept apart from `locations`
+-- so ordinary location queries never carry image bytes.
+CREATE TABLE IF NOT EXISTS location_logos (
+  location_id  text PRIMARY KEY REFERENCES locations(id) ON DELETE CASCADE,
+  content_type text NOT NULL CHECK (content_type IN ('image/png','image/jpeg','image/webp')),
+  data         bytea NOT NULL CHECK (octet_length(data) <= 307200),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);

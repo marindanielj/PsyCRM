@@ -1,12 +1,16 @@
-import { Bot, Braces, CreditCard, GitBranch, type LucideIcon, Phone, Send, Share2, SlidersHorizontal } from 'lucide-react'
+import { Bot, Braces, Palette, CreditCard, GitBranch, History, type LucideIcon, Phone, Send, Share2, SlidersHorizontal, Stethoscope } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
+import { type ModuleKey, moduleEnabled } from '../../lib/modules'
 import { cn } from '../../lib/utils'
+import { useTenant } from '../../state/location'
 
 interface SettingsNavItem {
   to: string
   label: string
   icon: LucideIcon
   description: string
+  /** Hidden when the location has this module off. */
+  module?: ModuleKey
 }
 
 // Settings groups the location-configuration areas that used to sit in the main
@@ -15,13 +19,34 @@ interface SettingsNavItem {
 // secondary rail is for set-up-once configuration.
 const SETTINGS_NAV: SettingsNavItem[] = [
   {
+    to: '/settings/practice',
+    label: 'Practice',
+    icon: Stethoscope,
+    description: 'Name, license, fees and policies',
+  },
+  {
+    to: '/settings/branding',
+    label: 'Branding',
+    icon: Palette,
+    description: 'Name, colour and logo',
+  },
+  {
+    to: '/settings/audit',
+    module: 'audit',
+    label: 'Audit log',
+    icon: History,
+    description: 'Who did what, and when',
+  },
+  {
     to: '/settings/agent',
+    module: 'assistant',
     label: 'AI Agent',
     icon: Bot,
     description: 'How the assistant replies and acts',
   },
   {
     to: '/settings/payments',
+    module: 'payments',
     label: 'Payments',
     icon: CreditCard,
     description: 'Connect Stripe or Square',
@@ -34,12 +59,14 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   },
   {
     to: '/settings/social',
+    module: 'social',
     label: 'Social',
     icon: Share2,
     description: 'Connect pages and profiles',
   },
   {
     to: '/settings/voice',
+    module: 'calls',
     label: 'Voice',
     icon: Phone,
     description: 'Connect Twilio or Vapi calling',
@@ -73,6 +100,8 @@ const SETTINGS_NAV: SettingsNavItem[] = [
  * full phone width.
  */
 export function SettingsLayout() {
+  const { current } = useTenant()
+  const items = SETTINGS_NAV.filter((i) => !i.module || moduleEnabled(current, i.module))
   return (
     <div className="flex h-full min-h-0 flex-col lg:flex-row">
       <aside className="flex w-full shrink-0 flex-col border-b border-slate-200 bg-white lg:w-64 lg:border-b-0 lg:border-r">
@@ -81,7 +110,7 @@ export function SettingsLayout() {
           <p className="text-xs text-slate-500">Configure this sub-account</p>
         </div>
         <nav className="ol-scroll flex gap-1 overflow-x-auto p-2 lg:flex-1 lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:p-3">
-          {SETTINGS_NAV.map((item) => (
+          {items.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

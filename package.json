@@ -16,27 +16,31 @@
     "shoot": "node scripts/shoot.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "seed:practice": "tsx db/seed-practice.ts",
+    "seed:documents": "tsx db/seed-documents.ts",
+    "start": "tsx server/index.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.1163.0",
     "@electric-sql/pglite": "^0.5.1",
-    "@hono/node-server": "^2.0.4",
+    "@hono/node-server": "^2.1.6",
     "@hono/zod-validator": "^0.8.0",
     "@node-rs/argon2": "^2.0.2",
     "@tailwindcss/vite": "^4.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "hono": "^4.12.23",
+    "hono": "^4.13.16",
     "lucide-react": "^1.17.0",
-    "nanoid": "^5.1.11",
+    "nanoid": "^5.1.16",
     "pg": "^8.21.0",
     "pg-boss": "^12.18.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-router-dom": "^7.16.0",
+    "react-router-dom": "^7.18.5",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
@@ -47,7 +51,7 @@
     "puppeteer-core": "^24.43.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "vite": "^8.0.16",
+    "vite": "^8.3.6",
     "vitest": "^4.1.8",
     "xlsx": "^0.18.5"
   }

@@ -1,21 +1,25 @@
 import type { Database } from '../db/database'
-import { renderTemplate } from '../lib/merge-fields'
-import { type Contact, ContactsRepo } from '../repos/contacts-repo'
+import { type AuditEntry, audit } from '../lib/audit'
+import { ContactsRepo } from '../repos/contacts-repo'
 import { CustomValuesRepo } from '../repos/custom-values-repo'
-import { TimelineRepo } from '../repos/timeline-repo'
 import { WorkflowActionsRepo } from '../repos/workflow-actions-repo'
 import {
   type WorkflowRun,
   type WorkflowRunStep,
   WorkflowRunsRepo,
 } from '../repos/workflow-runs-repo'
-import { type WorkflowAction, WorkflowsRepo } from '../repos/workflows-repo'
+import { WorkflowsRepo } from '../repos/workflows-repo'
+import { type ActionDeps, executeAction } from './workflow-actions'
 
 export interface WorkflowRunPayload {
   locationId: string
   workflowId: string
   contactId: string | null
   triggerType: string
+  /** What triggered it: the payload the actions can read and how many automation hops led here. */
+  event?: { payload: Record<string, unknown>; depth: number }
+  /** A deterministic run id (queued events): a retried job finds its run and carries on. */
+  runId?: string
 }
 
 /** Defers the steps after a `wait`. The thunk returns the resume promise so a
@@ -62,7 +66,7 @@ const defaultSchedule: Scheduler = (thunk, ms) => {
   arm(0)
 }
 
-export interface WorkflowRunnerDeps {
+export interface WorkflowRunnerDeps extends ActionDeps {
   db: Database
   schedule?: Scheduler
 }
@@ -89,54 +93,30 @@ function describeWait(config: Record<string, unknown>): string {
 }
 
 /**
- * Execute one action and return its result row. Effects are real where we can be
- * honest about them: add_tag mutates the contact; send_sms/send_email render the
- * body with merge fields and log an activity event (wiring these to a live SMS/
- * email carrier is a later integration — we never claim "delivered"). A missing
- * contact or empty config yields a `skipped` step rather than a failure.
+ * Record a workflow event in the audit log WITHOUT letting a logging failure break
+ * the run. The job queue retries a failed job, and a retry would repeat steps that
+ * already had real effects (a tag added, an email sent). The run's own record
+ * (workflow_runs.steps) is the durable execution log and is written regardless; the
+ * effects that matter clinically (a stage change, an appointment) are audited
+ * where they happen, in the same transaction as the change. So this is best-effort
+ * by design — the failure is reported by code only, never with client data.
  */
-async function executeAction(
+async function auditRun(
   db: Database,
   locationId: string,
-  action: WorkflowAction,
-  contact: Contact | null,
-  position: number,
-  customValues: Record<string, string>,
-): Promise<WorkflowRunStep> {
-  const base = { position, type: action.type }
-
-  switch (action.type) {
-    case 'add_tag': {
-      const tag = typeof action.config.tag === 'string' ? action.config.tag.trim() : ''
-      if (!tag) return { ...base, status: 'skipped', detail: 'No tag configured' }
-      if (!contact) return { ...base, status: 'skipped', detail: 'No contact to tag' }
-      await new ContactsRepo(db, locationId).addTag(contact.id, tag)
-      return { ...base, status: 'done', detail: `Added tag "${tag}"` }
-    }
-    case 'send_sms':
-    case 'send_email': {
-      const channel = action.type === 'send_sms' ? 'SMS' : 'Email'
-      if (!contact) return { ...base, status: 'skipped', detail: `No contact to send ${channel}` }
-      const body = renderTemplate(
-        typeof action.config.body === 'string' ? action.config.body : '',
-        contact,
-        customValues,
-      )
-      const subject =
-        action.type === 'send_email' && typeof action.config.subject === 'string'
-          ? renderTemplate(action.config.subject, contact, customValues)
-          : null
-      await new TimelineRepo(db, locationId).add({
-        contactId: contact.id,
-        type: 'automation_action',
-        refTable: 'workflows',
-        payload: { action: action.type, channel: channel.toLowerCase(), subject, body, status: 'logged' },
-      })
-      const preview = body.length > 60 ? `${body.slice(0, 60)}…` : body
-      return { ...base, status: 'done', detail: `${channel} logged: "${preview}"` }
-    }
-    default:
-      return { ...base, status: 'skipped', detail: `Unsupported action: ${action.type}` }
+  entry: Pick<AuditEntry, 'action' | 'entityId' | 'contactId' | 'details'> & { workflowId: string; workflowName: string },
+): Promise<void> {
+  try {
+    await audit(db, locationId, {
+      action: entry.action,
+      entityType: 'workflow_run',
+      entityId: entry.entityId,
+      contactId: entry.contactId,
+      details: { workflowId: entry.workflowId, ...entry.details },
+      actor: { type: 'workflow', id: entry.workflowId, label: `Workflow: ${entry.workflowName}` },
+    })
+  } catch (err) {
+    console.error('workflow audit write failed', (err as { code?: string } | null)?.code ?? 'unknown')
   }
 }
 
@@ -150,8 +130,9 @@ async function executeAction(
 export async function runWorkflow(
   deps: WorkflowRunnerDeps,
   payload: WorkflowRunPayload,
-  opts: { runId?: string; fromPosition?: number } = {},
+  givenOpts: { runId?: string; fromPosition?: number } = {},
 ): Promise<WorkflowRun> {
+  let opts = givenOpts
   const { db } = deps
   const { locationId } = payload
   const schedule = deps.schedule ?? defaultSchedule
@@ -177,6 +158,16 @@ export async function runWorkflow(
     return (await runsRepo.finish(opts.runId, 'failed')) ?? ((await runsRepo.get(opts.runId)) as WorkflowRun)
   }
 
+  // A retried queue job finds the run its first attempt started: a finished or waiting run is
+  // returned as it is, and an interrupted one carries on after the steps already recorded.
+  if (!opts.runId && payload.runId) {
+    const earlier = await runsRepo.get(payload.runId)
+    if (earlier) {
+      if (earlier.status !== 'running') return earlier
+      opts = { runId: earlier.id, fromPosition: earlier.steps.length }
+    }
+  }
+
   const actions = await new WorkflowActionsRepo(db, locationId).listByWorkflow(payload.workflowId)
   const contact = payload.contactId
     ? ((await new ContactsRepo(db, locationId).get(payload.contactId)) ?? null)
@@ -192,7 +183,19 @@ export async function runWorkflow(
         workflowId: payload.workflowId,
         contactId: payload.contactId,
         triggerType: payload.triggerType,
+        id: payload.runId,
       })
+
+  const auditCtx = { workflowId: workflow.id, workflowName: workflow.name }
+  if (!opts.runId) {
+    await auditRun(db, locationId, {
+      ...auditCtx,
+      action: 'workflow.run_started',
+      entityId: run.id,
+      contactId: payload.contactId,
+      details: { trigger: payload.triggerType },
+    })
+  }
 
   for (let i = opts.fromPosition ?? 0; i < actions.length; i++) {
     const action = actions[i]!
@@ -205,15 +208,60 @@ export async function runWorkflow(
         detail: describeWait(action.config),
       }
       run = (await runsRepo.appendStep(run.id, waiting, 'waiting')) ?? run
+      await auditRun(db, locationId, {
+        ...auditCtx,
+        action: 'workflow.step_executed',
+        entityId: run.id,
+        contactId: payload.contactId,
+        details: { position: i, type: 'wait', status: 'waiting' },
+      })
       const resumeId = run.id
       const next = i + 1
       schedule(() => runWorkflow(deps, payload, { runId: resumeId, fromPosition: next }), waitMs(action.config))
       return run
     }
 
-    const step = await executeAction(db, locationId, action, contact, i, customValues)
-    run = (await runsRepo.appendStep(run.id, step, 'running')) ?? run
+    // "Only if the step before really did its job" (a card must not claim "documents sent" when none went out).
+    if (action.config.requirePreviousDone === true && i > 0 && run.steps.find((x) => x.position === i - 1)?.status !== 'done') {
+      const skipped: WorkflowRunStep = { position: i, type: action.type, status: 'skipped', detail: 'The step before did not complete' }
+      run = (await runsRepo.appendStep(run.id, skipped, 'running')) ?? run
+      await auditRun(db, locationId, { ...auditCtx, action: 'workflow.step_executed', entityId: run.id, contactId: payload.contactId, details: { position: i, type: action.type, status: 'skipped' } })
+      continue
+    }
+
+    // A step that throws (a database fault) is recorded as failed and ends the run, so the
+    // queue's retry resumes after the steps that really finished instead of repeating them.
+    let step: WorkflowRunStep
+    try {
+      step = await executeAction({ db, locationId, workflow, contact, customValues, event: payload.event ?? { payload: {}, depth: 0 }, deps }, action, i)
+    } catch (err) {
+      console.error('workflow step failed', (err as { code?: string } | null)?.code ?? 'unknown')
+      step = { position: i, type: action.type, status: 'failed', detail: 'Unexpected error while running this step' }
+    }
+    run = (await runsRepo.appendStep(run.id, step, step.status === 'failed' ? 'failed' : 'running')) ?? run
+    await auditRun(db, locationId, {
+      ...auditCtx,
+      action: 'workflow.step_executed',
+      entityId: run.id,
+      contactId: payload.contactId,
+      // Type and outcome only: the step's `detail` can quote message text.
+      details: { position: i, type: action.type, status: step.status },
+    })
+    // Nothing after a failed step pretends the earlier work succeeded.
+    if (step.status === 'failed') {
+      const stopped = (await runsRepo.finish(run.id, 'failed')) ?? run
+      await auditRun(db, locationId, { ...auditCtx, action: 'workflow.run_finished', entityId: run.id, contactId: payload.contactId, details: { status: stopped.status } })
+      return stopped
+    }
   }
 
-  return (await runsRepo.finish(run.id, 'completed')) ?? run
+  const finished = (await runsRepo.finish(run.id, 'completed')) ?? run
+  await auditRun(db, locationId, {
+    ...auditCtx,
+    action: 'workflow.run_finished',
+    entityId: run.id,
+    contactId: payload.contactId,
+    details: { status: finished.status },
+  })
+  return finished
 }

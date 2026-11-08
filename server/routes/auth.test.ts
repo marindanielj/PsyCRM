@@ -96,3 +96,58 @@ test('logout clears the session cookie', async () => {
   expect(cookie.toLowerCase()).toMatch(/max-age=0/)
 })
 
+
+// --- audit -------------------------------------------------------------------
+
+test('a successful login is audited in each of the operator\'s practices, with the IP', async () => {
+  const password_hash = await hashPassword('pw')
+  const db = new FakeDatabase()
+  db.enqueue([{ ...operatorRow, password_hash }]) // findByEmail
+  db.enqueue([{ id: 'locA' }, { id: 'locB' }]) // listLocations
+  const res = await authRoute({ db, sessionSecret: secret }).request('/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '6.6.6.6, 203.0.113.9', 'user-agent': 'UA/1' },
+    body: JSON.stringify({ email: 'AL@x.com', password: 'pw' }),
+  })
+  expect(res.status).toBe(200)
+  expect(db.auditEntries().map((e) => [e.locationId, e.action, e.actorType, e.actorId])).toEqual([
+    ['locA', 'auth.login', 'operator', 'op1'],
+    ['locB', 'auth.login', 'operator', 'op1'],
+  ])
+  expect(db.audits[0]!.params[9]).toBe('203.0.113.9') // the proxy-appended address, not the forged one
+  expect(db.audits[0]!.params[10]).toBe('UA/1')
+})
+
+test('a wrong password on a real account is audited as a failed attempt (never the password)', async () => {
+  const password_hash = await hashPassword('pw')
+  const db = new FakeDatabase()
+  db.enqueue([{ ...operatorRow, password_hash }]) // findByEmail
+  db.enqueue([{ id: 'locA' }]) // listLocations
+  const res = await postJson(authRoute({ db, sessionSecret: secret }), '/login', { email: 'AL@x.com', password: 'wrong-guess' })
+  expect(res.status).toBe(401)
+  const entries = db.auditEntries()
+  expect(entries).toHaveLength(1)
+  expect(entries[0]).toMatchObject({ action: 'auth.login_failed', actorType: 'system', entityId: 'op1', details: { reason: 'bad_password' } })
+  expect(JSON.stringify(db.audits)).not.toContain('wrong-guess')
+})
+
+test('an unknown email writes no audit row (there is no practice to attach it to)', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([])
+  await postJson(authRoute({ db, sessionSecret: secret }), '/login', { email: 'ghost@x.com', password: 'x' })
+  expect(db.audits).toHaveLength(0)
+})
+
+test('logout with a live session is audited; without one it just clears the cookie', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ id: 'locA' }]) // listLocations
+  const token = createSession({ operatorId: 'op1' }, secret)
+  const res = await authRoute({ db, sessionSecret: secret }).request('/logout', { method: 'POST', headers: { Cookie: `${SESSION_COOKIE}=${token}` } })
+  expect(res.status).toBe(200)
+  expect(db.auditEntries()).toMatchObject([{ locationId: 'locA', action: 'auth.logout', actorId: 'op1' }])
+
+  const anon = new FakeDatabase()
+  const res2 = await authRoute({ db: anon, sessionSecret: secret }).request('/logout', { method: 'POST' })
+  expect(res2.status).toBe(200)
+  expect(anon.audits).toHaveLength(0)
+})

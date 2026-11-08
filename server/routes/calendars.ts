@@ -6,8 +6,11 @@ import { isUniqueViolation } from '../lib/db-errors'
 import { AppointmentsRepo } from '../repos/appointments-repo'
 import { CalendarsRepo } from '../repos/calendars-repo'
 import type { Database } from '../db/database'
+import type { WorkflowDispatch } from '../jobs/workflow-dispatcher'
+import { audit, auditContext } from '../lib/audit'
+import { TimelineRepo } from '../repos/timeline-repo'
 
-const APPOINTMENT_STATUS = ['scheduled', 'confirmed', 'completed', 'cancelled', 'no_show'] as const
+const APPOINTMENT_STATUS = ['scheduled', 'confirmed', 'checked_in', 'completed', 'cancelled', 'no_show'] as const
 
 // starts_at/ends_at are timestamptz NOT NULL columns. Validating them as real
 // ISO datetimes (not just any non-empty string) keeps a typo like "soon" from
@@ -88,7 +91,11 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
  * GET /appointments?from&to (defaults: now .. +30d); POST /appointments books;
  * PATCH /appointments/:id reschedules ({startsAt,endsAt}) or sets {status}.
  */
-export function calendarsRoute(deps: { db: Database }): Hono<AppEnv> {
+export function calendarsRoute(deps: {
+  db: Database
+  /** Fired after a check-in so live workflows can react (day 7). */
+  dispatch?: WorkflowDispatch
+}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
   app.get('/', async (c) => {
@@ -141,7 +148,23 @@ export function calendarsRoute(deps: { db: Database }): Hono<AppEnv> {
     const calendar = await new CalendarsRepo(deps.db, loc).get(input.calendarId)
     if (!calendar) return c.json({ error: 'unknown calendar' }, 400)
     try {
-      const appointment = await new AppointmentsRepo(deps.db, loc).create(input)
+      const appointment = await deps.db.transaction(async (tx) => {
+        const created = await new AppointmentsRepo(tx, loc).create(input)
+        await audit(tx, loc, {
+          action: 'appointment.created',
+          entityType: 'appointment',
+          entityId: created.id,
+          contactId: created.contact_id ?? null,
+          details: { calendarId: input.calendarId, startsAt: created.starts_at },
+          ...auditContext(c),
+        })
+        return created
+      })
+      // A session booked by the therapist counts exactly like one a client booked: the onboarding card
+      // moves on to "First appointment booked" (a live appointment_booked workflow does it).
+      if (appointment.contact_id) {
+        await deps.dispatch?.({ locationId: loc, triggerType: 'appointment_booked', contactId: appointment.contact_id, payload: { appointmentId: appointment.id, calendarId: input.calendarId, source: 'operator' }, depth: 0 })
+      }
       return c.json({ ok: true, appointment }, 201)
     } catch (err) {
       // The no-double-book index refused this calendar+instant. An honest 409,
@@ -155,25 +178,89 @@ export function calendarsRoute(deps: { db: Database }): Hono<AppEnv> {
     const loc = c.get('locationId')
     const id = c.req.param('id')
     const body = c.req.valid('json')
-    const repo = new AppointmentsRepo(deps.db, loc)
 
     // One concern per call: reschedule (needs both timestamps) > status change.
     let appointment
     if (body.startsAt !== undefined && body.endsAt !== undefined) {
+      const { startsAt, endsAt } = body
       try {
-        appointment = await repo.reschedule(id, body.startsAt, body.endsAt)
+        appointment = await deps.db.transaction(async (tx) => {
+          const r = await new AppointmentsRepo(tx, loc).rescheduleWithPrev(id, startsAt, endsAt)
+          if (!r) return undefined
+          await audit(tx, loc, {
+            action: 'appointment.rescheduled',
+            entityType: 'appointment',
+            entityId: r.appointment.id,
+            contactId: r.appointment.contact_id ?? null,
+            details: { from: r.prevStartsAt, to: r.appointment.starts_at },
+            ...auditContext(c),
+          })
+          return r.appointment
+        })
       } catch (err) {
         // Moving onto a slot another live appointment already holds → 409.
         if (isUniqueViolation(err)) return c.json({ error: 'time already booked' }, 409)
         throw err
       }
     } else if (body.status !== undefined) {
-      appointment = await repo.setStatus(id, body.status)
+      const status = body.status
+      appointment = await deps.db.transaction(async (tx) => {
+        const r = await new AppointmentsRepo(tx, loc).setStatusWithPrev(id, status)
+        if (!r) return undefined
+        await audit(tx, loc, {
+          action: 'appointment.status_changed',
+          entityType: 'appointment',
+          entityId: r.appointment.id,
+          contactId: r.appointment.contact_id ?? null,
+          details: { from: r.prevStatus, to: status },
+          ...auditContext(c),
+        })
+        return r.appointment
+      })
     } else {
       return c.json({ error: 'startsAt+endsAt or status required' }, 400)
     }
     if (!appointment) return c.json({ error: 'not found' }, 404)
     return c.json({ ok: true, appointment })
+  })
+
+  // Front-desk check-in. One tap: scheduled/confirmed -> checked_in, with the time. The
+  // change, its audit row and the client's timeline entry commit together; the trigger
+  // fires only afterwards. Checking in again is a harmless 200 that writes nothing.
+  app.post('/appointments/:id/check-in', async (c) => {
+    const loc = c.get('locationId')
+    const result = await deps.db.transaction(async (tx) => {
+      const r = await new AppointmentsRepo(tx, loc).checkIn(c.req.param('id'))
+      if (r.ok && r.changed) {
+        await audit(tx, loc, {
+          action: 'appointment.checked_in',
+          entityType: 'appointment',
+          entityId: r.appointment.id,
+          contactId: r.appointment.contact_id ?? null,
+          details: { from: r.prevStatus },
+          ...auditContext(c),
+        })
+        if (r.appointment.contact_id) {
+          await new TimelineRepo(tx, loc).add({
+            contactId: r.appointment.contact_id,
+            type: 'appointment_checked_in',
+            refTable: 'appointments',
+            refId: r.appointment.id,
+            payload: { startsAt: r.appointment.starts_at },
+          })
+        }
+      }
+      return r
+    })
+    if (!result.ok) {
+      return result.reason === 'not_found'
+        ? c.json({ error: 'not found' }, 404)
+        : c.json({ error: 'cannot_check_in', status: result.status }, 409)
+    }
+    if (result.changed) {
+      await deps.dispatch?.({ locationId: loc, triggerType: 'appointment_checked_in', contactId: result.appointment.contact_id ?? null, payload: { appointmentId: result.appointment.id, calendarId: result.appointment.calendar_id }, depth: 0 })
+    }
+    return c.json({ ok: true, appointment: result.appointment, changed: result.changed })
   })
 
   return app

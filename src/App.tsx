@@ -2,7 +2,15 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { Spinner } from './components/ui/spinner'
 import { AffiliatesPage } from './features/affiliates/AffiliatesPage'
 import { AssistantPage } from './features/assistant/AssistantPage'
+import { DocumentsPage } from './features/documents/DocumentsPage'
+import { PacketEditorPage } from './features/documents/PacketEditorPage'
+import { TemplateEditorPage } from './features/documents/TemplateEditorPage'
+import { BrandingSettingsPage } from './features/settings/BrandingSettingsPage'
+import { AuditLogPage } from './features/audit/AuditLogPage'
+import { NoteReportPage } from './features/session-notes/NoteReportPage'
+import { NoteWizardPage } from './features/session-notes/NoteWizard'
 import { AutomationsPage } from './features/automations/AutomationsPage'
+import { IdleTimeout } from './features/auth/IdleTimeout'
 import { LoginPage } from './features/auth/LoginPage'
 import { BlogPage } from './features/blog/BlogPage'
 import { CalendarsPage } from './features/calendars/CalendarsPage'
@@ -31,8 +39,10 @@ import { SendingSettingsPage } from './features/settings/SendingSettingsPage'
 import { SocialSettingsPage } from './features/settings/SocialSettingsPage'
 import { VoiceSettingsPage } from './features/settings/VoiceSettingsPage'
 import { PipelinesSettingsPage } from './features/settings/PipelinesSettingsPage'
+import { PracticeSettingsPage } from './features/settings/PracticeSettingsPage'
 import { SettingsLayout } from './features/settings/SettingsLayout'
 import { AppShell } from './features/shell/AppShell'
+import { Landing, RequireModule } from './features/shell/RequireModule'
 import { SitesPage } from './features/sites/SitesPage'
 import { SocialPage } from './features/social/SocialPage'
 import { SurveysPage } from './features/surveys/SurveysPage'
@@ -60,6 +70,7 @@ function ProtectedLayout() {
   return (
     <TenantProvider>
       <AppShell />
+      <IdleTimeout />
     </TenantProvider>
   )
 }
@@ -77,41 +88,52 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginRoute />} />
         <Route element={<ProtectedLayout />}>
-          <Route index element={<Navigate to="/assistant" replace />} />
-          <Route path="assistant" element={<AssistantPage />} />
-          <Route path="conversations" element={<InboxPage />} />
-          <Route path="conversations/:id" element={<InboxPage />} />
-          <Route path="contacts" element={<ContactsPage />} />
-          <Route path="contacts/:id" element={<ContactsPage />} />
-          <Route path="tags" element={<TagsPage />} />
+          <Route index element={<Landing />} />
+          <Route path="assistant" element={<RequireModule module="assistant"><AssistantPage /></RequireModule>} />
+          <Route path="conversations" element={<RequireModule module="conversations"><InboxPage /></RequireModule>} />
+          <Route path="conversations/:id" element={<RequireModule module="conversations"><InboxPage /></RequireModule>} />
+          <Route path="contacts" element={<RequireModule module="contacts"><ContactsPage /></RequireModule>} />
+          <Route path="contacts/:id" element={<RequireModule module="contacts"><ContactsPage /></RequireModule>} />
+          <Route path="contacts/:id/notes/new" element={<RequireModule module="session_notes"><NoteWizardPage mode="new" /></RequireModule>} />
+          <Route path="contacts/:id/notes/:noteId" element={<RequireModule module="session_notes"><NoteReportPage /></RequireModule>} />
+          <Route path="contacts/:id/notes/:noteId/edit" element={<RequireModule module="session_notes"><NoteWizardPage mode="edit" /></RequireModule>} />
+          <Route path="documents" element={<RequireModule module="documents"><DocumentsPage tab="templates" /></RequireModule>} />
+          <Route path="documents/sent" element={<RequireModule module="documents"><DocumentsPage tab="sent" /></RequireModule>} />
+          <Route path="documents/packets" element={<RequireModule module="documents"><DocumentsPage tab="packets" /></RequireModule>} />
+          <Route path="documents/templates/:id" element={<RequireModule module="documents"><TemplateEditorPage /></RequireModule>} />
+          <Route path="documents/packets/:id" element={<RequireModule module="documents"><PacketEditorPage /></RequireModule>} />
+          <Route path="tags" element={<RequireModule module="tags"><TagsPage /></RequireModule>} />
           <Route path="settings" element={<SettingsLayout />}>
-            <Route index element={<Navigate to="/settings/pipelines" replace />} />
+            <Route index element={<Navigate to="/settings/practice" replace />} />
+            <Route path="practice" element={<PracticeSettingsPage />} />
+            <Route path="branding" element={<BrandingSettingsPage />} />
+            <Route path="audit" element={<RequireModule module="audit"><AuditLogPage /></RequireModule>} />
             <Route path="pipelines" element={<PipelinesSettingsPage />} />
             <Route path="custom-fields" element={<CustomFieldsPage />} />
             <Route path="custom-values" element={<CustomValuesPage />} />
-            <Route path="agent" element={<AgentSettingsPage />} />
-            <Route path="payments" element={<PaymentsSettingsPage />} />
+            <Route path="agent" element={<RequireModule module="assistant"><AgentSettingsPage /></RequireModule>} />
+            <Route path="payments" element={<RequireModule module="payments"><PaymentsSettingsPage /></RequireModule>} />
             <Route path="sending" element={<SendingSettingsPage />} />
-            <Route path="social" element={<SocialSettingsPage />} />
-            <Route path="voice" element={<VoiceSettingsPage />} />
+            <Route path="social" element={<RequireModule module="social"><SocialSettingsPage /></RequireModule>} />
+            <Route path="voice" element={<RequireModule module="calls"><VoiceSettingsPage /></RequireModule>} />
           </Route>
           {/* Custom Fields + Custom Values moved under Settings; keep the old
               top-level links working for any saved bookmarks. */}
           <Route path="custom-fields" element={<Navigate to="/settings/custom-fields" replace />} />
           <Route path="custom-values" element={<Navigate to="/settings/custom-values" replace />} />
-          <Route path="opportunities" element={<OpportunitiesPage />} />
-          <Route path="tasks" element={<TasksPage />} />
-          <Route path="calendars" element={<CalendarsPage />} />
-          <Route path="calls" element={<CallsPage />} />
-          <Route path="marketing" element={<MarketingPage />} />
-          <Route path="templates" element={<TemplatesPage />} />
-          <Route path="social" element={<SocialPage />} />
-          <Route path="automations" element={<AutomationsPage />} />
-          <Route path="reporting" element={<ReportingPage />} />
-          <Route path="sites" element={<SitesPage />} />
-          <Route path="forms" element={<FormsPage />} />
-          <Route path="surveys" element={<SurveysPage />} />
-          <Route path="payments" element={<PaymentsLayout />}>
+          <Route path="opportunities" element={<RequireModule module="opportunities"><OpportunitiesPage /></RequireModule>} />
+          <Route path="tasks" element={<RequireModule module="tasks"><TasksPage /></RequireModule>} />
+          <Route path="calendars" element={<RequireModule module="calendars"><CalendarsPage /></RequireModule>} />
+          <Route path="calls" element={<RequireModule module="calls"><CallsPage /></RequireModule>} />
+          <Route path="marketing" element={<RequireModule module="marketing"><MarketingPage /></RequireModule>} />
+          <Route path="templates" element={<RequireModule module="templates"><TemplatesPage /></RequireModule>} />
+          <Route path="social" element={<RequireModule module="social"><SocialPage /></RequireModule>} />
+          <Route path="automations" element={<RequireModule module="automations"><AutomationsPage /></RequireModule>} />
+          <Route path="reporting" element={<RequireModule module="reporting"><ReportingPage /></RequireModule>} />
+          <Route path="sites" element={<RequireModule module="sites"><SitesPage /></RequireModule>} />
+          <Route path="forms" element={<RequireModule module="forms"><FormsPage /></RequireModule>} />
+          <Route path="surveys" element={<RequireModule module="surveys"><SurveysPage /></RequireModule>} />
+          <Route path="payments" element={<RequireModule module="payments"><PaymentsLayout /></RequireModule>}>
             <Route index element={<Navigate to="/payments/invoices" replace />} />
             <Route path="invoices" element={<PaymentsPage />} />
             <Route path="products" element={<ProductsPage />} />
@@ -119,14 +141,14 @@ export default function App() {
             <Route path="coupons" element={<CouponsPage />} />
             <Route path="transactions" element={<TransactionsPage />} />
           </Route>
-          <Route path="proposals" element={<ProposalsPage />} />
-          <Route path="reputation" element={<ReputationPage />} />
-          <Route path="memberships" element={<MembershipsPage />} />
-          <Route path="communities" element={<CommunitiesPage />} />
-          <Route path="blog" element={<BlogPage />} />
-          <Route path="trigger-links" element={<TriggerLinksPage />} />
-          <Route path="affiliates" element={<AffiliatesPage />} />
-          <Route path="*" element={<Navigate to="/conversations" replace />} />
+          <Route path="proposals" element={<RequireModule module="proposals"><ProposalsPage /></RequireModule>} />
+          <Route path="reputation" element={<RequireModule module="reputation"><ReputationPage /></RequireModule>} />
+          <Route path="memberships" element={<RequireModule module="memberships"><MembershipsPage /></RequireModule>} />
+          <Route path="communities" element={<RequireModule module="communities"><CommunitiesPage /></RequireModule>} />
+          <Route path="blog" element={<RequireModule module="blog"><BlogPage /></RequireModule>} />
+          <Route path="trigger-links" element={<RequireModule module="trigger_links"><TriggerLinksPage /></RequireModule>} />
+          <Route path="affiliates" element={<RequireModule module="affiliates"><AffiliatesPage /></RequireModule>} />
+          <Route path="*" element={<Landing />} />
         </Route>
       </Routes>
     </AuthProvider>

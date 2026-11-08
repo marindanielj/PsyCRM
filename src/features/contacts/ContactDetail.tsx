@@ -4,7 +4,13 @@ import { Avatar } from '../../components/ui/avatar'
 import { Button } from '../../components/ui/button'
 import { PageSpinner } from '../../components/ui/spinner'
 import { type Contact, type TimelineEvent, api } from '../../lib/api'
+import { moduleEnabled } from '../../lib/modules'
 import { formatPhone } from '../../lib/utils'
+import { useTenant } from '../../state/location'
+import { ClientRiskBadge } from '../session-notes/RiskBadge'
+import { NotesTab } from '../session-notes/NotesTab'
+import { ContactAudit } from '../audit/ContactAudit'
+import { ContactDocuments } from '../documents/ContactDocuments'
 import { ConfirmDeleteContactDialog } from './ConfirmDeleteContactDialog'
 import { ContactCustomFields } from './ContactCustomFields'
 import { ContactState } from './ContactState'
@@ -32,6 +38,9 @@ export function ContactDetail({
   const [data, setData] = useState<Loaded | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [confirming, setConfirming] = useState(false)
+  const { current } = useTenant()
+  const clinicalNotes = moduleEnabled(current, 'session_notes')
+  const documentsOn = moduleEnabled(current, 'documents')
 
   useEffect(() => {
     let active = true
@@ -70,7 +79,10 @@ export function ContactDetail({
           <Avatar name={name} size="lg" />
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-xl font-semibold text-slate-900">{name}</h2>
-            <p className="text-sm text-slate-500">{contact.source ? `via ${contact.source}` : 'Contact'}</p>
+            <p className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
+              <span>{contact.source ? `via ${contact.source}` : 'Contact'}</span>
+              <ClientRiskBadge contactId={contactId} />
+            </p>
           </div>
           {onArchived && (
             <Button
@@ -105,6 +117,13 @@ export function ContactDetail({
           </InfoRow>
         </div>
 
+        {Object.keys((contact.custom_fields.intake_conflicts as object | undefined) ?? {}).length > 0 && (
+          <div role="note" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <strong>Intake answers differ from record – review.</strong> The client answered differently for:{' '}
+            {Object.entries(contact.custom_fields.intake_conflicts as Record<string, { record: string; answered: string }>).map(([k, v]) => `${k.replace(/_/g, ' ')} (record: ${v.record}, answered: ${v.answered})`).join('; ')}.
+          </div>
+        )}
+
         <div className="mt-3">
           <ContactState locationId={locationId} contactId={contactId} initialState={contact.state} />
         </div>
@@ -125,13 +144,31 @@ export function ContactDetail({
           <Tasks locationId={locationId} contactId={contactId} />
         </div>
 
-        <div className="mt-8">
-          <Notes locationId={locationId} contactId={contactId} />
-        </div>
+        {documentsOn && (
+          <div className="mt-8">
+            <ContactDocuments locationId={locationId} contactId={contactId} contactName={name} contactEmail={contact.emails[0] ?? null} customFields={contact.custom_fields} />
+          </div>
+        )}
+
+        {clinicalNotes ? (
+          // Clinical session notes replace the free-text "Notes" panel: those can be edited
+          // and deleted forever, which is exactly what a clinical record must not allow.
+          <div className="mt-8">
+            <NotesTab locationId={locationId} contactId={contactId} />
+          </div>
+        ) : (
+          <div className="mt-8">
+            <Notes locationId={locationId} contactId={contactId} />
+          </div>
+        )}
 
         <div className="mt-8">
           <h3 className="mb-3 text-sm font-semibold text-slate-900">Activity</h3>
           <Timeline events={timeline} />
+        </div>
+
+        <div className="mt-8">
+          <ContactAudit locationId={locationId} contactId={contactId} />
         </div>
       </div>
     </div>

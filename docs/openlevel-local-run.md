@@ -1,3 +1,5 @@
+> **Nota (PsyCRM):** esta guía es la del OpenLevel original. En este repositorio `npm run dev:local` ya no arranca la demostración de OpenLevel sino una práctica de psicología ficticia: la entrada es `demo@psycrm.test` / `psycrm-demo-pass`, y solo los módulos de la práctica aparecen en el menú. Ver [`psycrm/RESULTADOS_DIAS_1_2.md`](psycrm/RESULTADOS_DIAS_1_2.md).
+
 # OpenLevel — local run (no Docker)
 
 OpenLevel is the self-hosted GoHighLevel replacement: a multi-tenant operator

@@ -51,7 +51,7 @@ function paymentsView(settings: Record<string, unknown> | null | undefined): Pay
 }
 
 /** Which outbound providers this location connected (Module 49). */
-export type EmailProviderChoice = 'brevo' | 'none'
+export type EmailProviderChoice = 'brevo' | 'ses' | 'none'
 export type SmsProviderChoice = 'twilio' | 'none'
 
 export interface SendingSettingsView {
@@ -158,7 +158,7 @@ function sendingView(settings: Record<string, unknown> | null | undefined): Send
     }).sending ?? {}
   const str = (v: unknown) => (typeof v === 'string' && v ? v : null)
   return {
-    emailProvider: s.emailProvider === 'brevo' ? 'brevo' : 'none',
+    emailProvider: s.emailProvider === 'brevo' ? 'brevo' : s.emailProvider === 'ses' ? 'ses' : 'none',
     fromEmail: str(s.fromEmail),
     fromName: str(s.fromName),
     smsProvider: s.smsProvider === 'twilio' ? 'twilio' : 'none',

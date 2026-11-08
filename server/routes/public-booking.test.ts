@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { PGlite } from '@electric-sql/pglite'
 import { Hono } from 'hono'
 import type { AppEnv } from '../app-env'
+import type { Database } from '../db/database'
 import { PgliteDatabase } from '../db/pglite-database'
 import { dispatchWorkflowEvent } from '../jobs/workflow-dispatcher'
 import { AppointmentsRepo } from '../repos/appointments-repo'
@@ -266,4 +267,105 @@ test('POST book is 404 for a calendar that is not booking-enabled', async () => 
     }),
   })
   expect(res.status).toBe(404)
+})
+
+// --- audit + date of birth (PsyCRM) --------------------------------------------
+
+async function setupPsycrm(requireDateOfBirth = true) {
+  const s = await setup()
+  const dispatch = async (e: Parameters<typeof dispatchWorkflowEvent>[1]) => {
+    await dispatchWorkflowEvent({ db: s.db }, e)
+  }
+  const app = new Hono<AppEnv>()
+  app.route('/', publicBookingRoute({ db: s.db, dispatch, now: () => NOW, requireDateOfBirth }))
+  return { ...s, app }
+}
+const bookBody = (extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ start: FIRST_SLOT, end: '2025-06-09T13:30:00.000Z', name: 'Olivia Reed', email: 'olivia@example.com', ...extra })
+const book = (app: Hono<AppEnv>, extra: Record<string, unknown> = {}) =>
+  app.request('/loc_test/cash-offer/book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bookBody(extra) })
+
+test('PsyCRM: the booking page asks for a date of birth, and a booking without a valid one is refused', async () => {
+  const { app, db } = await setupPsycrm()
+  const html = await (await app.request('/loc_test/cash-offer')).text()
+  expect(html).toContain('id="ob-dob"')
+  expect(html).toContain("dateOfBirth:val('ob-dob')")
+
+  expect((await book(app)).status).toBe(400)
+  expect((await book(app, { dateOfBirth: '2025-02-30' })).status).toBe(400)
+  expect((await book(app, { dateOfBirth: '2025-06-10' })).status).toBe(400) // tomorrow
+  expect(await db.query('SELECT 1 FROM contacts')).toHaveLength(0)
+  expect(await db.query('SELECT 1 FROM appointments')).toHaveLength(0)
+  expect(await db.query('SELECT 1 FROM audit_log')).toHaveLength(0)
+
+  // plain mode (no flag) neither shows nor requires the field
+  const plain = await setup()
+  expect(await (await plain.app.request('/loc_test/cash-offer')).text()).not.toContain('id="ob-dob"')
+})
+
+test('PsyCRM: a booking stores the date of birth and audits the new client and the appointment as the client, without PHI', async () => {
+  const { app, db } = await setupPsycrm()
+  const res = await book(app, { dateOfBirth: '1990-05-17', phone: '+15125550148' })
+  expect(res.status).toBe(200)
+  const { contactId, appointmentId } = (await res.json()) as { contactId: string; appointmentId: string }
+
+  expect((await db.query<{ custom_fields: Record<string, string> }>('SELECT custom_fields FROM contacts WHERE id=$1', [contactId]))[0]!.custom_fields.date_of_birth).toBe('1990-05-17')
+  const rows = await db.query<{ action: string; actor_type: string; entity_id: string; contact_id: string; details: Record<string, unknown> }>(
+    'SELECT action, actor_type, entity_id, contact_id, details FROM audit_log ORDER BY chain_seq',
+  )
+  // The test calendar has a live appointment_booked workflow, so the booking is
+  // followed by that run's start, step and finish — as the workflow, not the client.
+  expect(rows.map((r) => [r.action, r.actor_type, r.contact_id])).toEqual([
+    ['contact.created', 'client', contactId],
+    ['appointment.booked', 'client', contactId],
+    ['workflow.run_started', 'workflow', contactId],
+    ['workflow.step_executed', 'workflow', contactId],
+    ['workflow.run_finished', 'workflow', contactId],
+  ])
+  expect(rows[1]!.entity_id).toBe(appointmentId)
+  expect(await db.query("SELECT 1 FROM audit_log WHERE action='workflow.step_executed' AND details->>'type'='add_tag'")).toHaveLength(1)
+  const logged = JSON.stringify(rows)
+  for (const phi of ['1990-05-17', 'olivia@example.com', 'Olivia', '5125550148']) expect(logged).not.toContain(phi)
+})
+
+test('a returning client is not audited as created again, and keeps the date of birth already on file', async () => {
+  const { app, db } = await setupPsycrm()
+  expect((await book(app, { dateOfBirth: '1990-05-17' })).status).toBe(200)
+  // a second booking, a week later, by the same email, with a different DOB typo
+  const res = await app.request('/loc_test/cash-offer/book', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ start: '2025-06-09T13:30:00.000Z', end: '2025-06-09T14:00:00.000Z', name: 'Olivia Reed', email: 'olivia@example.com', dateOfBirth: '1991-01-01' }),
+  })
+  expect(res.status).toBe(200)
+  expect(await db.query("SELECT 1 FROM audit_log WHERE action='contact.created'")).toHaveLength(1)
+  expect(await db.query("SELECT 1 FROM audit_log WHERE action='appointment.booked'")).toHaveLength(2)
+  expect((await db.query<{ custom_fields: Record<string, string> }>('SELECT custom_fields FROM contacts'))[0]!.custom_fields.date_of_birth).toBe('1990-05-17')
+})
+
+test('losing the double-book race rolls back the whole booking: no orphan client, no audit rows', async () => {
+  const { db } = await setupPsycrm()
+  // A real transaction on the real schema, but the appointment INSERT raises the
+  // unique-violation another visitor's racing insert would have caused (a single
+  // PGlite connection cannot interleave two requests to produce it naturally).
+  const dup = () => Object.assign(new Error('duplicate key'), { code: '23505' })
+  const racing: Database = {
+    query: (sql, params) => db.query(sql, params),
+    transaction: (fn) =>
+      db.transaction((tx) => {
+        const guarded: Database = {
+          query: (sql, params) => (/INSERT INTO appointments/.test(sql) ? Promise.reject(dup()) : tx.query(sql, params)),
+          transaction: (f) => f(guarded),
+        }
+        return fn(guarded)
+      }),
+  }
+  const app = new Hono<AppEnv>()
+  app.route('/', publicBookingRoute({ db: racing, now: () => NOW, requireDateOfBirth: true }))
+
+  const res = await book(app, { dateOfBirth: '1990-05-17' })
+  expect(res.status).toBe(409)
+  expect(await db.query('SELECT 1 FROM contacts')).toHaveLength(0) // the upserted client was rolled back
+  expect(await db.query('SELECT 1 FROM timeline_events')).toHaveLength(0)
+  expect(await db.query('SELECT 1 FROM audit_log')).toHaveLength(0)
 })

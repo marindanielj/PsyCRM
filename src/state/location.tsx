@@ -7,6 +7,8 @@ interface TenantValue {
   locations: Location[]
   current: Location | null
   setCurrentId: (id: string) => void
+  /** Reload the locations (after the branding was changed, say). */
+  refresh: () => Promise<void>
 }
 
 const TenantContext = createContext<TenantValue | null>(null)
@@ -40,6 +42,14 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     }
   }, [authStatus])
 
+  const refresh = async () => {
+    try {
+      setLocations((await api.locations()).locations)
+    } catch {
+      /* keep what is on screen */
+    }
+  }
+
   const setCurrentId = (id: string) => {
     setCurrentIdState(id)
     localStorage.setItem(STORAGE_KEY, id)
@@ -48,7 +58,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   const current = locations.find((l) => l.id === currentId) ?? locations[0] ?? null
 
   return (
-    <TenantContext.Provider value={{ status, locations, current, setCurrentId }}>
+    <TenantContext.Provider value={{ status, locations, current, setCurrentId, refresh }}>
       {children}
     </TenantContext.Provider>
   )

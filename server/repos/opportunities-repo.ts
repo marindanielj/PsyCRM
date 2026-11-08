@@ -48,6 +48,28 @@ export class OpportunitiesRepo extends LocationScopedRepo {
     return rows[0]
   }
 
+  /** Who moved each card last (the board's "Moved by …" line): an operator by name, or the workflow's label. */
+  async lastMoves(ids: string[]): Promise<Record<string, { by: 'operator' | 'workflow' | 'client' | 'system'; label: string | null; at: string }>> {
+    if (ids.length === 0) return {}
+    const rows = await this.db.query<{ entity_id: string; actor_type: 'operator' | 'workflow' | 'client' | 'system'; actor_label: string | null; operator_name: string | null; occurred_at: Date | string }>(
+      `SELECT DISTINCT ON (a.entity_id) a.entity_id, a.actor_type, a.actor_label, o.name AS operator_name, a.occurred_at
+         FROM audit_log a LEFT JOIN operators o ON a.actor_type = 'operator' AND o.id = a.actor_id
+        WHERE a.location_id = $1 AND a.action = 'pipeline.stage_changed' AND a.entity_type = 'opportunity' AND a.entity_id = ANY($2::text[])
+        ORDER BY a.entity_id, a.chain_seq DESC`,
+      [this.locationId, ids],
+    )
+    return Object.fromEntries(rows.map((r) => [r.entity_id, { by: r.actor_type, label: r.actor_type === 'operator' ? r.operator_name : r.actor_label, at: r.occurred_at instanceof Date ? r.occurred_at.toISOString() : new Date(r.occurred_at).toISOString() }]))
+  }
+
+  /** The client's open card in a pipeline (the newest, if there are several). */
+  async findOpenByContact(contactId: string, pipelineId: string): Promise<Opportunity | undefined> {
+    const rows = await this.scopedSelect<Opportunity>(
+      "SELECT * FROM opportunities WHERE contact_id=$2 AND pipeline_id=$3 AND status='open' ORDER BY created_at DESC LIMIT 1",
+      [contactId, pipelineId],
+    )
+    return rows[0]
+  }
+
   async create(input: OpportunityInput): Promise<Opportunity> {
     const id = nanoid()
     const rows = await this.scopedWrite<Opportunity>(

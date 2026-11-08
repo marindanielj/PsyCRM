@@ -10,6 +10,7 @@ export interface Appointment {
   starts_at: string
   ends_at: string
   status: string
+  checked_in_at: string | null
   location_text: string | null
   notes: string | null
   created_at: string
@@ -89,4 +90,77 @@ export class AppointmentsRepo extends LocationScopedRepo {
     )
     return rows[0]
   }
+
+  /**
+   * reschedule() that also reports the time it moved FROM, read in the same
+   * statement (a CTE snapshots the row before the UPDATE), so the audit log can
+   * say "from X to Y" without a second round trip or a race.
+   */
+  async rescheduleWithPrev(
+    id: string,
+    startsAt: string,
+    endsAt: string,
+  ): Promise<{ appointment: Appointment; prevStartsAt: string | null } | undefined> {
+    const rows = await this.scopedWrite<Appointment & { prev_starts_at?: string | null }>(
+      `WITH old AS (SELECT starts_at FROM appointments WHERE location_id=$1 AND id=$4)
+       UPDATE appointments SET starts_at=$2, ends_at=$3, updated_at=now()
+       WHERE location_id=$1 AND id=$4
+       RETURNING *, (SELECT starts_at FROM old) AS prev_starts_at`,
+      [startsAt, endsAt, id],
+    )
+    const r = splitPrev(rows[0], 'prev_starts_at')
+    return r && { appointment: r.appointment, prevStartsAt: r.prev }
+  }
+
+  /** setStatus() that also reports the status it changed FROM (same CTE trick). */
+  async setStatusWithPrev(
+    id: string,
+    status: string,
+  ): Promise<{ appointment: Appointment; prevStatus: string | null } | undefined> {
+    const rows = await this.scopedWrite<Appointment & { prev_status?: string | null }>(
+      `WITH old AS (SELECT status FROM appointments WHERE location_id=$1 AND id=$3)
+       UPDATE appointments SET status=$2, updated_at=now()
+       WHERE location_id=$1 AND id=$3
+       RETURNING *, (SELECT status FROM old) AS prev_status`,
+      [status, id],
+    )
+    const r = splitPrev(rows[0], 'prev_status')
+    return r && { appointment: r.appointment, prevStatus: r.prev }
+  }
+
+
+  /**
+   * Front-desk check-in: scheduled/confirmed -> checked_in, stamping when. Checking in
+   * twice is a no-op that reports `changed: false`; an appointment that is cancelled,
+   * a no-show or already completed cannot be checked in (`blocked`).
+   */
+  async checkIn(
+    id: string,
+  ): Promise<
+    | { ok: true; appointment: Appointment; changed: boolean; prevStatus: string }
+    | { ok: false; reason: 'not_found' | 'blocked'; status?: string }
+  > {
+    const [cur] = await this.scopedSelect<Appointment>('SELECT * FROM appointments WHERE id=$2', [id])
+    if (!cur) return { ok: false, reason: 'not_found' }
+    if (cur.status === 'checked_in') return { ok: true, appointment: cur, changed: false, prevStatus: cur.status }
+    if (cur.status !== 'scheduled' && cur.status !== 'confirmed') return { ok: false, reason: 'blocked', status: cur.status }
+    const rows = await this.scopedWrite<Appointment>(
+      `UPDATE appointments SET status='checked_in', checked_in_at=now(), updated_at=now()
+       WHERE location_id=$1 AND id=$2 AND status IN ('scheduled','confirmed') RETURNING *`,
+      [id],
+    )
+    // Lost a race with another change between the read and the write: report it honestly.
+    if (!rows[0]) return { ok: false, reason: 'blocked', status: cur.status }
+    return { ok: true, appointment: rows[0], changed: true, prevStatus: cur.status }
+  }
+}
+
+/** Peel a `prev_*` column off a RETURNING row so it never leaks into the API body. */
+function splitPrev(
+  row: object | undefined,
+  column: string,
+): { appointment: Appointment; prev: string | null } | undefined {
+  if (!row) return undefined
+  const { [column]: prev, ...appointment } = row as Record<string, unknown>
+  return { appointment: appointment as unknown as Appointment, prev: (prev as string | null | undefined) ?? null }
 }

@@ -1,6 +1,10 @@
+import { relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { serve } from '@hono/node-server'
+import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
+import { HTTPException } from 'hono/http-exception'
+import { secureHeaders } from 'hono/secure-headers'
 import { Pool } from 'pg'
 import type { AppEnv } from './app-env'
 import { PgDatabase } from './db/database'
@@ -17,6 +21,19 @@ import type { WorkflowDispatch } from './jobs/workflow-dispatcher'
 import { createAnthropicClient } from './lib/anthropic'
 import type { sendChatwootMessage } from './lib/chatwoot-client'
 import { loadConfig } from './lib/config'
+import type { Integration } from './lib/integrations'
+import { IDLE_TTL_MS } from './lib/session'
+import type { Module } from './lib/modules'
+import { moduleGate } from './middleware/module-gate'
+import { auditRoute } from './routes/audit'
+import { practiceRoute } from './routes/practice'
+import type { ResolvedEmailSender } from './lib/sending/resolve'
+import { documentsRoute } from './routes/documents'
+import { brandLogoRoute, brandingRoute } from './routes/branding'
+import { invitesRoute } from './routes/invites'
+import { publicDocumentsRoute } from './routes/public-documents'
+import { publicInvitesRoute } from './routes/public-invites'
+import { sessionNotesRoute } from './routes/session-notes'
 import { notifyPush } from './lib/notify-push'
 import type { SendTextFn } from './lib/operator-tools'
 import { makeHttpSendText } from './lib/send-text-rail'
@@ -92,6 +109,56 @@ export interface AppDeps {
   sendText?: SendTextFn
   /** The hub gateway's shared bearer for /federation/*. Unset => surface is 503. */
   federationServiceToken?: string
+  /** Third-party integrations to mount (none by default). Each moves client data to a
+   *  vendor, so each is turned on deliberately — see lib/integrations.ts. */
+  integrations?: readonly Integration[]
+  /** Sign a web session out after this much inactivity (default IDLE_TTL_MS). */
+  idleTtlMs?: number
+  /** Directory of the built web app to serve (vite build output). Unset = none. */
+  staticDir?: string
+  /** Builds the practice's email sender (signing links and codes). Injectable for tests and dev. */
+  resolveEmail?: (db: Database, locationId: string) => Promise<ResolvedEmailSender>
+  /** Public origin for the links in emails (PUBLIC_BASE_URL). Falls back to each request's origin. */
+  publicBaseUrl?: string
+}
+
+/** Route-group -> module key, for PsyCRM-mode gating. Groups missing here
+ *  (custom-fields, custom-values, settings, practice) are infrastructure that
+ *  is always available. */
+const ROUTE_MODULE: Record<string, Module> = {
+  contacts: 'contacts',
+  conversations: 'conversations',
+  assistant: 'assistant',
+  opportunities: 'opportunities',
+  pipelines: 'opportunities',
+  calendars: 'calendars',
+  campaigns: 'marketing',
+  workflows: 'automations',
+  reporting: 'reporting',
+  funnels: 'sites',
+  forms: 'forms',
+  invoices: 'payments',
+  products: 'payments',
+  subscriptions: 'payments',
+  coupons: 'payments',
+  transactions: 'payments',
+  calls: 'calls',
+  reviews: 'reputation',
+  courses: 'memberships',
+  blog: 'blog',
+  communities: 'communities',
+  social: 'social',
+  surveys: 'surveys',
+  proposals: 'proposals',
+  'trigger-links': 'trigger_links',
+  affiliates: 'affiliates',
+  tasks: 'tasks',
+  templates: 'templates',
+  tags: 'tags',
+  audit: 'audit',
+  'session-notes': 'session_notes',
+  invites: 'contacts',
+  documents: 'documents',
 }
 
 /**
@@ -103,66 +170,139 @@ export interface AppDeps {
  */
 export function createApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
+  const on = new Set<Integration>(deps.integrations ?? [])
+  const idleTtlMs = deps.idleTtlMs ?? IDLE_TTL_MS
+  const auth = () => operatorAuth(deps.sessionSecret, { idleTtlMs, secure: deps.secure })
 
-  app.get('/health', (c) => c.json({ ok: true, service: 'openlevel' }))
+  {
+    // Clinical data: nothing cacheable, nothing embeddable, no referrer leakage
+    // (public signing links carry a token in the path), HTTPS pinned. The CSP is
+    // strict for the app + API; the server-rendered public pages (which inline a
+    // small script/style) get the same headers minus CSP until they use nonces.
+    const baseHeaders = {
+      xFrameOptions: 'DENY',
+      referrerPolicy: 'no-referrer',
+      strictTransportSecurity: 'max-age=31536000; includeSubDomains',
+      crossOriginEmbedderPolicy: false,
+    } as const
+    const csp = {
+      defaultSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:'],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    }
+    const strict = secureHeaders({ ...baseHeaders, contentSecurityPolicy: csp })
+    const relaxed = secureHeaders({ ...baseHeaders, contentSecurityPolicy: undefined })
+    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') || c.req.path.startsWith('/d/') || c.req.path.startsWith('/i/') ? relaxed(c, next) : strict(c, next)))
+    app.use('/api/*', async (c, next) => {
+      await next()
+      c.header('Cache-Control', 'no-store')
+      if (c.req.path.startsWith('/api/public/')) c.header('X-Robots-Tag', 'noindex')
+    })
+  }
 
-  app.route('/api/auth', authRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure }))
-  app.route(
-    '/api/webhooks/chatwoot',
-    chatwootWebhookRoute({ db: deps.db, webhookSecret: deps.webhookSecret, onInbound: deps.onInbound }),
-  )
-  // Public hosted funnel + form pages — unauthenticated, read location from the
-  // URL. Mounted before the operatorAuth boundary so visitors never hit a login.
-  app.route('/api/public/f', publicFunnelsRoute({ db: deps.db, dispatch: deps.dispatch }))
-  app.route('/api/public/forms', publicFormsRoute({ db: deps.db, dispatch: deps.dispatch }))
-  app.route('/api/public/reviews', publicReviewsRoute({ db: deps.db }))
-  app.route('/api/public/courses', publicCoursesRoute({ db: deps.db }))
-  app.route('/api/public/blog', publicBlogRoute({ db: deps.db }))
-  // Public hosted community space — read-only feed of published communities.
-  app.route('/api/public/communities', publicCommunitiesRoute({ db: deps.db }))
-  app.route('/api/public/surveys', publicSurveysRoute({ db: deps.db, dispatch: deps.dispatch }))
-  // Public signable proposal pages — render, sign, decline; a signature fires the
-  // proposal_signed trigger so an accepted proposal can start an automation.
-  app.route('/api/public/proposals', publicProposalsRoute({ db: deps.db, dispatch: deps.dispatch }))
-  // Trigger links redirect + record a click, then fire trigger_link_clicked, so
-  // the public hop carries the dispatch like funnels/forms do.
-  app.route('/api/public/l', publicTriggerLinksRoute({ db: deps.db, dispatch: deps.dispatch }))
-  // Affiliate referral links: record the visit (attributed when ?c= names a real
-  // contact), then 302 to the program landing URL. Self-contained — no dispatch.
-  app.route('/api/public/ref', publicAffiliatesRoute({ db: deps.db }))
+  app.notFound((c) => c.json({ error: 'not found' }, 404))
+
+  // The default handler prints the whole error, and a database error can carry the offending VALUES
+  // (a duplicate email, a name): that would put client data in the logs. Log the code and the method only.
+  app.onError((err, c) => {
+    if (err instanceof HTTPException) return err.getResponse()
+    console.error('request failed', c.req.method, (err as { code?: unknown } | null)?.code ?? 'unknown')
+    return c.json({ error: 'internal error' }, 500)
+  })
+
+  app.get('/health', (c) => c.json({ ok: true, service: 'psycrm' }))
+
+  app.route('/api/auth', authRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure, idleTtlMs }))
+  // Integrations that carry client data to third parties. NONE is mounted unless it
+  // is named in `deps.integrations` (ENABLED_INTEGRATIONS): enabling one is a
+  // deliberate step that should follow a BAA with that vendor. Only the public
+  // booking page below is always on (its calendars stay off until the practice
+  // turns booking on).
+  if (on.has('chatwoot')) {
+    app.route(
+      '/api/webhooks/chatwoot',
+      chatwootWebhookRoute({ db: deps.db, webhookSecret: deps.webhookSecret, onInbound: deps.onInbound }),
+    )
+  }
+  if (on.has('public_pages')) {
+    // Public hosted funnel + form pages — unauthenticated, read location from the
+    // URL. Mounted before the operatorAuth boundary so visitors never hit a login.
+    app.route('/api/public/f', publicFunnelsRoute({ db: deps.db, dispatch: deps.dispatch }))
+    app.route('/api/public/forms', publicFormsRoute({ db: deps.db, dispatch: deps.dispatch }))
+    app.route('/api/public/reviews', publicReviewsRoute({ db: deps.db }))
+    app.route('/api/public/courses', publicCoursesRoute({ db: deps.db }))
+    app.route('/api/public/blog', publicBlogRoute({ db: deps.db }))
+    // Public hosted community space — read-only feed of published communities.
+    app.route('/api/public/communities', publicCommunitiesRoute({ db: deps.db }))
+    app.route('/api/public/surveys', publicSurveysRoute({ db: deps.db, dispatch: deps.dispatch }))
+    // Public signable proposal pages — render, sign, decline; a signature fires the
+    // proposal_signed trigger so an accepted proposal can start an automation.
+    app.route('/api/public/proposals', publicProposalsRoute({ db: deps.db, dispatch: deps.dispatch }))
+    // Trigger links redirect + record a click, then fire trigger_link_clicked, so
+    // the public hop carries the dispatch like funnels/forms do.
+    app.route('/api/public/l', publicTriggerLinksRoute({ db: deps.db, dispatch: deps.dispatch }))
+    // Affiliate referral links: record the visit (attributed when ?c= names a real
+    // contact), then 302 to the program landing URL. Self-contained — no dispatch.
+    app.route('/api/public/ref', publicAffiliatesRoute({ db: deps.db }))
+  }
+  if (on.has('payments')) {
+    // Payment-processor webhooks + the post-checkout landing page. Signature-
+    // verified per location; a completed checkout marks the invoice paid.
+    app.route('/api/public/pay', paymentsWebhookRoute({ db: deps.db }))
+  }
+  if (on.has('voice')) {
+    // Voice-provider webhooks (Twilio status callbacks / Vapi call reports).
+    // Signature-verified per location; events keep the call log honest.
+    app.route('/api/public/voice', voiceWebhookRoute({ db: deps.db }))
+  }
+  if (on.has('federation')) {
+    // The Acme Hub federation surface. Mounted OUTSIDE the operator-session
+    // boundary because it carries its own bearer gate (the hub gateway's shared
+    // service token); it is inert (503) until federationServiceToken is set. The
+    // tenant rides in the trusted X-Federation-Tenant header, never the body.
+    app.route(
+      '/',
+      federationRoute({
+        db: deps.db,
+        federationServiceToken: deps.federationServiceToken,
+        claude: deps.claude,
+        sendText: deps.sendText,
+      }),
+    )
+  }
   // Hosted booking pages: pick a day + time, leave details. A booking creates a
   // contact + appointment and fires appointment_booked into live automations.
-  app.route('/api/public/booking', publicBookingRoute({ db: deps.db, dispatch: deps.dispatch }))
-  // Payment-processor webhooks + the post-checkout landing page. Signature-
-  // verified per location; a completed checkout marks the invoice paid.
-  app.route('/api/public/pay', paymentsWebhookRoute({ db: deps.db }))
-  // Voice-provider webhooks (Twilio status callbacks / Vapi call reports).
-  // Signature-verified per location; events keep the call log honest.
-  app.route('/api/public/voice', voiceWebhookRoute({ db: deps.db }))
+  // Client-facing signing pages (one-time-code verified, strict per-page CSP). Always on; a practice that turns the documents module off gets "invalid link".
+  app.route('/d', publicDocumentsRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure, dispatch: deps.dispatch, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
+  // Client invitation pages (one-time link, own nonce CSP). Always on; a practice with contacts off gets "invalid link".
+  // A practice's logo, for the pages its clients see.
+  app.route('/brand', brandLogoRoute({ db: deps.db }))
+  app.route('/i', publicInvitesRoute({ db: deps.db, dispatch: deps.dispatch }))
+  app.route('/api/public/booking', publicBookingRoute({ db: deps.db, dispatch: deps.dispatch, requireDateOfBirth: true }))
 
-  // The Acme Hub federation surface. Mounted OUTSIDE the operator-session
-  // boundary because it carries its own bearer gate (the hub gateway's shared
-  // service token); it is inert (503) until federationServiceToken is set. The
-  // tenant rides in the trusted X-Federation-Tenant header, never the body.
-  app.route(
-    '/',
-    federationRoute({
-      db: deps.db,
-      federationServiceToken: deps.federationServiceToken,
-      claude: deps.claude,
-      sendText: deps.sendText,
-    }),
-  )
-
-  app.use('/api/locations', operatorAuth(deps.sessionSecret))
+  app.use('/api/locations', auth())
   app.route('/api/locations', locationsRoute({ db: deps.db }))
 
-  app.use('/api/push-tokens', operatorAuth(deps.sessionSecret))
-  app.route('/api/push-tokens', pushTokensRoute({ db: deps.db }))
+  if (on.has('push')) {
+    app.use('/api/push-tokens', auth())
+    app.route('/api/push-tokens', pushTokensRoute({ db: deps.db }))
+  }
 
-  app.use('/api/loc/:loc/*', operatorAuth(deps.sessionSecret))
+  app.use('/api/loc/:loc/*', auth())
   app.use('/api/loc/:loc/*', locationAccess(deps.db))
-  app.route('/api/loc/:loc/contacts', contactsRoute({ db: deps.db }))
+  {
+    // 404 any route group whose module this location has not enabled.
+    for (const [group, module] of Object.entries(ROUTE_MODULE)) {
+      // `/x/*` also matches `/x` itself; one registration = one settings lookup per request.
+      app.use(`/api/loc/:loc/${group}/*`, moduleGate(deps.db, module))
+    }
+  }
+  app.route('/api/loc/:loc/contacts', contactsRoute({ db: deps.db, requireDateOfBirth: true, dispatch: deps.dispatch }))
   app.route(
     '/api/loc/:loc/conversations',
     conversationsRoute({ db: deps.db, claude: deps.claude, sendMessage: deps.sendMessage }),
@@ -171,14 +311,16 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // across the location with its tools and answers, and (approve-first) drafts a
   // text the operator confirms. The confirm tap is the only send path; deps.sendText
   // is the gateway rail it goes through. 501 when no Claude client is configured.
-  app.route('/api/loc/:loc/assistant', assistantRoute({ db: deps.db, claude: deps.claude, sendText: deps.sendText }))
+  if (on.has('ai')) {
+    app.route('/api/loc/:loc/assistant', assistantRoute({ db: deps.db, claude: deps.claude, sendText: deps.sendText }))
+  }
   app.route('/api/loc/:loc/opportunities', opportunitiesRoute({ db: deps.db, dispatch: deps.dispatch }))
   // Pipeline + stage *structure* management (the Settings -> Pipelines area). The
   // opportunities route owns the board reads/writes; this owns create/rename/
   // delete of pipelines and their stages, with guarded deletes (never a silent
   // cascade over live deals).
   app.route('/api/loc/:loc/pipelines', pipelinesRoute({ db: deps.db }))
-  app.route('/api/loc/:loc/calendars', calendarsRoute({ db: deps.db }))
+  app.route('/api/loc/:loc/calendars', calendarsRoute({ db: deps.db, dispatch: deps.dispatch }))
   app.route('/api/loc/:loc/campaigns', campaignsRoute({ db: deps.db }))
   app.route('/api/loc/:loc/workflows', workflowsRoute({ db: deps.db }))
   app.route('/api/loc/:loc/reporting', reportingRoute({ db: deps.db }))
@@ -232,8 +374,95 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // AI Agent settings (the "AI Agent" settings area): reply mode (approve-first /
   // autonomous) + the agent's persona, instructions, and knowledge-base facts.
   app.route('/api/loc/:loc/settings', settingsRoute({ db: deps.db }))
+  // Clinical session notes: DAP + mental status + mandatory risk assessment, locked after 72 h.
+  app.route('/api/loc/:loc/session-notes', sessionNotesRoute({ db: deps.db, dispatch: deps.dispatch }))
+  // Document templates (versioned, immutable once active) and packets.
+  // Settings -> Branding (name, accent colour, logo). Always available: it is configuration, not a module.
+  app.route('/api/loc/:loc/branding', brandingRoute({ db: deps.db }))
+  app.route('/api/loc/:loc/invites', invitesRoute({ db: deps.db, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
+  app.route('/api/loc/:loc/documents', documentsRoute({ db: deps.db, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
+  // The audit log (read-only) + its integrity check and CSV export.
+  app.route('/api/loc/:loc/audit', auditRoute({ db: deps.db }))
+  // The practice profile (name, license, fees, cancellation policy).
+  app.route('/api/loc/:loc/practice', practiceRoute({ db: deps.db }))
+
+  // Serve the built web app from this process (production container). Registered
+  // last so every /api route wins; unknown non-API GETs fall back to index.html
+  // for client-side routing.
+  if (deps.staticDir) {
+    const root = relative(process.cwd(), resolve(deps.staticDir)) || '.'
+    const index = `${root}/index.html`
+    app.use('/assets/*', async (c, next) => {
+      await next()
+      c.header('Cache-Control', 'public, max-age=31536000, immutable')
+    })
+    app.use('*', serveStatic({ root }))
+    app.get('*', async (c, next) => {
+      if (c.req.path.startsWith('/api/') || c.req.path === '/health') return next()
+      c.header('Cache-Control', 'no-store')
+      return serveStatic({ path: index })(c, next)
+    })
+  }
 
   return app
+}
+
+/**
+ * The deps each enabled integration needs at boot. Anything not enabled contributes
+ * nothing, so a disabled integration has no client, no token and no callback to
+ * leak through.
+ */
+function integrationDeps(
+  config: ReturnType<typeof loadConfig>,
+  boss: Awaited<ReturnType<typeof startBoss>>,
+): Pick<AppDeps, 'sendText' | 'federationServiceToken' | 'onInbound'> {
+  const has = (i: Integration) => config.ENABLED_INTEGRATIONS.includes(i)
+  return {
+    // The approve-first text rail (assistant + federation). The env vars are the
+    // deployment control, NOT a feature flag: when GATEWAY_TEXT_URL/INTERNAL_PUSH_SECRET
+    // are unset the rail honestly reports "not set up" rather than silently dropping.
+    sendText:
+      has('ai') || has('federation')
+        ? makeHttpSendText({
+            url: process.env.GATEWAY_TEXT_URL ?? '',
+            secret: process.env.INTERNAL_PUSH_SECRET ?? '',
+          })
+        : undefined,
+    // The hub gateway's shared bearer for /federation/*. Unset => that surface
+    // stays inert (503).
+    federationServiceToken: has('federation') ? config.FEDERATION_SERVICE_TOKEN : undefined,
+    // A fresh inbound fires the inbound_message trigger (so message-triggered
+    // workflows enroll the contact) and, only with the matching integrations on,
+    // drafts an agent reply and nudges the mobile app.
+    onInbound: has('chatwoot')
+      ? async (e) => {
+          if (has('ai')) {
+            await enqueueAgentReply(boss, {
+              locationId: e.locationId,
+              conversationId: e.conversationId,
+              contactId: e.contactId,
+            })
+          }
+          await enqueueWorkflowEvent(boss, {
+            locationId: e.locationId,
+            triggerType: 'inbound_message',
+            contactId: e.contactId,
+          })
+          if (has('push')) {
+            // Fire-and-forget — a down/unconfigured gateway must never block ingestion.
+            void notifyPush(
+              { url: process.env.GATEWAY_PUSH_URL ?? '', secret: process.env.INTERNAL_PUSH_SECRET ?? '' },
+              {
+                source: 'openlevel', // the push contract's fixed source id
+                title: 'New message',
+                body: '', // never put message text or a client name in a push payload
+                data: { conversationId: e.conversationId, locationId: e.locationId },
+              },
+            )
+          }
+        }
+      : undefined,
+  }
 }
 
 async function bootstrap() {
@@ -242,62 +471,40 @@ async function bootstrap() {
   const pool = new Pool({ connectionString: config.DATABASE_URL })
   const db = new PgDatabase(pool)
 
-  // Jobs: pg-boss runs the agent-reply + workflow-dispatch workers; routes and
-  // the webhook enqueue onto them.
+  const integrations = config.ENABLED_INTEGRATIONS
+  const has = (i: Integration) => integrations.includes(i)
+
+  // Jobs: pg-boss runs the workflow-dispatch worker (and the agent-reply worker only
+  // when the AI integration is on); routes enqueue onto them.
   const boss = await startBoss(config.DATABASE_URL)
   const dispatch: WorkflowDispatch = (e) => enqueueWorkflowEvent(boss, e)
-  // The autonomous agent books/tags through real tools; thread the dispatcher so
-  // an agent-booked appointment fires appointment_booked like the public page.
-  await registerAgentReplyWorker(boss, { db, claude: createAnthropicClient(), dispatch })
-  await registerWorkflowDispatchWorker(boss, { db })
+  // No Claude client unless the AI integration is enabled: client data never goes
+  // to an AI provider by default.
+  const claude = has('ai') ? createAnthropicClient() : undefined
+  if (claude) {
+    // The autonomous agent books/tags through real tools; thread the dispatcher so
+    // an agent-booked appointment fires appointment_booked like the public page.
+    await registerAgentReplyWorker(boss, { db, claude, dispatch })
+  }
+  await registerWorkflowDispatchWorker(boss, { db, dispatch, publicBaseUrl: config.PUBLIC_BASE_URL })
 
   const app = createApp({
     db,
     sessionSecret: config.SESSION_SECRET,
     webhookSecret: config.CHATWOOT_WEBHOOK_SECRET,
     secure: config.NODE_ENV === 'production',
-    claude: createAnthropicClient(),
+    staticDir: config.STATIC_DIR,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+    integrations,
+    claude,
     dispatch,
-    // The approve-first text rail. Injected unconditionally — the env vars are the
-    // deployment control, NOT a feature flag (no dormant texting toggle). When
-    // GATEWAY_TEXT_URL/INTERNAL_PUSH_SECRET are unset, the rail honestly reports
-    // "not set up" rather than silently dropping. Reuses the gateway's internal
-    // push secret; the gateway owns the Beeper credential, OpenLevel never sees it.
-    sendText: makeHttpSendText({
-      url: process.env.GATEWAY_TEXT_URL ?? '',
-      secret: process.env.INTERNAL_PUSH_SECRET ?? '',
-    }),
-    // The hub gateway's shared bearer for /federation/*. Unset => that surface
-    // stays inert (503); the env var is the deployment control, not a feature flag.
-    federationServiceToken: config.FEDERATION_SERVICE_TOKEN,
-    // A fresh inbound both drafts an agent reply and fires the inbound_message
-    // trigger so message-triggered workflows enroll the contact.
-    onInbound: async (e) => {
-      await enqueueAgentReply(boss, {
-        locationId: e.locationId,
-        conversationId: e.conversationId,
-        contactId: e.contactId,
-      })
-      await enqueueWorkflowEvent(boss, {
-        locationId: e.locationId,
-        triggerType: 'inbound_message',
-        contactId: e.contactId,
-      })
-      // Nudge the Hub Android app out-of-process: a fresh inbound just landed.
-      // Fire-and-forget — a down/unconfigured gateway must never block ingestion.
-      void notifyPush(
-        { url: process.env.GATEWAY_PUSH_URL ?? '', secret: process.env.INTERNAL_PUSH_SECRET ?? '' },
-        {
-          source: 'openlevel',
-          title: e.contactName ? `New message — ${e.contactName}` : 'New OpenLevel message',
-          body: (e.preview ?? '').slice(0, 140),
-          data: { conversationId: e.conversationId, locationId: e.locationId },
-        },
-      )
-    },
+    ...integrationDeps(config, boss),
   })
   serve({ fetch: app.fetch, port: config.PORT })
-  console.log(`openlevel api listening on :${config.PORT}`)
+  console.log(`psycrm api listening on :${config.PORT}`)
+  // Names only. A reviewer reading the boot log can see at a glance which vendors
+  // are connected.
+  console.log(`integrations enabled: ${integrations.length > 0 ? integrations.join(', ') : 'none'}`)
 }
 
 // Boot only when run directly (tsx server/index.ts), never on import (tests).

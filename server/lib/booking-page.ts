@@ -27,6 +27,9 @@ export interface BookingPageData {
   dates: string[]
   /** Location branding color for the CTA + accents. */
   brandColor?: string
+  /** Ask for (and require) a date of birth — PsyCRM picks the onboarding
+   *  packet by the client's age, so a booking must carry one. */
+  requireDateOfBirth?: boolean
 }
 
 /** A friendly timezone label — the city of an IANA zone, e.g. "New York". Falls
@@ -124,7 +127,7 @@ function bookingScript(actionBase: string): string {
       e.preventDefault();
       if(!chosen)return;
       var btn=form.querySelector('button[type="submit"]');
-      var payload={start:chosen.start,end:chosen.end,name:val('ob-name'),email:val('ob-email'),phone:val('ob-phone'),notes:val('ob-notes')};
+      var payload={start:chosen.start,end:chosen.end,name:val('ob-name'),email:val('ob-email'),phone:val('ob-phone'),notes:val('ob-notes'),dateOfBirth:val('ob-dob')};
       if(btn){btn.disabled=true;btn.textContent='Booking…';}
       fetch(base+'/book',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
         .then(function(r){return r.json().catch(function(){return {};}).then(function(d){return {ok:r.ok,d:d};});})
@@ -197,6 +200,14 @@ export function renderBookingPage(calendar: Calendar, data: BookingPageData): st
           <label class="ol-label" for="ob-email">Email</label>
           <input class="ol-input" id="ob-email" name="email" type="email" placeholder="you@example.com" required />
         </div>
+        ${
+          data.requireDateOfBirth
+            ? `<div class="ol-field">
+          <label class="ol-label" for="ob-dob">Date of birth</label>
+          <input class="ol-input" id="ob-dob" name="dateOfBirth" type="date" required />
+        </div>`
+            : ''
+        }
         <div class="ol-field">
           <label class="ol-label" for="ob-phone">Phone (optional)</label>
           <input class="ol-input" id="ob-phone" name="phone" type="tel" placeholder="Phone" />

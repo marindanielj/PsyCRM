@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { INTEGRATION_NAMES, type Integration, parseIntegrations } from './integrations'
 
 /**
  * Environment parsing with safe dev defaults. Secrets default to obviously
@@ -23,6 +24,33 @@ const EnvSchema = z.object({
   // when unset the federation surface is inert (503). If present in production it
   // must be long enough to resist guessing.
   FEDERATION_SERVICE_TOKEN: z.string().optional(),
+  // Third-party integrations to turn ON (comma-separated; none by default). Each one
+  // moves client information to a vendor, so each is enabled on purpose, one at a
+  // time, after a BAA — see lib/integrations.ts and docs/psycrm/INTEGRACIONES.md.
+  // An unknown name fails the boot instead of being silently ignored.
+  ENABLED_INTEGRATIONS: z
+    .string()
+    .default('')
+    .transform((raw, ctx): Integration[] => {
+      const { enabled, unknown } = parseIntegrations(raw)
+      if (unknown.length > 0) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `unknown integration(s): ${unknown.join(', ')} (valid: ${INTEGRATION_NAMES.join(', ')})`,
+        })
+        return z.NEVER
+      }
+      return enabled
+    }),
+  // Public origin used to build links in outbound email (document signing, etc.).
+  PUBLIC_BASE_URL: z.string().url().optional(),
+  /** Amazon SES: the verified sender and region (the task's IAM role is the credential; there is no key). */
+  SES_FROM_ADDRESS: z.string().optional(),
+  SES_REGION: z.string().optional(),
+  SES_CONFIGURATION_SET: z.string().optional(),
+  // Directory holding the built web app (vite build output) to serve from the API
+  // process. Empty = serve no static files (dev: Vite serves the SPA itself).
+  STATIC_DIR: z.string().optional(),
 })
 
 export type Config = z.infer<typeof EnvSchema>
@@ -42,9 +70,22 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const config = EnvSchema.parse(env)
   if (config.NODE_ENV === 'production') {
     assertProdSecret('SESSION_SECRET', config.SESSION_SECRET, DEV_SESSION_SECRET)
-    assertProdSecret('CHATWOOT_WEBHOOK_SECRET', config.CHATWOOT_WEBHOOK_SECRET, DEV_WEBHOOK_SECRET)
+    // The Chatwoot webhook secret only matters while that integration is on.
+    if (config.ENABLED_INTEGRATIONS.includes('chatwoot')) {
+      assertProdSecret('CHATWOOT_WEBHOOK_SECRET', config.CHATWOOT_WEBHOOK_SECRET, DEV_WEBHOOK_SECRET)
+    }
     if (config.FEDERATION_SERVICE_TOKEN !== undefined && config.FEDERATION_SERVICE_TOKEN.length < MIN_PROD_SECRET_LEN) {
       throw new Error(`FEDERATION_SERVICE_TOKEN must be at least ${MIN_PROD_SECRET_LEN} characters in production`)
+    }
+    // The signing and invitation links in emails are built from this. Behind a load balancer a request's own
+    // origin is http://, so guessing it would put insecure (or wrong) links in front of clients.
+    if (!config.PUBLIC_BASE_URL || !config.PUBLIC_BASE_URL.startsWith('https://')) {
+      throw new Error('PUBLIC_BASE_URL must be set to the https:// address of the app in production (it is used in emailed links)')
+    }
+    // PHI in transit to the database must be encrypted AND the server verified.
+    // node-postgres reads sslmode / sslrootcert from the URL (also used by pg-boss).
+    if (config.DATABASE_URL && !/[?&]sslmode=verify-(full|ca)\b/.test(config.DATABASE_URL)) {
+      throw new Error('DATABASE_URL must use sslmode=verify-full (with sslrootcert) in production')
     }
   }
   return config

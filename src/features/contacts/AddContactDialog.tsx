@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
+import { ApiError } from '../../lib/api'
 
 /**
  * Add a contact by hand (the Contacts header button). The operator types any of
@@ -17,27 +18,42 @@ import { Label } from '../../components/ui/label'
 export function AddContactDialog({
   onCancel,
   onCreate,
+  requireDateOfBirth = true,
 }: {
   onCancel: () => void
   /** Saves the contact; the page owns navigating to the result. */
-  onCreate: (input: { name?: string; phone?: string; email?: string }) => Promise<void>
+  onCreate: (input: { name?: string; phone?: string; email?: string; dateOfBirth?: string; skipOnboarding?: boolean }) => Promise<void>
+  /** The onboarding packet is chosen by age, so a date of birth is mandatory (default). */
+  requireDateOfBirth?: boolean
 }) {
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
+  const [dob, setDob] = useState('')
+  // On by default: a new client starts onboarding (the packet goes out by email) on its own.
+  const [sendPacket, setSendPacket] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const hasInput = Boolean(name.trim() || phone.trim() || email.trim())
+  const ready = hasInput && (!requireDateOfBirth || Boolean(dob))
+  // Latest selectable day: today (local). A birth date cannot be in the future.
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10)
 
   async function save() {
-    if (!hasInput || saving) return
+    if (!ready || saving) return
     setSaving(true)
+    setError(null)
     try {
       await onCreate({
         name: name.trim() || undefined,
         phone: phone.trim() || undefined,
         email: email.trim() || undefined,
+        dateOfBirth: dob || undefined,
+        skipOnboarding: sendPacket ? undefined : true,
       })
+    } catch (e) {
+      setError(e instanceof ApiError && e.message ? e.message : 'Could not add the contact.')
     } finally {
       setSaving(false)
     }
@@ -90,6 +106,32 @@ export function AddContactDialog({
               inputMode="email"
             />
           </div>
+          {requireDateOfBirth ? (
+            <div>
+              <Label htmlFor="add-dob">Date of birth</Label>
+              <Input
+                id="add-dob"
+                type="date"
+                value={dob}
+                max={today}
+                onChange={(e) => setDob(e.target.value)}
+                required
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Needed to send the right onboarding documents (adult or minor).
+              </p>
+            </div>
+          ) : null}
+          {requireDateOfBirth ? (
+            <label className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+              <input type="checkbox" className="mt-0.5" checked={sendPacket} onChange={(e) => setSendPacket(e.target.checked)} />
+              <span>
+                <span className="font-medium">Send onboarding packet now</span>
+                <span className="block text-xs text-slate-500">Emails the documents to sign (needs an email). Untick to send them yourself later.</span>
+              </span>
+            </label>
+          ) : null}
+          {error ? <p className="text-xs font-medium text-rose-600">{error}</p> : null}
         </div>
 
         <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3.5">
@@ -99,7 +141,7 @@ export function AddContactDialog({
           <Button
             type="button"
             size="sm"
-            disabled={!hasInput || saving}
+            disabled={!ready || saving}
             onClick={() => void save()}
           >
             <UserPlus className="h-4 w-4" />

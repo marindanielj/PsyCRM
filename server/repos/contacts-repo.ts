@@ -46,6 +46,21 @@ export class ContactsRepo extends LocationScopedRepo {
    * a sparser later webhook never clobbers richer earlier data.
    */
   async upsertByMatch(input: ContactInput, source: string): Promise<Contact> {
+    return (await this.upsertByMatchFlagged(input, source)).contact
+  }
+
+  /**
+   * Same as upsertByMatch, but also says whether the row was freshly INSERTED or
+   * an existing contact matched. Postgres sets xmax to 0 only on a row the
+   * statement itself inserted (a conflict-update rewrites it), which is what the
+   * audit log needs to tell "client created" from "client already existed".
+   * `created` is false only when the database says so — a stub that returns no
+   * flag reads as created.
+   */
+  async upsertByMatchFlagged(
+    input: ContactInput,
+    source: string,
+  ): Promise<{ contact: Contact; created: boolean }> {
     const key = matchKey(this.locationId, input)
     const id = nanoid()
     const phones = input.phone ? [normalizePhone(input.phone)] : []
@@ -55,10 +70,11 @@ export class ContactsRepo extends LocationScopedRepo {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT (location_id, match_key) WHERE match_key IS NOT NULL
        DO UPDATE SET match_key = EXCLUDED.match_key
-       RETURNING *`,
+       RETURNING *, (xmax = 0) AS inserted`,
       [id, this.locationId, input.name ?? null, phones, emails, key, source, input.externalIds ?? {}],
     )
-    return rows[0]!
+    const { inserted, ...contact } = rows[0]! as Contact & { inserted?: boolean }
+    return { contact: contact as Contact, created: inserted !== false }
   }
 
   list(limit = 50): Promise<Contact[]> {

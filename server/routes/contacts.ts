@@ -3,6 +3,9 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import type { AppEnv } from '../app-env'
 import type { Database } from '../db/database'
+import type { WorkflowDispatch } from '../jobs/workflow-dispatcher'
+import { isValidIsoDate, todayIn } from '../lib/age'
+import { audit, auditContext } from '../lib/audit'
 import { coerceCustomFieldValue } from '../lib/custom-field-key'
 import { ContactNotesRepo } from '../repos/contact-notes-repo'
 import { ContactTasksRepo } from '../repos/contact-tasks-repo'
@@ -19,6 +22,11 @@ const createContactSchema = z
     name: z.string().trim().optional(),
     phone: z.string().trim().optional(),
     email: z.string().trim().optional(),
+    // YYYY-MM-DD. Required when the deployment says so (PsyCRM: the onboarding
+    // packet is chosen by age); see deps.requireDateOfBirth.
+    dateOfBirth: z.string().trim().optional(),
+    // PsyCRM: "Send onboarding packet now" unticked — the automatic onboarding workflow skips this client.
+    skipOnboarding: z.boolean().optional(),
   })
   .refine((v) => Boolean(v.name || v.phone || v.email), {
     message: 'provide a name, phone, or email',
@@ -92,7 +100,15 @@ const contactStateSchema = z.object({ state: z.string().trim().nullable() })
  * /:id/notes, and operator to-dos (the "Tasks" panel), nested at /:id/tasks.
  * Both are operator-only and never move money or send anything.
  */
-export function contactsRoute(deps: { db: Database }): Hono<AppEnv> {
+export function contactsRoute(deps: {
+  db: Database
+  /** PsyCRM: a new client must come with a valid date of birth (not in the future). */
+  requireDateOfBirth?: boolean
+  /** Injectable clock for the "not in the future" check (tests). */
+  today?: () => string
+  /** Fired after a NEW client is created, so a live `contact_created` workflow (onboarding) can start. */
+  dispatch?: WorkflowDispatch
+}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
   app.get('/', async (c) => {
@@ -113,11 +129,37 @@ export function contactsRoute(deps: { db: Database }): Hono<AppEnv> {
   // operator-entered (vs. a Beeper/Chatwoot inbound). Never sends or charges.
   app.post('/', zValidator('json', createContactSchema), async (c) => {
     const loc = c.get('locationId')
-    const { name, phone, email } = c.req.valid('json')
-    const contact = await new ContactsRepo(deps.db, loc).upsertByMatch(
-      { name: name || undefined, phone: phone || undefined, email: email || undefined },
-      'manual',
-    )
+    const { name, phone, email, dateOfBirth, skipOnboarding } = c.req.valid('json')
+    const dob = dateOfBirth || undefined
+    if (dob !== undefined && !isValidIsoDate(dob)) return c.json({ error: 'dateOfBirth must be a valid YYYY-MM-DD date' }, 400)
+    if (dob !== undefined && dob > (deps.today?.() ?? todayIn())) return c.json({ error: 'dateOfBirth cannot be in the future' }, 400)
+    if (deps.requireDateOfBirth && dob === undefined) return c.json({ error: 'dateOfBirth is required' }, 400)
+
+    const { contact, created } = await deps.db.transaction(async (tx) => {
+      const repo = new ContactsRepo(tx, loc)
+      const r = await repo.upsertByMatchFlagged(
+        { name: name || undefined, phone: phone || undefined, email: email || undefined },
+        'manual',
+      )
+      // Never overwrite a date of birth already on file for a matched client.
+      if (dob !== undefined && !r.contact.custom_fields?.date_of_birth) {
+        r.contact = (await repo.setCustomField(r.contact.id, 'date_of_birth', dob)) ?? r.contact
+      }
+      if (r.created) {
+        await audit(tx, loc, {
+          action: 'contact.created',
+          entityType: 'contact',
+          entityId: r.contact.id,
+          contactId: r.contact.id,
+          details: { source: 'manual', fields: [name && 'name', phone && 'phone', email && 'email', dob && 'date_of_birth'].filter(Boolean) },
+          ...auditContext(c),
+        })
+      }
+      return r
+    })
+    if (created) {
+      await deps.dispatch?.({ locationId: loc, triggerType: 'contact_created', contactId: contact.id, payload: { source: 'manual', skipOnboarding: skipOnboarding === true }, depth: 0 })
+    }
     return c.json({ ok: true, contact }, 201)
   })
 
@@ -136,6 +178,14 @@ export function contactsRoute(deps: { db: Database }): Hono<AppEnv> {
     const contact = await new ContactsRepo(deps.db, loc).get(id)
     if (!contact) return c.json({ error: 'not found' }, 404)
     const timeline = await new TimelineRepo(deps.db, loc).listByContact(id)
+    // Opening a client's record is itself an access to PHI: log it (fail closed).
+    await audit(deps.db, loc, {
+      action: 'contact.viewed',
+      entityType: 'contact',
+      entityId: id,
+      contactId: id,
+      ...auditContext(c),
+    })
     return c.json({ contact, timeline })
   })
 
@@ -145,7 +195,13 @@ export function contactsRoute(deps: { db: Database }): Hono<AppEnv> {
   // AI tool — only the operator's own click reaches it. 404 if not in location.
   app.delete('/:id', async (c) => {
     const loc = c.get('locationId')
-    const contact = await new ContactsRepo(deps.db, loc).archive(c.req.param('id'))
+    const contact = await deps.db.transaction(async (tx) => {
+      const archived = await new ContactsRepo(tx, loc).archive(c.req.param('id'))
+      if (archived) {
+        await audit(tx, loc, { action: 'contact.archived', entityType: 'contact', entityId: archived.id, contactId: archived.id, ...auditContext(c) })
+      }
+      return archived
+    })
     if (!contact) return c.json({ error: 'not found' }, 404)
     return c.json({ ok: true, contact })
   })
@@ -154,7 +210,13 @@ export function contactsRoute(deps: { db: Database }): Hono<AppEnv> {
   // "Restore" control). 404 if the contact is not in this location.
   app.post('/:id/restore', async (c) => {
     const loc = c.get('locationId')
-    const contact = await new ContactsRepo(deps.db, loc).restore(c.req.param('id'))
+    const contact = await deps.db.transaction(async (tx) => {
+      const restored = await new ContactsRepo(tx, loc).restore(c.req.param('id'))
+      if (restored) {
+        await audit(tx, loc, { action: 'contact.restored', entityType: 'contact', entityId: restored.id, contactId: restored.id, ...auditContext(c) })
+      }
+      return restored
+    })
     if (!contact) return c.json({ error: 'not found' }, 404)
     return c.json({ ok: true, contact })
   })
@@ -168,7 +230,13 @@ export function contactsRoute(deps: { db: Database }): Hono<AppEnv> {
     const loc = c.get('locationId')
     const raw = c.req.valid('json').state
     const state = raw ? raw : null // '' (trimmed) or null both clear
-    const contact = await new ContactsRepo(deps.db, loc).setState(c.req.param('id'), state)
+    const contact = await deps.db.transaction(async (tx) => {
+      const updated = await new ContactsRepo(tx, loc).setState(c.req.param('id'), state)
+      if (updated) {
+        await audit(tx, loc, { action: 'contact.updated', entityType: 'contact', entityId: updated.id, contactId: updated.id, details: { fields: ['state'], to: state }, ...auditContext(c) })
+      }
+      return updated
+    })
     if (!contact) return c.json({ error: 'not found' }, 404)
     return c.json({ ok: true, contact })
   })
@@ -182,31 +250,45 @@ export function contactsRoute(deps: { db: Database }): Hono<AppEnv> {
   app.post('/:id/notes', zValidator('json', createNoteSchema), async (c) => {
     const loc = c.get('locationId')
     const { body, author } = c.req.valid('json')
-    const note = await new ContactNotesRepo(deps.db, loc).create({
-      contactId: c.req.param('id'),
-      body,
-      author: author ?? null,
+    const contactId = c.req.param('id')
+    const note = await deps.db.transaction(async (tx) => {
+      const created = await new ContactNotesRepo(tx, loc).create({ contactId, body, author: author ?? null })
+      await audit(tx, loc, { action: 'contact.note_added', entityType: 'contact_note', entityId: created.id, contactId, ...auditContext(c) })
+      return created
     })
     return c.json({ ok: true, note }, 201)
   })
 
   app.patch('/:id/notes/:noteId', zValidator('json', patchNoteSchema), async (c) => {
     const loc = c.get('locationId')
-    const note = await new ContactNotesRepo(deps.db, loc).update(
-      c.req.param('id'),
-      c.req.param('noteId'),
-      c.req.valid('json'),
-    )
+    const patch = c.req.valid('json')
+    const note = await deps.db.transaction(async (tx) => {
+      const updated = await new ContactNotesRepo(tx, loc).update(c.req.param('id'), c.req.param('noteId'), patch)
+      if (updated) {
+        await audit(tx, loc, {
+          action: 'contact.note_updated',
+          entityType: 'contact_note',
+          entityId: updated.id,
+          contactId: c.req.param('id'),
+          details: { fields: Object.keys(patch) },
+          ...auditContext(c),
+        })
+      }
+      return updated
+    })
     if (!note) return c.json({ error: 'not found' }, 404)
     return c.json({ ok: true, note })
   })
 
   app.delete('/:id/notes/:noteId', async (c) => {
     const loc = c.get('locationId')
-    const ok = await new ContactNotesRepo(deps.db, loc).remove(
-      c.req.param('id'),
-      c.req.param('noteId'),
-    )
+    const ok = await deps.db.transaction(async (tx) => {
+      const removed = await new ContactNotesRepo(tx, loc).remove(c.req.param('id'), c.req.param('noteId'))
+      if (removed) {
+        await audit(tx, loc, { action: 'contact.note_deleted', entityType: 'contact_note', entityId: c.req.param('noteId'), contactId: c.req.param('id'), ...auditContext(c) })
+      }
+      return removed
+    })
     if (!ok) return c.json({ error: 'not found' }, 404)
     return c.json({ ok: true })
   })
@@ -220,22 +302,25 @@ export function contactsRoute(deps: { db: Database }): Hono<AppEnv> {
   app.post('/:id/tasks', zValidator('json', createTaskSchema), async (c) => {
     const loc = c.get('locationId')
     const { title, body, dueAt } = c.req.valid('json')
-    const task = await new ContactTasksRepo(deps.db, loc).create({
-      contactId: c.req.param('id'),
-      title,
-      body: body ?? null,
-      dueAt: dueAt ?? null,
+    const contactId = c.req.param('id')
+    const task = await deps.db.transaction(async (tx) => {
+      const created = await new ContactTasksRepo(tx, loc).create({ contactId, title, body: body ?? null, dueAt: dueAt ?? null })
+      await audit(tx, loc, { action: 'task.created', entityType: 'task', entityId: created.id, contactId, ...auditContext(c) })
+      return created
     })
     return c.json({ ok: true, task }, 201)
   })
 
   app.patch('/:id/tasks/:taskId', zValidator('json', patchTaskSchema), async (c) => {
     const loc = c.get('locationId')
-    const task = await new ContactTasksRepo(deps.db, loc).update(
-      c.req.param('id'),
-      c.req.param('taskId'),
-      c.req.valid('json'),
-    )
+    const patch = c.req.valid('json')
+    const task = await deps.db.transaction(async (tx) => {
+      const updated = await new ContactTasksRepo(tx, loc).update(c.req.param('id'), c.req.param('taskId'), patch)
+      if (updated && patch.completed === true) {
+        await audit(tx, loc, { action: 'task.completed', entityType: 'task', entityId: updated.id, contactId: c.req.param('id'), ...auditContext(c) })
+      }
+      return updated
+    })
     if (!task) return c.json({ error: 'not found' }, 404)
     return c.json({ ok: true, task })
   })
@@ -255,10 +340,14 @@ export function contactsRoute(deps: { db: Database }): Hono<AppEnv> {
   // its chips. 404 if the contact is not in this location.
   app.post('/:id/tags', zValidator('json', contactTagSchema), async (c) => {
     const loc = c.get('locationId')
-    const contact = await new ContactsRepo(deps.db, loc).addTag(
-      c.req.param('id'),
-      c.req.valid('json').tag,
-    )
+    const tag = c.req.valid('json').tag
+    const contact = await deps.db.transaction(async (tx) => {
+      const tagged = await new ContactsRepo(tx, loc).addTag(c.req.param('id'), tag)
+      if (tagged) {
+        await audit(tx, loc, { action: 'contact.tag_added', entityType: 'contact', entityId: tagged.id, contactId: tagged.id, details: { tag }, ...auditContext(c) })
+      }
+      return tagged
+    })
     if (!contact) return c.json({ error: 'not found' }, 404)
     return c.json({ ok: true, contact })
   })
@@ -267,10 +356,14 @@ export function contactsRoute(deps: { db: Database }): Hono<AppEnv> {
   // the path; idempotent — removing an absent tag still returns the contact.
   app.delete('/:id/tags/:tag', async (c) => {
     const loc = c.get('locationId')
-    const contact = await new ContactsRepo(deps.db, loc).removeTag(
-      c.req.param('id'),
-      c.req.param('tag'),
-    )
+    const tag = c.req.param('tag')
+    const contact = await deps.db.transaction(async (tx) => {
+      const untagged = await new ContactsRepo(tx, loc).removeTag(c.req.param('id'), tag)
+      if (untagged) {
+        await audit(tx, loc, { action: 'contact.tag_removed', entityType: 'contact', entityId: untagged.id, contactId: untagged.id, details: { tag }, ...auditContext(c) })
+      }
+      return untagged
+    })
     if (!contact) return c.json({ error: 'not found' }, 404)
     return c.json({ ok: true, contact })
   })
@@ -285,11 +378,14 @@ export function contactsRoute(deps: { db: Database }): Hono<AppEnv> {
     const field = await new CustomFieldsRepo(deps.db, loc).getByKey(key)
     if (!field) return c.json({ error: 'unknown field' }, 404)
     const coerced = coerceCustomFieldValue(field.type, c.req.valid('json').value)
-    const contact = await new ContactsRepo(deps.db, loc).setCustomField(
-      c.req.param('id'),
-      key,
-      coerced,
-    )
+    const contact = await deps.db.transaction(async (tx) => {
+      const updated = await new ContactsRepo(tx, loc).setCustomField(c.req.param('id'), key, coerced)
+      if (updated) {
+        // Which field changed, never its value (a date of birth is PHI).
+        await audit(tx, loc, { action: 'contact.custom_fields_updated', entityType: 'contact', entityId: updated.id, contactId: updated.id, details: { fields: [key], cleared: coerced === null }, ...auditContext(c) })
+      }
+      return updated
+    })
     if (!contact) return c.json({ error: 'not found' }, 404)
     return c.json({ ok: true, contact })
   })
