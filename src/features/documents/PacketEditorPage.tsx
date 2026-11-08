@@ -79,6 +79,7 @@ export function PacketEditorPage() {
   }
 
   return (
+    <div className="ol-scroll min-h-0 flex-1 overflow-y-auto">
     <div className="mx-auto max-w-6xl p-4 sm:p-6">
       <Link to="/documents/packets" className="mb-3 inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900"><ArrowLeft className="h-4 w-4" /> Packets</Link>
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -163,6 +164,7 @@ export function PacketEditorPage() {
           <p className="mt-2 text-xs text-slate-500">Shows the version in force of each document (or the newest draft if none is).</p>
         </div>
       </div>
+    </div>
     </div>
   )
 }

@@ -87,6 +87,7 @@ export function BrandingSettingsPage() {
   }
 
   return (
+    <div className="ol-scroll h-full overflow-y-auto">
     <div className="mx-auto max-w-3xl p-4 sm:p-6">
       <h1 className="text-lg font-semibold text-slate-900">Branding</h1>
       <p className="mt-1 text-sm text-slate-600">How this practice looks in the app and to its clients: on the signing and registration pages, and in the emails they receive.</p>
@@ -152,6 +153,7 @@ export function BrandingSettingsPage() {
           </div>
         </aside>
       </div>
+    </div>
     </div>
   )
 }

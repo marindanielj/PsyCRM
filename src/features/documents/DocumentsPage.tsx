@@ -75,6 +75,7 @@ export function DocumentsPage({ tab }: { tab: 'templates' | 'packets' | 'sent' }
   }
 
   return (
+    <div className="ol-scroll min-h-0 flex-1 overflow-y-auto">
     <div className="mx-auto max-w-5xl p-4 sm:p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold text-slate-900">Documents</h1>
@@ -125,6 +126,7 @@ export function DocumentsPage({ tab }: { tab: 'templates' | 'packets' | 'sent' }
           ))}
         </ul>
       )}
+    </div>
     </div>
   )
 }

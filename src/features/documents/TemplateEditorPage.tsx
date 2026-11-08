@@ -140,6 +140,7 @@ export function TemplateEditorPage() {
   }
 
   return (
+    <div className="ol-scroll min-h-0 flex-1 overflow-y-auto">
     <div className="mx-auto max-w-7xl p-4 sm:p-6">
       <Link to="/documents" className="mb-3 inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900"><ArrowLeft className="h-4 w-4" /> Documents</Link>
 
@@ -252,6 +253,7 @@ export function TemplateEditorPage() {
           <p className="mt-2 text-xs text-slate-500">Highlighted text means a merge field the system doesn't know. Fields are shown disabled here.</p>
         </div>
       </div>
+    </div>
     </div>
   )
 }
