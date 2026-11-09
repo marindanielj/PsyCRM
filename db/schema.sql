@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS custom_fields (
   created_at  timestamptz DEFAULT now(),
   updated_at  timestamptz DEFAULT now()
 );
+-- Whether the form a client fills in from an invitation asks for this field. On by default: a field the
+-- practice adds today appears on the next invitation; switch it off for fields only staff should fill in.
+ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS show_on_invite boolean NOT NULL DEFAULT true;
 CREATE UNIQUE INDEX IF NOT EXISTS custom_fields_key
   ON custom_fields(location_id, key);
 CREATE INDEX IF NOT EXISTS custom_fields_by_location

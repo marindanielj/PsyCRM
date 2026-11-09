@@ -268,6 +268,8 @@ export interface CustomField {
   type: 'text' | 'textarea' | 'number' | 'date' | 'dropdown' | 'checkbox'
   options: string[]
   placeholder: string | null
+  /** Asked of the client on the registration form of an invitation. */
+  show_on_invite: boolean
   position: number
   created_at: string
   updated_at: string
@@ -278,6 +280,7 @@ export interface NewCustomField {
   type?: CustomField['type']
   options?: string[]
   placeholder?: string | null
+  showOnInvite?: boolean
 }
 
 /** A location-level custom *value* (GHL "Custom Values"): a named business
@@ -2367,7 +2370,7 @@ export const api = {
   updateCustomField: (
     loc: string,
     id: string,
-    patch: Partial<Pick<CustomField, 'label' | 'type' | 'options' | 'placeholder' | 'position'>>,
+    patch: Partial<Pick<CustomField, 'label' | 'type' | 'options' | 'placeholder' | 'position'>> & { showOnInvite?: boolean },
   ) =>
     req<{ ok: true; field: CustomField }>(`/loc/${loc}/custom-fields/${id}`, {
       method: 'PATCH',

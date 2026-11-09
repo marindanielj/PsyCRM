@@ -4,6 +4,7 @@ import { audit } from './audit'
 import { normalizePhone } from './contact-match'
 import { ContactsRepo } from '../repos/contacts-repo'
 import type { ClientInvite } from '../repos/client-invites-repo'
+import { checkAnswers, inviteFields } from './invite-custom-fields'
 
 export interface RegistrationInput {
   firstName: string
@@ -13,11 +14,14 @@ export interface RegistrationInput {
   /** Guardian invitations: the parent or guardian's own name and phone. */
   guardianName?: string
   guardianPhone?: string
+  /** Answers to the practice's custom fields, by key, as typed: checked against the fields the form asks today. */
+  custom?: Record<string, unknown>
 }
 
 export type CompleteResult =
   | { ok: true; contactId: string; created: boolean }
   | { ok: false; error: 'closed' | 'invalid_date_of_birth' | 'age_mismatch_minor' | 'age_mismatch_adult' | 'guardian_name_required' }
+  | { ok: false; error: 'invalid_custom_field'; field: string }
 
 /**
  * The invited person's answers become a contact. Nothing exists before this: a client record
@@ -42,6 +46,9 @@ export async function completeInvite(
   if (invite.kind === 'guardian' && !minor) return { ok: false, error: 'age_mismatch_adult' }
   const guardianName = (input.guardianName ?? '').trim()
   if (invite.kind === 'guardian' && !guardianName) return { ok: false, error: 'guardian_name_required' }
+
+  const answers = checkAnswers(await inviteFields(db, locationId), input.custom)
+  if (!answers.ok) return { ok: false, error: 'invalid_custom_field', field: answers.field }
 
   const fullName = `${input.firstName.trim()} ${input.lastName.trim()}`.trim()
   const who = { actor: { type: 'client' as const, id: invite.id, label: invite.kind === 'guardian' ? 'Parent or guardian (invitation)' : 'Client (invitation)' }, ip: ctx.ip, userAgent: ctx.userAgent }
@@ -73,9 +80,27 @@ export async function completeInvite(
     }
     const recorded = contact.custom_fields?.date_of_birth
     const custom: Record<string, unknown> = {}
+    const conflicts: Record<string, unknown> = { ...((contact.custom_fields?.intake_conflicts as object) ?? {}) }
+    let flagged = false
     if (created || !recorded) custom.date_of_birth = input.dateOfBirth
     // An existing client answering differently is flagged for review; their recorded date is never replaced.
-    else if (recorded !== input.dateOfBirth) custom.intake_conflicts = { ...((contact.custom_fields?.intake_conflicts as object) ?? {}), date_of_birth: { record: String(recorded), answered: input.dateOfBirth } }
+    else if (recorded !== input.dateOfBirth) {
+      conflicts.date_of_birth = { record: String(recorded), answered: input.dateOfBirth }
+      flagged = true
+    }
+    // The practice's own fields follow the same rule: fill what is empty, never replace what is recorded.
+    const filled: string[] = []
+    for (const [key, answer] of Object.entries(answers.values)) {
+      const have = contact.custom_fields?.[key]
+      if (created || have === undefined || have === null || have === '') {
+        custom[key] = answer
+        filled.push(key)
+      } else if (String(have) !== String(answer)) {
+        conflicts[key] = { record: String(have), answered: String(answer) }
+        flagged = true
+      }
+    }
+    if (flagged) custom.intake_conflicts = conflicts
     if (invite.kind === 'guardian') {
       custom.guardian_name = guardianName
       custom.guardian_email = invite.email
@@ -87,7 +112,10 @@ export async function completeInvite(
 
     await tx.query(`UPDATE client_invites SET status = 'completed', completed_at = $3, contact_id = $4 WHERE location_id = $1 AND id = $2`, [locationId, invite.id, now.toISOString(), contact.id])
     if (created) {
-      await audit(tx, locationId, { action: 'contact.created', entityType: 'contact', entityId: contact.id, contactId: contact.id, details: { source: 'invite', kind: invite.kind, fields: ['name', 'date_of_birth', invite.kind === 'adult' ? 'email' : 'guardian'] }, ...who })
+      await audit(tx, locationId, { action: 'contact.created', entityType: 'contact', entityId: contact.id, contactId: contact.id, details: { source: 'invite', kind: invite.kind, fields: ['name', 'date_of_birth', invite.kind === 'adult' ? 'email' : 'guardian', ...filled] }, ...who })
+    } else if (filled.length) {
+      // An existing client: only the empty fields were filled in (field names only, never the answers).
+      await audit(tx, locationId, { action: 'contact.updated_from_intake', entityType: 'contact', entityId: contact.id, contactId: contact.id, details: { fields: filled, source: 'invite' }, ...who })
     }
     await audit(tx, locationId, { action: 'invite.completed', entityType: 'client_invite', entityId: invite.id, contactId: contact.id, details: { kind: invite.kind, newClient: created }, ...who })
     return { ok: true, contactId: contact.id, created }

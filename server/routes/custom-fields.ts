@@ -12,6 +12,7 @@ const createSchema = z.object({
   // Choices for a dropdown; each trimmed and non-empty. Ignored for other types.
   options: z.array(z.string().trim().min(1)).default([]),
   placeholder: z.string().trim().nullish(),
+  showOnInvite: z.boolean().default(true),
 })
 
 // Every key optional; the key (slug) is immutable so it is intentionally absent.
@@ -22,6 +23,7 @@ const patchSchema = z.object({
   type: z.enum(CUSTOM_FIELD_TYPES).optional(),
   options: z.array(z.string().trim().min(1)).optional(),
   placeholder: z.string().trim().nullish(),
+  showOnInvite: z.boolean().optional(),
   position: z.number().int().min(0).optional(),
 })
 
@@ -48,6 +50,7 @@ export function customFieldsRoute(deps: { db: Database }): Hono<AppEnv> {
       type: input.type,
       options: input.options,
       placeholder: input.placeholder ?? null,
+      showOnInvite: input.showOnInvite,
     })
     return c.json({ ok: true, field }, 201)
   })

@@ -58,7 +58,7 @@ El servidor **no arranca** si falta o está mal alguna (`server/lib/config.ts`):
 | El cliente no recibe el correo | Settings → Email & SMS: ¿hay proveedor (Amazon SES)? Use **Send test email**; la guía de errores está en [`CORREO_SES.md`](CORREO_SES.md). ¿Hay proveedor? Sin proveedor la invitación y el paquete **se crean igual** y el enlace aparece en pantalla (Copy link / Resend) para enviarlo a mano |
 | Una corrida de automatización aparece como *Failed* | Automations → el flujo → Recent runs: el paso fallido dice por qué (correo sin configurar, plantilla sin versión activa, `PUBLIC_BASE_URL`…). Corregir y volver a enviar desde la ficha del cliente |
 | Un paquete "retenido para revisión" | Ficha del cliente → Documents: la fecha de nacimiento respondida no coincide con el expediente. Revisar y **Accept as complete**, o corregir y reenviar |
-| Se perdió una contraseña | `scripts/rotate-op-password.ts` (con `DATABASE_URL`, `ROTATE_OPERATOR_ID` y `ROTATE_NEW_PASSWORD` como variables de entorno). Registrar el cambio |
+| Se perdió una contraseña (si aún puede entrar, *Settings → Account*) | `scripts/rotate-op-password.ts` (con `DATABASE_URL`, `ROTATE_OPERATOR_ID` y `ROTATE_NEW_PASSWORD` como variables de entorno). Registrar el cambio |
 | Un cliente dice que su enlace "no es válido" | Venció (14 días), se anuló o ya se usó. Reenviar: Resend en la solicitud, o en la invitación |
 
 ## 7. Prueba de punta a punta
