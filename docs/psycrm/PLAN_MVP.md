@@ -297,6 +297,7 @@ Los specs de cada día están en [`specs/`](specs/README.md). La infraestructura
 | A9 | **App móvil** (OpenConnector): agenda del día, check-in y lectura rápida del expediente | `openconnector/` | Uso entre sesiones |
 | A10 | **Biblioteca psicoeducativa** (hojas de trabajo, audios de relajación) asignable por cliente | `courses` / `lessons` / `enrollments` | Tareas entre sesiones |
 | A11 | **Lista de espera** como pipeline, con aviso automático cuando se libera un horario | `pipelines` + `workflows` | No pierde clientes potenciales |
+| A12 | **Constructor de páginas por bloques** (portada, servicios, tarifas, planes, preguntas frecuentes, horario, formulario) para crear y cambiar páginas públicas sin programar. Nace de la página pública actual; el formulario destina a la bandeja de solicitudes por defecto. Los constructores viejos (`sites`, `forms`, `surveys`) no se pueden encender tal cual: ver [`specs/future-page-builder.md`](specs/future-page-builder.md) | Página pública (`/p/`), bandeja de solicitudes, constructor de campos de Documentos | Páginas nuevas y cambios de la terapeuta sin un programador; base para la marca propia por terapeuta y el inglés |
 
 ### B. Crear desde cero
 
@@ -318,10 +319,10 @@ Los specs de cada día están en [`specs/`](specs/README.md). La infraestructura
 | # | Fase | Alcance |
 |---|---|---|
 | C1 | **Documentos y formularios del onboarding** (primera prioridad) | Cada plantilla con versión ES y EN (`translation_group_id`). El cliente elige el idioma en la página de firma; se guarda qué idioma firmó |
-| C2 | Páginas públicas y emails al cliente | Reserva, recordatorios, verificación por OTP y copias firmadas en el idioma preferido del cliente (`contacts.preferred_locale`) |
+| C2 | Páginas públicas y emails al cliente | Reserva, recordatorios, verificación por OTP y copias firmadas en el idioma preferido del cliente (`contacts.preferred_locale`). La página pública y sus bloques (A12) se vuelven bilingües aquí |
 | C3 | Interfaz de la terapeuta | i18n del SPA (`react-i18next` o similar), con selector de idioma por usuario |
 | C4 | Reportes clínicos | Etiquetas del reporte de notas, MSE y riesgo en ES/EN (lo que se escribe en la nota queda en el idioma original) |
 
 **Semana 2 (ya definida en los specs, día 8 §6):** MFA → esperas durables en workflows → **reconsentimiento al cumplir 18** → versiones en inglés del onboarding (C1) → PDF del expediente → **sincronización de calendario por `.ics`** (feed de salida con título genérico y lectura de ocupado/libre; ver [`INTEGRACIONES.md`](INTEGRACIONES.md) §3.1).
 
-**Prioridad sugerida después del MVP:** A1 → C1 → B1 → A2 → A4/A5 → B2 → B3 → A6 → el resto.
+**Prioridad sugerida después del MVP:** A1 → C1 → B1 → A2 → A4/A5 → B2 → B3 → A6 → el resto. **A12** (constructor de páginas) entra cuando se necesite una segunda página pública o el inglés (C2); hasta entonces la página pública actual alcanza.

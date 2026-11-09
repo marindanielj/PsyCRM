@@ -13,7 +13,9 @@ Cada spec se puede implementar por sí solo y en orden. Parte de [`../PLAN_MVP.m
 | 7 | [Automatización del pipeline de onboarding](day-07-onboarding-automation.md) · ✅ hecho | 2, 4, 6 |
 | 8 | [Prueba completa, endurecimiento y salida a producción](day-08-e2e-golive.md) · ✅ hecho (software); la salida a producción depende de la lista go/no-go | todos |
 
-Extras posteriores al día 7: [invitación al cliente](extra-client-invite.md) · [marca por práctica](extra-branding.md).
+Extras posteriores al día 7: [invitación al cliente](extra-client-invite.md) · [marca por práctica](extra-branding.md) · [página pública y solicitudes](../RESULTADOS_PAGINA_PUBLICA.md).
+
+Ideas futuras con spec: [constructor de páginas por bloques (A12)](future-page-builder.md).
 
 **Resultados:** [días 1 y 2](../RESULTADOS_DIAS_1_2.md) · [día 3](../RESULTADOS_DIA_3.md) · [día 4](../RESULTADOS_DIA_4.md) · [día 5](../RESULTADOS_DIA_5.md) · [día 6](../RESULTADOS_DIA_6.md) · [día 7](../RESULTADOS_DIA_7.md) · [invitación](../RESULTADOS_INVITACION.md) · [día 8](../RESULTADOS_DIA_8.md) · [marca](../RESULTADOS_MARCA.md) · [correo SES](../RESULTADOS_SES.md). Operación: [`OPERACIONES.md`](../OPERACIONES.md) · guía: [`GUIA_RAPIDA.md`](../GUIA_RAPIDA.md).
 
