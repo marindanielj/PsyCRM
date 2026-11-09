@@ -1,0 +1,55 @@
+# Infraestructura de PsyCRM (AWS CDK)
+
+Define en código lo que describe [`docs/psycrm/INFRA_AWS.md`](../docs/psycrm/INFRA_AWS.md). Una sola pila de CloudFormation (`Psycrm`) en tres partes:
+
+| Parte | Qué crea | Necesita dominio |
+|---|---|---|
+| `Foundation` | llave KMS `alias/psycrm-data`, tema SNS `psycrm-alerts`, VPC (2 públicas, 2 privadas sin salida, sin NAT) con flow logs, grupos de seguridad, repositorio ECR `psycrm-app`, CloudTrail de la cuenta, presupuesto, proveedor OIDC y rol `psycrm-github-deploy` | No |
+| `Data` | RDS PostgreSQL 16 (cifrado, privado, 30 días de backups, protegido contra borrado), los secretos (contraseñas generadas), clúster ECS y las tareas de una sola vez `psycrm-bootstrap` y `psycrm-migrate` | No |
+| `App` | ALB (443 con certificado, 80 redirige), servicio Fargate `psycrm-app`, roles de tarea, alarmas | **Sí** (`publicBaseUrl` + `certificateArn`) |
+
+La plantilla **no lleva el ID de cuenta**: se sintetiza sin credenciales y se despliega en la cuenta a la que apunten tus credenciales (`psycrm-prod`).
+
+## Pruebas (sin credenciales)
+
+```bash
+cd infra && npm ci --legacy-peer-deps
+npx tsc --noEmit && npx vitest run     # 17 pruebas sobre la plantilla: cifrado, RDS privado, un solo grupo abierto a internet, OIDC acotado, sin llaves de acceso…
+npx cdk synth -c alertEmails=a@x.com   # escribe cdk.out/Psycrm.template.json
+```
+
+## Desplegar
+
+Credenciales de `psycrm-prod` (IAM Identity Center o `OrganizationAccountAccessRole`), región `us-east-1`:
+
+```bash
+cd infra
+npx cdk bootstrap                                   # una vez por cuenta
+npx cdk deploy -c alertEmails=terapeuta@x.com,admin@x.com
+```
+
+Con eso existen `Foundation` y `Data`. Después, **en este orden**:
+
+1. **Roles de la base** (una vez): `aws ecs run-task --cluster psycrm --launch-type FARGATE --task-definition psycrm-bootstrap --network-configuration …` (subredes públicas y el grupo `SG-app`; las ves en la consola de ECS). Ejecuta [`db/roles.sql`](../db/roles.sql) como usuario maestro: crea `psycrm_migrator` y `psycrm_app`, y el esquema `pgboss`.
+2. **Imagen** (primer despliegue): el workflow `.github/workflows/deploy.yml` la construye y la sube al hacer *push* a `main`, o a mano: `docker buildx build --platform linux/arm64 -t <RepositoryUri>:<tag> --push .`
+3. **Migraciones**: tarea `psycrm-migrate` (el workflow la corre solo; a mano, `command: npm run migrate`). Después, una vez, `npm run seed:practice` por la misma tarea (variables `PRACTICE_NAME`, `OWNER_EMAIL`, `OWNER_PASSWORD`, `SES_FROM_ADDRESS`; ver `db/seed-practice.ts`).
+4. **Servicio público** (cuando haya dominio y certificado ACM):
+
+```bash
+npx cdk deploy -c alertEmails=… \
+  -c publicBaseUrl=https://app.<dominio> -c certificateArn=arn:aws:acm:us-east-1:<cuenta>:certificate/<id> \
+  -c sesFromAddress=no-reply@<dominio> -c imageTag=<sha de la imagen> -c desiredCount=1
+```
+
+Contexto opcional: `budgetUsd` (100), `enableGuardDuty` (false), `githubRepo`, `githubEnvironment`, `sesConfigurationSet`.
+
+**CI/CD**: crea el entorno `production` en GitHub (con aprobación manual) y la variable de repositorio `AWS_DEPLOY_ROLE_ARN` con la salida `DeployRoleArn`. El workflow registra revisiones nuevas de las definiciones de tarea fuera de CDK; por eso, al volver a ejecutar `cdk deploy`, pasa `-c imageTag=<sha en producción>` o volverá a la imagen anterior.
+
+## Verificado y no verificado
+
+- **Verificado**: la plantilla sintetiza y pasa las 17 pruebas; `db/roles.sql` se probó en un PostgreSQL 16 real con un usuario sin privilegios de superusuario (migración como `psycrm_migrator`; `psycrm_app` lee y escribe pero no puede `TRUNCATE`, crear tablas ni alterar el esquema; `pg-boss` arranca con `createSchema: false`).
+- **No verificado hasta el primer despliegue**: que CloudFormation acepte la referencia dinámica a las contraseñas dentro de los secretos `database-url`; que la imagen construya para ARM64; el tiempo real de creación del RDS; que `Custom::LogRetention` (logs de RDS) tenga permisos en la cuenta nueva.
+
+## Lo que no está aquí
+
+Dominio y zona de Route 53, certificado ACM, identidad de SES (dominio, DKIM, MAIL FROM, salida del *sandbox*), IAM Identity Center, el BAA, y un *trail* de la organización (este crea uno de la cuenta). La alarma de la cola de fallos de `pg-boss` no existe: esa cola vive en la base, no en CloudWatch.

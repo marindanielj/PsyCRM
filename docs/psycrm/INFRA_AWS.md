@@ -271,8 +271,10 @@ Si se cierra el RDS actual, parte de este gasto se compensa. Crear un **AWS Budg
 Leyenda: **[Tú]** = acción en la consola o la cuenta de AWS (requiere ser dueño/administrador) · **[Claude]** = código o documentación en el repositorio · **[Ambos]** = se coordina. Las fases 1–5 son infraestructura; la 6 conecta la aplicación.
 
 ### Fase 1: cuenta y organización  (≈ 1–2 h)
-- [ ] **1.1 [Tú]** Entrar a la cuenta administradora de AWS Organizations (o activarla si no existe: *AWS Organizations → Create organization*, con todas las funciones habilitadas).
-- [ ] **1.2 [Tú]** Crear la cuenta hija: *Add an AWS account → Create* con el nombre `psycrm-prod` y un correo único (un alias, p. ej. `aws+psycrm@<correo>`). Dejar el rol de acceso por defecto `OrganizationAccountAccessRole`.
+> **Estado (8 nov 2026):** la cuenta de AWS no tenía organización ni RDS viejo. Se creó la organización `o-0wtymyq41x` (cuenta administradora `432914184044`) y la cuenta hija `psycrm-prod` (`450549238631`, correo `marin.danielj+psycrm@gmail.com`). La decisión 2 de §7 (reusar el RDS) queda sin efecto: la base es nueva. La infraestructura de las fases 2–4 y 6.1–6.2 está escrita como código en [`infra/`](../../infra/README.md) (aún sin desplegar).
+
+- [x] **1.1 [Tú]** Entrar a la cuenta administradora de AWS Organizations (o activarla si no existe: *AWS Organizations → Create organization*, con todas las funciones habilitadas).
+- [x] **1.2 [Tú]** Crear la cuenta hija: *Add an AWS account → Create* con el nombre `psycrm-prod` y un correo único (un alias, p. ej. `aws+psycrm@<correo>`). Dejar el rol de acceso por defecto `OrganizationAccountAccessRole`.
 - [ ] **1.3 [Tú]** Aceptar el **BAA de AWS** en *AWS Artifact → Agreements*. Preferible el acuerdo **de la organización** (cubre las cuentas hijas); si solo ofrece el de cuenta, aceptarlo también dentro de `psycrm-prod`. Descargar el PDF firmado y guardarlo fuera del repositorio.
 - [ ] **1.4 [Tú]** Abrir la lista oficial *AWS HIPAA Eligible Services* y confirmar que estén incluidos: VPC, EC2 (red), ECS, Fargate, ECR, Elastic Load Balancing, ACM, Route 53, RDS, KMS, Secrets Manager, SES, CloudWatch, CloudTrail, SNS, IAM/Identity Center, GuardDuty. Anotar fecha y resultado. **Si alguno no está, parar y avisarme.**
 - [ ] **1.5 [Tú]** En `psycrm-prod`: asegurar la cuenta raíz (contraseña larga y MFA, sin llaves de acceso).
@@ -314,7 +316,7 @@ Leyenda: **[Tú]** = acción en la consola o la cuenta de AWS (requiere ser due�
 
 ### Fase 6: CI/CD y conexión con la aplicación
 - [ ] **6.1 [Tú]** Crear el proveedor OIDC de GitHub en IAM y el rol `psycrm-github-deploy` (§3.8), limitado al repositorio `marindanielj/PsyCRM` y la rama `main`.
-- [ ] **6.2 [Claude]** Workflow de GitHub Actions (`.github/workflows/deploy.yml`): pruebas → imagen → ECR → tarea de migración → actualización del servicio (§4).
+- [x] **6.2 [Claude]** Workflow de GitHub Actions (`.github/workflows/deploy.yml`): pruebas → imagen → ECR → tarea de migración → actualización del servicio (§4).
 - [ ] **6.3 [Tú]** Configurar en GitHub el entorno `production` con aprobación manual.
 - [x] **6.4 [Claude]** SSL verificado por la URL de la base y variables nuevas en `config.ts` (`ENABLED_INTEGRATIONS`, `PUBLIC_BASE_URL` —obligatoria y https en producción—, `STATIC_DIR`, `SES_FROM_ADDRESS`, `SES_REGION`, `SES_CONFIGURATION_SET`).
 - [x] **6.5 [Claude]** `server/lib/sending/ses-adapter.ts` y su registro en `server/lib/sending/resolve.ts`, con el botón **Send test email** en Settings → Email & SMS. **Falta [Tú]:** la prueba de envío real a una dirección verificada, cuando exista la cuenta de AWS (ver [`CORREO_SES.md`](CORREO_SES.md)).

@@ -113,3 +113,9 @@ test('production needs PUBLIC_BASE_URL over https (it builds the links in emails
   expect(loadConfig({ ...prod, PUBLIC_BASE_URL: 'https://app.example.com' }).PUBLIC_BASE_URL).toBe('https://app.example.com')
   expect(loadConfig({ NODE_ENV: 'development' }).PUBLIC_BASE_URL).toBeUndefined() // dev falls back to the request's own origin
 })
+
+test('pg-boss may create its schema by default, and production turns that off with PGBOSS_CREATE_SCHEMA=false', () => {
+  expect(loadConfig({}).PGBOSS_CREATE_SCHEMA).toBe(true)
+  expect(loadConfig({ PGBOSS_CREATE_SCHEMA: 'false' }).PGBOSS_CREATE_SCHEMA).toBe(false)
+  expect(() => loadConfig({ PGBOSS_CREATE_SCHEMA: 'nope' })).toThrow()
+})

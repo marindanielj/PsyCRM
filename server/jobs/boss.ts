@@ -51,9 +51,15 @@ export async function ensureQueues(boss: Pick<PgBoss, 'createQueue'>): Promise<v
   await boss.createQueue(WORKFLOW_DISPATCH_QUEUE, { ...RESILIENT_RETRY, deadLetter: WORKFLOW_DISPATCH_DLQ })
 }
 
-/** Start pg-boss against DATABASE_URL and ensure our queues exist. */
-export async function startBoss(connectionString: string): Promise<PgBoss> {
-  const boss = new PgBoss({ connectionString })
+/**
+ * Start pg-boss against DATABASE_URL and ensure our queues exist.
+ *
+ * `createSchema: false` is for production, where the app's database role cannot
+ * create schemas (it would need CREATE on the whole database): db/roles.sql
+ * creates the `pgboss` schema for it, and pg-boss then only fills it.
+ */
+export async function startBoss(connectionString: string, opts: { createSchema?: boolean } = {}): Promise<PgBoss> {
+  const boss = new PgBoss({ connectionString, createSchema: opts.createSchema ?? true })
   await boss.start()
   await ensureQueues(boss)
   return boss

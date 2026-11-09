@@ -476,7 +476,7 @@ async function bootstrap() {
 
   // Jobs: pg-boss runs the workflow-dispatch worker (and the agent-reply worker only
   // when the AI integration is on); routes enqueue onto them.
-  const boss = await startBoss(config.DATABASE_URL)
+  const boss = await startBoss(config.DATABASE_URL, { createSchema: config.PGBOSS_CREATE_SCHEMA })
   const dispatch: WorkflowDispatch = (e) => enqueueWorkflowEvent(boss, e)
   // No Claude client unless the AI integration is enabled: client data never goes
   // to an AI provider by default.
