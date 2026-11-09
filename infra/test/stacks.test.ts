@@ -51,6 +51,10 @@ describe('foundation + data (no domain yet)', () => {
     for (const g of groups) expect(JSON.stringify(g)).not.toContain('log_statement')
   })
 
+  it('creates no budget here (member accounts cannot; it lives in the management account)', () => {
+    t.resourceCountIs('AWS::Budgets::Budget', 0)
+  })
+
   it('rotates the data key and retains it on delete', () => {
     t.hasResource('AWS::KMS::Key', { Properties: { EnableKeyRotation: true }, DeletionPolicy: 'Retain' })
   })

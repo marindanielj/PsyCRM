@@ -4,7 +4,7 @@ Define en código lo que describe [`docs/psycrm/INFRA_AWS.md`](../docs/psycrm/IN
 
 | Parte | Qué crea | Necesita dominio |
 |---|---|---|
-| `Foundation` | llave KMS `alias/psycrm-data`, tema SNS `psycrm-alerts`, VPC (2 públicas, 2 privadas sin salida, sin NAT) con flow logs, grupos de seguridad, repositorio ECR `psycrm-app`, CloudTrail de la cuenta, presupuesto, proveedor OIDC y rol `psycrm-github-deploy` | No |
+| `Foundation` | llave KMS `alias/psycrm-data`, tema SNS `psycrm-alerts`, VPC (2 públicas, 2 privadas sin salida, sin NAT) con flow logs, grupos de seguridad, repositorio ECR `psycrm-app`, CloudTrail de la cuenta, proveedor OIDC y rol `psycrm-github-deploy` | No |
 | `Data` | RDS PostgreSQL 16 (cifrado, privado, 30 días de backups, protegido contra borrado), los secretos (contraseñas generadas), clúster ECS y las tareas de una sola vez `psycrm-bootstrap` y `psycrm-migrate` | No |
 | `App` | ALB (443 con certificado, 80 redirige), servicio Fargate `psycrm-app`, roles de tarea, alarmas | **Sí** (`publicBaseUrl` + `certificateArn`) |
 
@@ -60,7 +60,7 @@ npx cdk deploy -c alertEmails=… \
   -c sesFromAddress=no-reply@<dominio> -c imageTag=<sha de la imagen> -c desiredCount=1
 ```
 
-Contexto opcional: `budgetUsd` (100), `enableGuardDuty` (false), `githubRepo`, `githubEnvironment`, `sesConfigurationSet`.
+Contexto opcional: `enableGuardDuty` (false), `githubRepo`, `githubEnvironment`, `sesConfigurationSet`.
 
 **CI/CD**: crea el entorno `production` en GitHub (con aprobación manual) y la variable de repositorio `AWS_DEPLOY_ROLE_ARN` con la salida `DeployRoleArn`. El workflow registra revisiones nuevas de las definiciones de tarea fuera de CDK; por eso, al volver a ejecutar `cdk deploy`, pasa `-c imageTag=<sha en producción>` o volverá a la imagen anterior.
 
@@ -71,4 +71,4 @@ Contexto opcional: `budgetUsd` (100), `enableGuardDuty` (false), `githubRepo`, `
 
 ## Lo que no está aquí
 
-Dominio y zona de Route 53, certificado ACM, identidad de SES (dominio, DKIM, MAIL FROM, salida del *sandbox*), IAM Identity Center, el BAA, y un *trail* de la organización (este crea uno de la cuenta). La alarma de la cola de fallos de `pg-boss` no existe: esa cola vive en la base, no en CloudWatch.
+El **presupuesto** (AWS no deja crearlo desde una cuenta hija): se creó en la cuenta administradora como `psycrm-prod-monthly`. Dominio y zona de Route 53, certificado ACM, identidad de SES (dominio, DKIM, MAIL FROM, salida del *sandbox*), IAM Identity Center, el BAA, y un *trail* de la organización (este crea uno de la cuenta). La alarma de la cola de fallos de `pg-boss` no existe: esa cola vive en la base, no en CloudWatch.

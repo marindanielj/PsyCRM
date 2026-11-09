@@ -1,5 +1,4 @@
 import { Aws, CfnOutput, Duration, RemovalPolicy } from 'aws-cdk-lib'
-import * as budgets from 'aws-cdk-lib/aws-budgets'
 import * as cloudtrail from 'aws-cdk-lib/aws-cloudtrail'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
 import * as ecr from 'aws-cdk-lib/aws-ecr'
@@ -141,17 +140,9 @@ export class FoundationStack extends Construct {
 
     if (settings.enableGuardDuty) new guardduty.CfnDetector(this, 'GuardDuty', { enable: true })
 
-    // ---- spending: alert at 80% and 100% of the monthly budget
-    if (settings.alertEmails.length > 0) {
-      const notify = (threshold: number): budgets.CfnBudget.NotificationWithSubscribersProperty => ({
-        notification: { notificationType: 'ACTUAL', comparisonOperator: 'GREATER_THAN', threshold, thresholdType: 'PERCENTAGE' },
-        subscribers: settings.alertEmails.map((address) => ({ subscriptionType: 'EMAIL', address })),
-      })
-      new budgets.CfnBudget(this, 'Budget', {
-        budget: { budgetName: 'psycrm-monthly', budgetType: 'COST', timeUnit: 'MONTHLY', budgetLimit: { amount: settings.budgetUsd, unit: 'USD' } },
-        notificationsWithSubscribers: [notify(80), notify(100)],
-      })
-    }
+    // ---- spending: the budget lives in the management account, not here. AWS refuses to create
+    // budgets inside a member account unless the payer enables it, so `psycrm-prod-monthly`
+    // (80% / 100% of USD 100, filtered to this account) was created there.
 
     // ---- GitHub Actions deploys through OIDC: no access keys stored anywhere
     const oidc = new iam.OpenIdConnectProvider(this, 'GitHubOidc', {

@@ -5,8 +5,6 @@ export interface Settings {
   region: string
   /** Emails that receive alarms and budget alerts (the therapist and the technical admin). */
   alertEmails: string[]
-  /** Monthly budget alert in USD. */
-  budgetUsd: number
   /** GitHub repository allowed to deploy (OIDC), as owner/name. */
   githubRepo: string
   /** GitHub environment whose jobs may assume the deploy role. */
@@ -48,7 +46,6 @@ export function readSettings(app: App): Settings {
   return {
     region: 'us-east-1',
     alertEmails: emails ? emails.split(',').map((e) => e.trim()).filter(Boolean) : [],
-    budgetUsd: num(app, 'budgetUsd', 100),
     githubRepo: str(app, 'githubRepo') ?? 'marindanielj/PsyCRM',
     githubEnvironment: str(app, 'githubEnvironment') ?? 'production',
     enableGuardDuty: bool(app, 'enableGuardDuty', false),
