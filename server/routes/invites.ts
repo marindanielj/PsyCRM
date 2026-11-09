@@ -10,6 +10,9 @@ import { type ResolvedEmailSender, resolveEmailSender } from '../lib/sending/res
 import { ClientInvitesRepo } from '../repos/client-invites-repo'
 import { displayName } from '../repos/branding-repo'
 
+// How the new link reaches the person: emailed by us (default), or only returned so the therapist can send it herself.
+const resendSchema = z.object({ deliver: z.enum(['email', 'none']).default('email') })
+
 const createSchema = z.object({
   name: z.string().trim().min(1).max(120),
   email: z.string().trim().email().max(200),
@@ -54,9 +57,15 @@ export function invitesRoute(deps: {
   })
 
   app.post('/:id/resend', async (c) => {
+    // The body is optional: a bare POST keeps meaning "email it".
+    const parsed = resendSchema.safeParse(await c.req.json().catch(() => ({})))
+    if (!parsed.success) return c.json({ error: 'invalid' }, 400)
+    const copy = parsed.data.deliver === 'none'
     const token = newToken()
-    const r = await repo(c).rotate(c.req.param('id'), hashToken(token), actor(c))
+    const r = await repo(c).rotate(c.req.param('id'), hashToken(token), actor(c), copy ? 'copy' : 'email')
     if (!r.ok) return c.json({ error: r.error }, r.error === 'not_found' ? 404 : 409)
+    // Copy mode never touches the email provider: nothing is sent, nothing can bounce.
+    if (copy) return c.json({ ok: true, invite: r.invite, link: `${baseUrl(c)}/i/${token}`, emailed: false, emailIssue: null })
     return c.json({ ok: true, invite: r.invite, ...(await mail(c, { to: r.invite.email, name: r.invite.name, token })) })
   })
 

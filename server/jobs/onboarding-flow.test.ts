@@ -442,6 +442,37 @@ test('inviting someone who is already a client does not duplicate them, and a di
   expect((await s.audits('invite.completed'))[0]!.details).toMatchObject({ newClient: false })
 })
 
+test('"copy link" on an invitation issues a new link without emailing: the old one dies, the new one registers the client', async () => {
+  const s = await setup()
+  const sent = await invite(s, { name: 'Marta Prueba', email: 'marta@example.com', kind: 'adult' })
+  const id = sent.json.invite.id
+  const oldToken = inviteToken(s, 'marta@example.com')
+  const before = s.outbox.length
+
+  const res = await s.app.request(`/api/invites/${id}/resend`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliver: 'none' }) })
+  expect(res.status).toBe(200)
+  const body = await res.json()
+  expect(body).toMatchObject({ ok: true, emailed: false, emailIssue: null, invite: { id, status: 'sent' } })
+  expect(body.link).toMatch(/^https:\/\/app\.test\/i\/[A-Za-z0-9_-]{43}$/)
+  expect(s.outbox).toHaveLength(before) // nothing emailed
+
+  const fresh = body.link.split('/i/')[1] as string
+  expect((await visit(s, oldToken)).status).toBe(404)
+  expect((await visit(s, fresh)).status).toBe(200)
+  expect((await visit(s, fresh, 'POST', ADULT)).status).toBe(200) // she can send it herself and the client can register with it
+
+  const log = (await s.audits('invite.resent')).at(-1)!
+  expect(log.details).toMatchObject({ kind: 'adult', delivery: 'copy' })
+  expect(JSON.stringify(await s.audits())).not.toContain(fresh)
+
+  // a bare POST (no body) still means "email it"
+  const sent2 = await invite(s, { name: 'Rosa Díaz', email: 'rosa@example.com', kind: 'guardian' })
+  const n = s.outbox.length
+  expect((await s.app.request(`/api/invites/${sent2.json.invite.id}/resend`, { method: 'POST' })).status).toBe(200)
+  expect(s.outbox).toHaveLength(n + 1)
+  expect((await s.app.request(`/api/invites/${sent2.json.invite.id}/resend`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliver: 'pigeon' }) })).status).toBe(400)
+})
+
 test('one open invitation per email; resend replaces the link; names are shown escaped; everything is per practice', async () => {
   const s = await setup()
   const first = await invite(s, { name: '<img src=x onerror=alert(1)>', email: 'x@example.com', kind: 'adult' })

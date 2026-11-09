@@ -3,6 +3,9 @@ import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { ApiError, type InviteSendResult, api } from '../../lib/api'
+import { brandName } from '../../lib/brand'
+import { inviteMessage } from '../../lib/link-messages'
+import { useTenant } from '../../state/location'
 import { CopyLink } from '../documents/SendPacketDialog'
 
 /**
@@ -16,6 +19,7 @@ export function InviteClientDialog({ locationId, onClose, onSent }: { locationId
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sent, setSent] = useState<InviteSendResult | null>(null)
+  const { current } = useTenant()
 
   const ready = name.trim().length > 0 && /.+@.+\..+/.test(email.trim())
 
@@ -45,8 +49,8 @@ export function InviteClientDialog({ locationId, onClose, onSent }: { locationId
             ) : (
               <p className="mt-2 text-sm text-amber-700">Email not configured ({sent.emailIssue}). Copy the link and send it yourself.</p>
             )}
-            <CopyLink link={sent.link} />
-            <p className="mt-2 text-xs text-slate-500">The link works once and expires in 14 days. It is shown only now; Resend makes a new one.</p>
+            <CopyLink link={sent.link} message={inviteMessage({ practice: brandName(current), name: sent.invite.name, link: sent.link })} />
+            <p className="mt-2 text-xs text-slate-500">The link works once and expires in 14 days. It is shown only now; “Copy link” in the list makes a new one. “Copy message” gives you the text ready to paste into WhatsApp or a text.</p>
             <div className="mt-4 flex justify-end"><Button onClick={onClose}>Done</Button></div>
           </>
         ) : (

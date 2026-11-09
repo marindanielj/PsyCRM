@@ -62,7 +62,7 @@ const sendSchema = z.object({
   excludeFamilyIds: z.array(z.string().min(1).max(64)).max(40).default([]),
   signers: z.array(z.object({ role: z.enum(SIGNER_ROLES), name: z.string().trim().min(1).max(120), email: z.string().trim().email().max(200) })).min(1).max(3),
 })
-const resendSchema = z.object({ signerId: z.string().min(1).max(64) })
+const resendSchema = z.object({ signerId: z.string().min(1).max(64), deliver: z.enum(['email', 'none']).default('email') })
 const voidSchema = z.object({ reason: z.string().trim().min(1).max(500) })
 const requestsQuery = z.object({
   contactId: z.string().min(1).max(64).optional(),
@@ -239,8 +239,12 @@ export function documentsRoute(deps: {
   app.post('/requests/:id/resend', zValidator('json', resendSchema), async (c) => {
     const token = newToken()
     const id = c.req.param('id')
-    const r = await requests(c).rotateToken(id, c.req.valid('json').signerId, hashToken(token), actor(c))
+    const { signerId, deliver } = c.req.valid('json')
+    const copy = deliver === 'none'
+    const r = await requests(c).rotateToken(id, signerId, hashToken(token), actor(c), copy ? 'copy' : 'email')
     if (!r.ok) return c.json({ error: r.error }, r.error === 'not_found' ? 404 : 409)
+    // Copy mode never touches the email provider: the therapist sends the link herself.
+    if (copy) return c.json({ ok: true, signer: { id: r.signer.id, role: r.signer.role, link: `${baseUrl(c)}/d/${token}`, emailed: false, emailIssue: null } })
     const m = await mailLink(c, { to: r.signer.email, name: r.signer.name, token })
     return c.json({ ok: true, signer: { id: r.signer.id, role: r.signer.role, link: m.link, emailed: m.emailed, emailIssue: m.reason ?? null } })
   })

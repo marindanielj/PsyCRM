@@ -276,7 +276,7 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
   // --- operator actions ------------------------------------------------------
 
   /** Issue a new link to one signer (the old one stops working) and unlock them. */
-  async rotateToken(requestId: string, signerId: string, tokenHash: string, actor: DocActorRef): Promise<{ ok: true; signer: RequestSigner; request: DocumentRequest } | { ok: false; error: 'not_found' | 'not_open' | 'signer_completed' }> {
+  async rotateToken(requestId: string, signerId: string, tokenHash: string, actor: DocActorRef, delivery: 'email' | 'copy' = 'email'): Promise<{ ok: true; signer: RequestSigner; request: DocumentRequest } | { ok: false; error: 'not_found' | 'not_open' | 'signer_completed' }> {
     return this.db.transaction(async (tx) => {
       const r = (await tx.query<ReqRow>(`SELECT ${REQ_COLS} FROM document_requests WHERE location_id = $1 AND id = $2 FOR UPDATE`, [this.locationId, requestId]))[0]
       if (!r) return { ok: false, error: 'not_found' }
@@ -288,7 +288,7 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
         `UPDATE document_signers SET token_hash = $3, otp_hash = NULL, otp_expires_at = NULL, otp_attempts = 0, verified_at = NULL WHERE location_id = $1 AND id = $2 RETURNING ${SIGNER_COLS}`,
         [this.locationId, signerId, tokenHash],
       ))[0]!
-      await audit(tx, this.locationId, { action: 'packet.resent', entityType: 'document_request', entityId: requestId, contactId: r.contact_id, details: { signerId, role: s.role }, ...this.operator(actor) })
+      await audit(tx, this.locationId, { action: 'packet.resent', entityType: 'document_request', entityId: requestId, contactId: r.contact_id, details: { signerId, role: s.role, delivery }, ...this.operator(actor) })
       return { ok: true, signer: toSigner(upd), request: toRequest(r) }
     })
   }

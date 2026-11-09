@@ -106,6 +106,36 @@ test('re-sending replaces the signer\'s link (the old one stops working) and unl
   expect((await s.op('POST', `/requests/${request.id}/resend`, { signerId: 'nope' })).status).toBe(404)
 })
 
+test('"copy link" issues a new link without emailing anything: the old one dies, the new one works, the audit says it was copied', async () => {
+  const s = await documentsSetup()
+  const { request, token } = await s.sendAdult()
+  const signerId = (await s.db.query<{ id: string }>('SELECT id FROM document_signers'))[0]!.id
+  const sentBefore = s.outbox.messages.length
+
+  const r = await s.op('POST', `/requests/${request.id}/resend`, { signerId, deliver: 'none' })
+  expect(r.status).toBe(200)
+  expect(r.json.signer).toMatchObject({ id: signerId, role: 'client', emailed: false, emailIssue: null })
+  const link: string = r.json.signer.link
+  expect(link).toMatch(/^https:\/\/app\.test\/d\/[A-Za-z0-9_-]{43}$/)
+  expect(s.outbox.messages).toHaveLength(sentBefore) // nothing was emailed
+
+  const fresh = link.split('/d/')[1]!
+  expect(fresh).not.toBe(token)
+  expect((await s.visitor().call('GET', `/${token}`)).status).toBe(404) // the old link is dead
+  expect((await s.visitor().call('GET', `/${fresh}`)).status).toBe(200) // the copied one opens
+  expect(JSON.stringify(await s.db.query('SELECT * FROM document_signers'))).not.toContain(fresh) // still only a hash is stored
+
+  const log = (await s.audits()).filter((a) => a.action === 'packet.resent')
+  expect(log.at(-1)!.details).toMatchObject({ signerId, role: 'client', delivery: 'copy' })
+  expect(JSON.stringify(log)).not.toContain(fresh)
+
+  // the default is unchanged: a body without `deliver` still emails
+  await s.op('POST', `/requests/${request.id}/resend`, { signerId })
+  expect(s.outbox.messages).toHaveLength(sentBefore + 1)
+  expect((await s.audits()).filter((a) => a.action === 'packet.resent').at(-1)!.details).toMatchObject({ delivery: 'email' })
+  expect((await s.op('POST', `/requests/${request.id}/resend`, { signerId, deliver: 'sms' })).status).toBe(400)
+})
+
 test('voiding closes the link; the reason stays on the request, not in the audit log', async () => {
   const s = await documentsSetup()
   const { request, token } = await s.sendAdult()
