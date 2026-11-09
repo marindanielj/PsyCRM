@@ -163,6 +163,42 @@ export class DataStack extends Construct {
       command: ['npm', 'run', 'migrate'],
     })
     migrateContainer.addMountPoints({ containerPath: '/tmp', sourceVolume: 'tmp', readOnly: false })
+
+    // psycrm-seed: creates the practice and its owner, once (`npm run seed:practice`). It connects as the app
+    // role (inserting rows needs nothing more). The owner's first password is generated here and read from
+    // Secrets Manager, never typed or passed on a command line (which CloudTrail would record).
+    const ownerPw = new secretsmanager.Secret(this, 'OwnerPassword', {
+      secretName: 'psycrm/owner-initial-password',
+      encryptionKey: key,
+      generateSecretString: { passwordLength: 24, excludePunctuation: true },
+    })
+    const seedExec = execRole('SeedExec', NAMES.seedExecRole)
+    const seed = new ecs.FargateTaskDefinition(this, 'SeedTask', {
+      family: NAMES.seedFamily,
+      cpu: 512,
+      memoryLimitMiB: 1024,
+      executionRole: seedExec,
+      runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.ARM64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
+    })
+    seed.addVolume({ name: 'tmp' })
+    const seedContainer = seed.addContainer('seed', {
+      image: ecs.ContainerImage.fromEcrRepository(repo, settings.imageTag),
+      readonlyRootFilesystem: true,
+      user: 'node',
+      logging: ecs.LogDrivers.awsLogs({ logGroup: foundation.appLogGroup, streamPrefix: 'seed' }),
+      environment: { NODE_ENV: 'production', AWS_REGION: settings.region },
+      secrets: {
+        DATABASE_URL: ecs.Secret.fromSecretsManager(this.databaseUrl),
+        OWNER_PASSWORD: ecs.Secret.fromSecretsManager(ownerPw),
+      },
+      command: ['npm', 'run', 'seed:practice'], // PRACTICE_NAME, OWNER_EMAIL, OWNER_NAME, SES_FROM_ADDRESS: set per run
+    })
+    seedContainer.addMountPoints({ containerPath: '/tmp', sourceVolume: 'tmp', readOnly: false })
+    this.databaseUrl.grantRead(seedExec)
+    ownerPw.grantRead(seedExec)
+    repo.grantPull(seedExec)
+    foundation.appLogGroup.grantWrite(seedExec)
+    new CfnOutput(this, 'OwnerPasswordSecret', { value: ownerPw.secretName, description: 'Read once with Secrets Manager and hand to the owner over a secure channel' })
     this.migratorUrl.grantRead(migrateExec)
     repo.grantPull(migrateExec)
     foundation.appLogGroup.grantWrite(migrateExec)

@@ -32,7 +32,21 @@ Con eso existen `Foundation` y `Data`. Después, **en este orden**:
 
 1. **Roles de la base** (una vez): `aws ecs run-task --cluster psycrm --launch-type FARGATE --task-definition psycrm-bootstrap --network-configuration …` (subredes públicas y el grupo `SG-app`; las ves en la consola de ECS). Ejecuta [`db/roles.sql`](../db/roles.sql) como usuario maestro: crea `psycrm_migrator` y `psycrm_app`, y el esquema `pgboss`.
 2. **Imagen** (primer despliegue): el workflow `.github/workflows/deploy.yml` la construye y la sube al hacer *push* a `main`, o a mano: `docker buildx build --platform linux/arm64 -t <RepositoryUri>:<tag> --push .`
-3. **Migraciones**: tarea `psycrm-migrate` (el workflow la corre solo; a mano, `command: npm run migrate`). Después, una vez, `npm run seed:practice` por la misma tarea (variables `PRACTICE_NAME`, `OWNER_EMAIL`, `OWNER_PASSWORD`, `SES_FROM_ADDRESS`; ver `db/seed-practice.ts`).
+3. **Migraciones**: tarea `psycrm-migrate` (el workflow la corre solo; a mano, `command: npm run migrate`).
+   **Datos iniciales de la práctica** (una vez), con la tarea `psycrm-seed`. La contraseña de la doctora la genera Secrets Manager (`psycrm/owner-initial-password`) y la tarea la lee de ahí: no se escribe en ningún comando, porque CloudTrail lo registraría. La app aún no tiene función de cambiar contraseña, así que esta es su contraseña real.
+
+```bash
+aws ecs run-task --cluster psycrm --launch-type FARGATE --task-definition psycrm-seed \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+  --overrides '{"containerOverrides":[{"name":"seed","environment":[
+      {"name":"PRACTICE_NAME","value":"<nombre de la consulta>"},
+      {"name":"OWNER_EMAIL","value":"<correo de la doctora>"},
+      {"name":"OWNER_NAME","value":"<su nombre>"},
+      {"name":"SES_FROM_ADDRESS","value":"no-reply@app.dramaritzamartinez.com"}]}]}'
+```
+
+   Para entregar la contraseña: `aws secretsmanager get-secret-value --secret-id psycrm/owner-initial-password --query SecretString --output text` (una vez, y se la pasas por un canal seguro; no la pegues en chats ni correos).
+
 4. **Dominio y correo** (`app.dramaritzamartinez.com`; el sitio web de la doctora en `dramaritzamartinez.com` no se toca). Solo ese nombre se delega a AWS, en dos fases porque el certificado solo se puede validar cuando la delegación ya existe:
 
 ```bash

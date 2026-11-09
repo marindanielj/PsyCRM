@@ -116,7 +116,7 @@ describe('foundation + data (no domain yet)', () => {
 
   it('generates every password; none is written in the template', () => {
     const secrets = Object.values(t.findResources('AWS::SecretsManager::Secret'))
-    expect(secrets.length).toBe(6)
+    expect(secrets.length).toBe(7)
     for (const s of secrets) expect(JSON.stringify(s)).not.toMatch(/"SecretString":"[^{]*[A-Za-z0-9]{20,}"/)
     t.hasResourceProperties('AWS::SecretsManager::Secret', { Name: 'psycrm/session-secret', GenerateSecretString: Match.objectLike({ PasswordLength: 64 }) })
   })
@@ -124,7 +124,7 @@ describe('foundation + data (no domain yet)', () => {
   it('runs the one-off tasks as ARM64 with the database URL only in the migration task', () => {
     const defs = Object.values(t.findResources('AWS::ECS::TaskDefinition')) as { Properties: { Family: string; ContainerDefinitions: { Secrets?: { Name: string }[] }[] } }[]
     const names = defs.map((d) => d.Properties.Family).sort()
-    expect(names).toEqual(['psycrm-bootstrap', 'psycrm-migrate'])
+    expect(names).toEqual(['psycrm-bootstrap', 'psycrm-migrate', 'psycrm-seed'])
     const migrate = defs.find((d) => d.Properties.Family === 'psycrm-migrate')
     expect(migrate?.Properties.ContainerDefinitions[0]?.Secrets?.map((s) => s.Name)).toEqual(['DATABASE_URL'])
   })
@@ -136,6 +136,15 @@ describe('foundation + data (no domain yet)', () => {
     expect(pass).not.toBe('')
     for (const r of ['psycrm-task-execution', 'psycrm-task', 'psycrm-migrate-execution', 'psycrm-migrate-task']) expect(pass).toContain(`:role/${r}`)
     expect(pass).toContain('ecs-tasks.amazonaws.com')
+  })
+
+  it('seeds the practice as the app role, with the owner password generated and read from Secrets Manager', () => {
+    const defs = Object.values(t.findResources('AWS::ECS::TaskDefinition')) as { Properties: { Family: string; ContainerDefinitions: { Secrets?: { Name: string }[]; Environment?: { Name: string }[]; Command?: string[] }[] } }[]
+    const seed = defs.find((d) => d.Properties.Family === 'psycrm-seed')?.Properties.ContainerDefinitions[0]
+    expect(seed?.Secrets?.map((x) => x.Name).sort()).toEqual(['DATABASE_URL', 'OWNER_PASSWORD'])
+    expect(seed?.Command).toEqual(['npm', 'run', 'seed:practice'])
+    expect((seed?.Environment ?? []).map((e) => e.Name)).not.toContain('OWNER_PASSWORD')
+    t.hasResourceProperties('AWS::SecretsManager::Secret', { Name: 'psycrm/owner-initial-password', GenerateSecretString: Match.objectLike({ PasswordLength: 24, ExcludePunctuation: true }) })
   })
 
   it('does not create the public service until there is a domain', () => {
