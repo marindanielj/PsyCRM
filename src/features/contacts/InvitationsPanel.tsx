@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { type ClientInvite, type InviteSendResult, api } from '../../lib/api'
+import { brandName } from '../../lib/brand'
+import { inviteMessage } from '../../lib/link-messages'
+import { useTenant } from '../../state/location'
 import { CopyLink } from '../documents/SendPacketDialog'
 
 const fmt = (iso: string) => new Date(iso).toLocaleDateString('en-US', { timeZone: 'America/Puerto_Rico', month: 'short', day: 'numeric' })
@@ -10,7 +13,8 @@ const fmt = (iso: string) => new Date(iso).toLocaleDateString('en-US', { timeZon
 export function InvitationsPanel({ locationId, refreshKey, onCompleted }: { locationId: string; refreshKey: number; onCompleted: () => void }) {
   const [invites, setInvites] = useState<ClientInvite[]>([])
   const [busy, setBusy] = useState<string | null>(null)
-  const [link, setLink] = useState<{ id: string; res: InviteSendResult } | null>(null)
+  const [link, setLink] = useState<{ id: string; res: InviteSendResult; copyOnly: boolean } | null>(null)
+  const { current } = useTenant()
   const [error, setError] = useState<string | null>(null)
   const seenCompleted = useRef<number | null>(null)
 
@@ -63,13 +67,14 @@ export function InvitationsPanel({ locationId, refreshKey, onCompleted }: { loca
             </div>
             <p className="truncate text-xs text-slate-500">{i.email} · {i.kind === 'guardian' ? 'parent/guardian' : 'adult'} · {i.status === 'expired' ? `expired ${fmt(i.expiresAt)}` : `expires ${fmt(i.expiresAt)}`}</p>
             <div className="mt-2 flex gap-2">
-              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void act(i.id, async () => setLink({ id: i.id, res: await api.invites.resend(locationId, i.id) }))}>Resend</Button>
+              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void act(i.id, async () => setLink({ id: i.id, res: await api.invites.resend(locationId, i.id, 'none'), copyOnly: true }))}>Copy link</Button>
+              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void act(i.id, async () => setLink({ id: i.id, res: await api.invites.resend(locationId, i.id), copyOnly: false }))}>Resend</Button>
               {i.status === 'sent' && <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void act(i.id, async () => { await api.invites.void(locationId, i.id) })}>Cancel</Button>}
             </div>
             {link?.id === i.id && (
               <div className="mt-2 text-xs">
-                {link.res.emailed ? <p className="text-emerald-700">A new link was emailed. The old one no longer works.</p> : <p className="text-amber-700">Email not configured ({link.res.emailIssue}). Copy the new link.</p>}
-                <CopyLink link={link.res.link} />
+                {link.copyOnly ? <p className="text-slate-600">New link ready; nothing was emailed. The old one no longer works.</p> : link.res.emailed ? <p className="text-emerald-700">A new link was emailed. The old one no longer works.</p> : <p className="text-amber-700">Email not configured ({link.res.emailIssue}). Copy the new link.</p>}
+                <CopyLink link={link.res.link} message={inviteMessage({ practice: brandName(current), name: i.name, link: link.res.link })} />
               </div>
             )}
           </li>

@@ -106,9 +106,10 @@ interface ReqRow {
 interface SignerRow {
   id: string; request_id: string; role: SignerRole; name: string; email: string; status: SignerStatus; otp_attempts: number
   verified_at: Date | string | null; first_viewed_at: Date | string | null; completed_at: Date | string | null
+  verified_via?: string | null
 }
 const REQ_COLS = 'id, contact_id, packet_id, packet_name, audience, template_ids, status, sent_by, sent_at, expires_at, completed_at, voided_at, void_reason, needs_review'
-const SIGNER_COLS = 'id, request_id, role, name, email, status, otp_attempts, verified_at, first_viewed_at, completed_at'
+const SIGNER_COLS = 'id, request_id, role, name, email, status, otp_attempts, verified_at, first_viewed_at, completed_at, verified_via'
 const SIGNED_COLS = 'id, request_id, contact_id, signer_role, signer_name, template_id, template_title, template_version, locale, signed_at, content_sha256'
 
 export const OTP_MAX_ATTEMPTS = 5
@@ -276,7 +277,7 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
   // --- operator actions ------------------------------------------------------
 
   /** Issue a new link to one signer (the old one stops working) and unlock them. */
-  async rotateToken(requestId: string, signerId: string, tokenHash: string, actor: DocActorRef): Promise<{ ok: true; signer: RequestSigner; request: DocumentRequest } | { ok: false; error: 'not_found' | 'not_open' | 'signer_completed' }> {
+  async rotateToken(requestId: string, signerId: string, tokenHash: string, actor: DocActorRef, delivery: 'email' | 'copy' = 'email'): Promise<{ ok: true; signer: RequestSigner; request: DocumentRequest } | { ok: false; error: 'not_found' | 'not_open' | 'signer_completed' }> {
     return this.db.transaction(async (tx) => {
       const r = (await tx.query<ReqRow>(`SELECT ${REQ_COLS} FROM document_requests WHERE location_id = $1 AND id = $2 FOR UPDATE`, [this.locationId, requestId]))[0]
       if (!r) return { ok: false, error: 'not_found' }
@@ -285,10 +286,10 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
       if (!s) return { ok: false, error: 'not_found' }
       if (s.status === 'completed') return { ok: false, error: 'signer_completed' }
       const upd = (await tx.query<SignerRow>(
-        `UPDATE document_signers SET token_hash = $3, otp_hash = NULL, otp_expires_at = NULL, otp_attempts = 0, verified_at = NULL WHERE location_id = $1 AND id = $2 RETURNING ${SIGNER_COLS}`,
+        `UPDATE document_signers SET token_hash = $3, otp_hash = NULL, otp_expires_at = NULL, otp_via = NULL, otp_attempts = 0, verified_at = NULL, verified_via = NULL WHERE location_id = $1 AND id = $2 RETURNING ${SIGNER_COLS}`,
         [this.locationId, signerId, tokenHash],
       ))[0]!
-      await audit(tx, this.locationId, { action: 'packet.resent', entityType: 'document_request', entityId: requestId, contactId: r.contact_id, details: { signerId, role: s.role }, ...this.operator(actor) })
+      await audit(tx, this.locationId, { action: 'packet.resent', entityType: 'document_request', entityId: requestId, contactId: r.contact_id, details: { signerId, role: s.role, delivery }, ...this.operator(actor) })
       return { ok: true, signer: toSigner(upd), request: toRequest(r) }
     })
   }
@@ -359,8 +360,29 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
 
   // --- verification (the one-time code) -------------------------------------
 
-  async storeOtp(signerId: string, otpHash: string, expiresAt: Date): Promise<void> {
-    await this.db.query(`UPDATE document_signers SET otp_hash = $3, otp_expires_at = $4 WHERE location_id = $1 AND id = $2`, [this.locationId, signerId, otpHash, expiresAt.toISOString()])
+  async storeOtp(signerId: string, otpHash: string, expiresAt: Date, via: 'email_otp' | 'therapist_code' = 'email_otp'): Promise<void> {
+    await this.db.query(`UPDATE document_signers SET otp_hash = $3, otp_expires_at = $4, otp_via = $5 WHERE location_id = $1 AND id = $2`, [this.locationId, signerId, otpHash, expiresAt.toISOString(), via])
+  }
+
+  /**
+   * The therapist gives this signer a code herself (read out, not emailed). Resets the failed attempts, so it also
+   * reopens a locked signer. The code itself is never stored (only its hash) and never written to the audit log.
+   */
+  async issueTherapistCode(requestId: string, signerId: string, otpHash: string, expiresAt: Date, actor: DocActorRef): Promise<{ ok: true; signer: RequestSigner } | { ok: false; error: 'not_found' | 'not_open' | 'signer_completed' }> {
+    return this.db.transaction(async (tx) => {
+      const r = (await tx.query<ReqRow>(`SELECT ${REQ_COLS} FROM document_requests WHERE location_id = $1 AND id = $2 FOR UPDATE`, [this.locationId, requestId]))[0]
+      if (!r) return { ok: false, error: 'not_found' }
+      if (r.status !== 'sent' && r.status !== 'in_progress') return { ok: false, error: 'not_open' }
+      const s = (await tx.query<SignerRow>(`SELECT ${SIGNER_COLS} FROM document_signers WHERE location_id = $1 AND request_id = $2 AND id = $3 FOR UPDATE`, [this.locationId, requestId, signerId]))[0]
+      if (!s) return { ok: false, error: 'not_found' }
+      if (s.status === 'completed') return { ok: false, error: 'signer_completed' }
+      const upd = (await tx.query<SignerRow>(
+        `UPDATE document_signers SET otp_hash = $3, otp_expires_at = $4, otp_via = 'therapist_code', otp_attempts = 0 WHERE location_id = $1 AND id = $2 RETURNING ${SIGNER_COLS}`,
+        [this.locationId, signerId, otpHash, expiresAt.toISOString()],
+      ))[0]!
+      await audit(tx, this.locationId, { action: 'packet.code_issued', entityType: 'document_request', entityId: requestId, contactId: r.contact_id, details: { signerId, role: s.role }, ...this.operator(actor) })
+      return { ok: true, signer: toSigner(upd) }
+    })
   }
 
   /** Count a wrong code. The fifth locks the signer (and says so in the audit log). Returns the attempts used so far. */
@@ -387,7 +409,7 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
       if (!s) return
       await tx.query(
         `UPDATE document_signers
-            SET verified_at = now(), otp_hash = NULL, otp_expires_at = NULL, otp_attempts = 0,
+            SET verified_at = now(), verified_via = COALESCE(otp_via, 'email_otp'), otp_hash = NULL, otp_expires_at = NULL, otp_attempts = 0,
                 first_viewed_at = COALESCE(first_viewed_at, now()),
                 status = CASE WHEN status = 'pending' THEN 'viewed' ELSE status END
           WHERE location_id = $1 AND id = $2`, [this.locationId, signerId],
@@ -478,10 +500,10 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
 
       const row = (await tx.query<Record<string, any>>(
         `INSERT INTO signed_documents (id, location_id, contact_id, request_id, signer_id, signer_role, template_id, template_title, template_version, locale, field_values, rendered_html, content_sha256, signer_name, signature_png, esign_consent, signer_ip, signer_user_agent, verified_via, signed_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,true,$16,$17,'email_otp',$18) RETURNING ${SIGNED_COLS}`,
-        [docId, this.locationId, r.contact_id, r.id, s.id, s.role, tpl.id, tpl.title, tpl.version, tpl.locale, JSON.stringify(values), renderedHtml, hash, name, tpl.signature.drawn ? input.signaturePng : null, actor.ip, actor.userAgent.slice(0, 300), now.toISOString()],
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,true,$16,$17,$19,$18) RETURNING ${SIGNED_COLS}`,
+        [docId, this.locationId, r.contact_id, r.id, s.id, s.role, tpl.id, tpl.title, tpl.version, tpl.locale, JSON.stringify(values), renderedHtml, hash, name, tpl.signature.drawn ? input.signaturePng : null, actor.ip, actor.userAgent.slice(0, 300), now.toISOString(), s.verified_via ?? 'email_otp'],
       ))[0]!
-      await audit(tx, this.locationId, { action: 'document.signed', entityType: 'signed_document', entityId: docId, contactId: r.contact_id, details: { requestId: r.id, templateId: tpl.id, templateVersion: num(tpl.version), signerRole: s.role, contentSha256: hash }, ...this.visitor(actor) })
+      await audit(tx, this.locationId, { action: 'document.signed', entityType: 'signed_document', entityId: docId, contactId: r.contact_id, details: { requestId: r.id, templateId: tpl.id, templateVersion: num(tpl.version), signerRole: s.role, verifiedVia: s.verified_via ?? 'email_otp', contentSha256: hash }, ...this.visitor(actor) })
       await new TimelineRepo(tx, this.locationId).add({ contactId: r.contact_id, type: 'document_signed', refTable: 'signed_documents', refId: docId, payload: { title: tpl.title, role: s.role } })
       if (r.status === 'sent') await tx.query(`UPDATE document_requests SET status = 'in_progress' WHERE location_id = $1 AND id = $2`, [this.locationId, r.id])
 
@@ -601,13 +623,13 @@ export class DocumentRequestsRepo extends LocationScopedRepo {
 export interface SignerContext {
   locationId: string
   request: DocumentRequest
-  signer: RequestSigner & { otpHash: string | null; otpExpiresAt: string | null; otpAttempts: number; draftValues: Record<string, Record<string, unknown>> }
+  signer: RequestSigner & { otpHash: string | null; otpExpiresAt: string | null; otpVia: string | null; otpAttempts: number; draftValues: Record<string, Record<string, unknown>> }
 }
 
 /** Find the signer a link belongs to. One query for every outcome, so a bad token costs the same as a good one. */
 export async function findSignerByTokenHash(db: Database, tokenHash: string): Promise<SignerContext | null> {
   const rows = await db.query<Record<string, any>>(
-    `SELECT s.location_id, s.otp_hash, s.otp_expires_at, s.otp_attempts, s.draft_values,
+    `SELECT s.location_id, s.otp_hash, s.otp_expires_at, s.otp_via, s.otp_attempts, s.draft_values,
             s.id AS s_id, s.request_id, s.role, s.name, s.email, s.status AS s_status, s.verified_at, s.first_viewed_at, s.completed_at AS s_completed_at,
             r.id AS r_id, r.contact_id, r.packet_id, r.packet_name, r.audience, r.template_ids, r.status AS r_status, r.sent_by, r.sent_at, r.expires_at, r.completed_at AS r_completed_at, r.voided_at, r.void_reason, r.needs_review
        FROM document_signers s JOIN document_requests r ON r.id = s.request_id
@@ -620,7 +642,7 @@ export async function findSignerByTokenHash(db: Database, tokenHash: string): Pr
   return {
     locationId: x.location_id,
     request: toRequest({ id: x.r_id, contact_id: x.contact_id, packet_id: x.packet_id, packet_name: x.packet_name, audience: x.audience, template_ids: x.template_ids, status: x.r_status, sent_by: x.sent_by, sent_at: x.sent_at, expires_at: x.expires_at, completed_at: x.r_completed_at, voided_at: x.voided_at, void_reason: x.void_reason, needs_review: x.needs_review }),
-    signer: { ...signer, otpHash: x.otp_hash, otpExpiresAt: iso(x.otp_expires_at), otpAttempts: num(x.otp_attempts), draftValues: x.draft_values ?? {} },
+    signer: { ...signer, otpHash: x.otp_hash, otpExpiresAt: iso(x.otp_expires_at), otpVia: x.otp_via ?? null, otpAttempts: num(x.otp_attempts), draftValues: x.draft_values ?? {} },
   }
 }
 

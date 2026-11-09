@@ -3,7 +3,11 @@ import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Textarea } from '../../components/ui/textarea'
 import { ApiError, type DocRequest, type DocRequestStatus, api } from '../../lib/api'
+import { brandName } from '../../lib/brand'
+import { documentsMessage } from '../../lib/link-messages'
+import { useTenant } from '../../state/location'
 import { CopyLink } from './SendPacketDialog'
+import { useTherapistCodes } from './useTherapistCodes'
 
 const STATUS: Record<DocRequestStatus, { label: string; variant: 'blue' | 'amber' | 'green' | 'slate' | 'rose' }> = {
   sent: { label: 'Sent', variant: 'blue' },
@@ -34,7 +38,10 @@ export function RequestCard({
 }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [link, setLink] = useState<{ signerId: string; link: string; emailed: boolean; issue: string | null } | null>(null)
+  const [link, setLink] = useState<{ signerId: string; link: string; emailed: boolean; issue: string | null; copyOnly: boolean } | null>(null)
+  const { current } = useTenant()
+  const therapistCodes = useTherapistCodes(locationId)
+  const [code, setCode] = useState<{ signerId: string; code: string; copied: boolean } | null>(null)
   const [voiding, setVoiding] = useState(false)
   const [reason, setReason] = useState('')
   const open = request.status === 'sent' || request.status === 'in_progress'
@@ -99,15 +106,36 @@ export function RequestCard({
               </ul>
               {open && s.status !== 'completed' && (
                 <div className="mt-2">
-                  <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void run(`resend-${s.id}`, async () => {
-                    const r = await api.documents.resend(locationId, request.id, s.id)
-                    setLink({ signerId: s.id, link: r.signer.link, emailed: r.signer.emailed, issue: r.signer.emailIssue })
-                    onChanged()
-                  })}>{busy === `resend-${s.id}` ? 'Sending…' : 'Resend'}</Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void run(`copy-${s.id}`, async () => {
+                      const r = await api.documents.resend(locationId, request.id, s.id, 'none')
+                      setLink({ signerId: s.id, link: r.signer.link, emailed: false, issue: null, copyOnly: true })
+                      onChanged()
+                    })}>{busy === `copy-${s.id}` ? 'Preparing…' : 'Copy link'}</Button>
+                    <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void run(`resend-${s.id}`, async () => {
+                      const r = await api.documents.resend(locationId, request.id, s.id)
+                      setLink({ signerId: s.id, link: r.signer.link, emailed: r.signer.emailed, issue: r.signer.emailIssue, copyOnly: false })
+                      onChanged()
+                    })}>{busy === `resend-${s.id}` ? 'Sending…' : 'Resend'}</Button>
+                    {therapistCodes && (
+                      <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void run(`code-${s.id}`, async () => {
+                        const r = await api.documents.issueCode(locationId, request.id, s.id)
+                        setCode({ signerId: s.id, code: r.code, copied: false })
+                        onChanged()
+                      })}>{busy === `code-${s.id}` ? 'Preparing…' : 'Give a code'}</Button>
+                    )}
+                  </div>
+                  {code?.signerId === s.id && (
+                    <div role="status" className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                      <p className="text-sm">Code for {s.name.split(' ')[0]}: <span className="font-mono text-lg font-semibold tracking-widest">{code.code}</span> <span className="text-amber-800">(valid for 30 minutes)</span></p>
+                      <p className="mt-1">Tell it to {s.name.split(' ')[0]} by phone or in person, not in the same message as the link. They type it on the documents page. This signing will be recorded as verified with a code you gave. A new code replaces this one.</p>
+                      <Button size="sm" variant="outline" className="mt-2" onClick={() => { void navigator.clipboard?.writeText(code.code).then(() => setCode({ ...code, copied: true })).catch(() => {}) }}>{code.copied ? 'Copied' : 'Copy code'}</Button>
+                    </div>
+                  )}
                   {link?.signerId === s.id && (
                     <div className="mt-2 text-xs">
-                      {link.emailed ? <p className="text-emerald-700">A new link was emailed to {s.email}. The old one no longer works.</p> : <p className="text-amber-700">Email not configured ({link.issue}). Copy the new link and send it yourself.</p>}
-                      <CopyLink link={link.link} />
+                      {link.copyOnly ? <p className="text-slate-600">New link ready; nothing was emailed. The old one no longer works. To open the documents, {s.name.split(' ')[0]} will be sent a code at {s.email}.</p> : link.emailed ? <p className="text-emerald-700">A new link was emailed to {s.email}. The old one no longer works.</p> : <p className="text-amber-700">Email not configured ({link.issue}). Copy the new link and send it yourself.</p>}
+                      <CopyLink link={link.link} message={documentsMessage({ practice: brandName(current), name: s.name, link: link.link })} />
                     </div>
                   )}
                 </div>

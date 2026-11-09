@@ -121,7 +121,8 @@ export function publicDocumentsRoute(deps: {
     const base = { practice: v.practice, brand: v.brand, logoUrl: v.logoUrl, nonce }
 
     if (!isVerified(c, v)) {
-      return c.html(renderVerifyPage({ ...base, maskedEmail: maskEmail(v.signer.email), token, locked: v.signer.otpAttempts >= OTP_MAX_ATTEMPTS }))
+      const therapistCode = v.signer.otpVia === 'therapist_code' && !!v.signer.otpHash && !!v.signer.otpExpiresAt && new Date(v.signer.otpExpiresAt).getTime() > clock().getTime()
+      return c.html(renderVerifyPage({ ...base, maskedEmail: maskEmail(v.signer.email), token, locked: v.signer.otpAttempts >= OTP_MAX_ATTEMPTS, therapistCode }))
     }
 
     const repo = new DocumentRequestsRepo(deps.db, v.locationId)
@@ -179,9 +180,15 @@ export function publicDocumentsRoute(deps: {
 
     const sender = await (deps.resolveEmail ?? resolveEmailSender)(deps.db, v.locationId)
     const code = newOtp()
-    await new DocumentRequestsRepo(deps.db, v.locationId).storeOtp(v.signer.id, hashOtp(code), new Date(now + OTP_TTL_MS))
+    await new DocumentRequestsRepo(deps.db, v.locationId).storeOtp(v.signer.id, hashOtp(code), new Date(now + OTP_TTL_MS), 'email_otp')
     const r = await sendOtpEmail(sender.ok ? sender.sender : null, sender.ok ? undefined : sender.reason, { practice: v.practice || 'Su terapeuta', to: v.signer.email, name: v.signer.name, code })
-    return r.sent ? c.json({ ok: true }) : c.json({ error: 'email_unavailable' }, 503)
+    if (r.sent) return c.json({ ok: true })
+    // The email did not go out. A code the therapist gave that is still valid must not be lost to a code nobody received.
+    const keep = v.signer
+    if (keep.otpVia === 'therapist_code' && keep.otpHash && keep.otpExpiresAt && new Date(keep.otpExpiresAt).getTime() > now) {
+      await new DocumentRequestsRepo(deps.db, v.locationId).storeOtp(v.signer.id, keep.otpHash, new Date(keep.otpExpiresAt), 'therapist_code')
+    }
+    return c.json({ error: 'email_unavailable' }, 503)
   })
 
   app.post('/:token/verify', zValidator('json', verifySchema, (res, c) => (res.success ? undefined : c.json({ error: 'code_invalid' }, 401))), async (c) => {

@@ -32,7 +32,7 @@ export function SignedDocumentViewer({ locationId, id, onClose }: { locationId: 
               <Button size="sm" onClick={onClose}>Close</Button>
             </div>
             <p className="mb-2 text-xs text-slate-500">
-              Signed by {doc.signerName} · IP {doc.signerIp} · {doc.intact ? <span className="text-emerald-700">record intact</span> : <span className="font-semibold text-rose-700">record does NOT match its fingerprint</span>} · SHA-256 <span className="font-mono">{doc.contentSha256.slice(0, 16)}…</span>
+              Signed by {doc.signerName} · IP {doc.signerIp} · {doc.verifiedVia === 'therapist_code' ? <span className="font-medium text-amber-700">verified with a code given by the therapist</span> : <span>verified by emailed code</span>} · {doc.intact ? <span className="text-emerald-700">record intact</span> : <span className="font-semibold text-rose-700">record does NOT match its fingerprint</span>} · SHA-256 <span className="font-mono">{doc.contentSha256.slice(0, 16)}…</span>
             </p>
             <iframe title="Signed document" sandbox="" srcDoc={doc.renderedHtml} className="min-h-[50vh] w-full flex-1 rounded-lg border border-slate-200" />
           </>

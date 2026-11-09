@@ -69,7 +69,8 @@ async function post(path,body){
 function show(el,text,cls){el.className='msg '+cls;el.textContent=text;el.hidden=false}
 `
 
-export function renderVerifyPage(o: { practice: string; maskedEmail: string; token: string; nonce: string; brand?: string; logoUrl?: string; locked: boolean }): string {
+/** `therapistCode`: the therapist gave this person a code (read out, not emailed), so the box to type it is already open. */
+export function renderVerifyPage(o: { practice: string; maskedEmail: string; token: string; nonce: string; brand?: string; logoUrl?: string; locked: boolean; therapistCode?: boolean }): string {
   const script = `${CLIENT_COMMON.replace('__T__', jsonForScript(o.token))}
 const send=document.getElementById('send'),codeBox=document.getElementById('codebox'),verify=document.getElementById('verify'),code=document.getElementById('code'),msg=document.getElementById('msg');
 send&&send.addEventListener('click',async()=>{
@@ -92,9 +93,9 @@ verify&&verify.addEventListener('click',async()=>{
   else show(msg,'No pudimos verificar el código. Inténtelo de nuevo.','err');
 });`
   const body = `${header(o.practice, o.logoUrl)}<div class="card"><h1>Verifique su identidad</h1>
-<p>Para proteger su información, enviaremos un código de 6 dígitos a <strong>${escText(o.maskedEmail)}</strong>.</p>
-${o.locked ? '<div class="msg err">Este enlace quedó bloqueado por demasiados intentos. Pida a su terapeuta que le envíe uno nuevo.</div>' : `<div class="row"><button class="btn" id="send" type="button">Enviar código</button></div>
-<div id="codebox" hidden><label class="field-label" for="code">Código de 6 dígitos</label><input class="code" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*"><div class="row"><button class="btn" id="verify" type="button">Verificar</button></div></div>`}
+${o.therapistCode ? '<p>Su terapeuta le dio un código de 6 dígitos. Escríbalo aquí.</p>' : `<p>Para proteger su información, enviaremos un código de 6 dígitos a <strong>${escText(o.maskedEmail)}</strong>.</p>`}
+${o.locked ? '<div class="msg err">Este enlace quedó bloqueado por demasiados intentos. Pida a su terapeuta que le envíe uno nuevo.</div>' : `<div class="row"><button class="btn${o.therapistCode ? ' ghost' : ''}" id="send" type="button">${o.therapistCode ? 'Prefiero recibirlo por correo' : 'Enviar código'}</button></div>
+<div id="codebox"${o.therapistCode ? '' : ' hidden'}><label class="field-label" for="code">Código de 6 dígitos</label><input class="code" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*"><div class="row"><button class="btn" id="verify" type="button">Verificar</button></div></div>`}
 <div id="msg" class="msg" hidden role="status"></div></div>`
   return shell({ title: `${o.practice || 'Documentos'}: verificación`, brand: o.brand, body, nonce: o.nonce, script: o.locked ? undefined : script })
 }

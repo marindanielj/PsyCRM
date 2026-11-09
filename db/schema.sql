@@ -1556,6 +1556,11 @@ CREATE TABLE IF NOT EXISTS document_signers (
   draft_values   jsonb NOT NULL DEFAULT '{}',
   UNIQUE (request_id, role)
 );
+-- How the one-time code that opens the documents reached the person: 'email_otp' (the system emailed it) or
+-- 'therapist_code' (the therapist read it out). otp_via belongs to the code now stored; verified_via is what
+-- verified the person and is copied onto each signed document.
+ALTER TABLE document_signers ADD COLUMN IF NOT EXISTS otp_via text;
+ALTER TABLE document_signers ADD COLUMN IF NOT EXISTS verified_via text;
 CREATE INDEX IF NOT EXISTS document_signers_request ON document_signers(request_id);
 
 CREATE TABLE IF NOT EXISTS signed_documents (

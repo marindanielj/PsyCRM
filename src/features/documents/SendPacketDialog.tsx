@@ -4,6 +4,9 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { ApiError, type DocPacket, type DocPacketItem, type SentSigner, type SignerRole, api } from '../../lib/api'
 import { ageOn, isMinor, isValidIsoDate } from '../../lib/age'
+import { brandName } from '../../lib/brand'
+import { documentsMessage } from '../../lib/link-messages'
+import { useTenant } from '../../state/location'
 
 const ROLE_LABEL: Record<SignerRole, string> = { client: 'Client', guardian: 'Parent / guardian', minor: 'Minor (assent)' }
 
@@ -40,6 +43,7 @@ export function SendPacketDialog({
   onClose: () => void
   onSent: () => void
 }) {
+  const { current } = useTenant()
   const dob = customFields.date_of_birth
   const known = isValidIsoDate(dob)
   const minor = known ? isMinor(dob) : null
@@ -114,11 +118,11 @@ export function SendPacketDialog({
             <li key={s.id} className="rounded-lg border border-slate-200 p-3 text-sm">
               <div className="font-medium text-slate-800">{s.name} <span className="text-slate-500">· {ROLE_LABEL[s.role]}</span></div>
               {s.emailed ? <p className="text-emerald-700">Emailed to {s.email}.</p> : <p className="text-amber-700">Email not configured ({s.emailIssue}). Copy the link and send it yourself.</p>}
-              <CopyLink link={s.link} />
+              <CopyLink link={s.link} message={documentsMessage({ practice: brandName(current), name: s.name, link: s.link })} />
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-xs text-slate-500">Each link is shown only now. If you lose one, use Resend to make a new one.</p>
+        <p className="mt-3 text-xs text-slate-500">Each link is shown only now. If you lose one, use “Copy link” on the packet to make a new one. The person also needs the code that is emailed to them to open the documents.</p>
         <div className="mt-4 flex justify-end"><Button onClick={onClose}>Done</Button></div>
       </Shell>
     )
@@ -177,12 +181,15 @@ export function SendPacketDialog({
   )
 }
 
-export function CopyLink({ link }: { link: string }) {
-  const [copied, setCopied] = useState(false)
+/** The link to copy, and (when `message` is given) the ready-to-paste text that carries it. */
+export function CopyLink({ link, message }: { link: string; message?: string }) {
+  const [copied, setCopied] = useState<'link' | 'message' | null>(null)
+  const copy = (what: 'link' | 'message', text: string) => { void navigator.clipboard?.writeText(text).then(() => setCopied(what)).catch(() => {}) }
   return (
-    <div className="mt-2 flex items-center gap-2">
-      <Input readOnly value={link} aria-label="Signing link" className="font-mono text-xs" onFocus={(e) => e.currentTarget.select()} />
-      <Button size="sm" variant="outline" onClick={() => { void navigator.clipboard?.writeText(link).then(() => setCopied(true)).catch(() => {}) }}>{copied ? 'Copied' : 'Copy link'}</Button>
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <Input readOnly value={link} aria-label="Signing link" className="min-w-0 flex-1 font-mono text-xs" onFocus={(e) => e.currentTarget.select()} />
+      <Button size="sm" variant="outline" onClick={() => copy('link', link)}>{copied === 'link' ? 'Copied' : 'Copy link'}</Button>
+      {message ? <Button size="sm" variant="outline" onClick={() => copy('message', message)}>{copied === 'message' ? 'Copied' : 'Copy message'}</Button> : null}
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
+import { DocumentVerificationCard } from './DocumentVerificationCard'
 import { PageSpinner } from '../../components/ui/spinner'
 import { type PracticeProfile, api } from '../../lib/api'
 import { useTenant } from '../../state/location'
@@ -120,6 +121,7 @@ export function PracticeSettingsPage() {
                   />
                 </div>
               </section>
+              <DocumentVerificationCard locationId={loc} />
             </>
           ) : null}
         </div>

@@ -74,7 +74,8 @@ export class ClientInvitesRepo extends LocationScopedRepo {
   }
 
   /** A new link for the same invitation (the old one stops working) and a fresh 14 days. */
-  async rotate(id: string, tokenHash: string, actor: DocActorRef): Promise<InviteResult<{ invite: ClientInvite }>> {
+  /** Issue a new link (the old one stops working). `delivery` says how it reaches the person: emailed by us, or copied by the therapist to send herself. */
+  async rotate(id: string, tokenHash: string, actor: DocActorRef, delivery: 'email' | 'copy' = 'email'): Promise<InviteResult<{ invite: ClientInvite }>> {
     return this.db.transaction(async (tx) => {
       const cur = (await tx.query<Row>(`SELECT ${COLS} FROM client_invites WHERE location_id = $1 AND id = $2 FOR UPDATE`, [this.locationId, id]))[0]
       if (!cur) return { ok: false, error: 'not_found' }
@@ -82,7 +83,7 @@ export class ClientInvitesRepo extends LocationScopedRepo {
       const r = (await tx.query<Row>(
         `UPDATE client_invites SET token_hash = $3, status = 'sent', expires_at = now() + interval '14 days', opened_at = NULL WHERE location_id = $1 AND id = $2 RETURNING ${COLS}`, [this.locationId, id, tokenHash],
       ))[0]!
-      await audit(tx, this.locationId, { action: 'invite.resent', entityType: 'client_invite', entityId: id, details: { kind: cur.kind }, ...this.operator(actor) })
+      await audit(tx, this.locationId, { action: 'invite.resent', entityType: 'client_invite', entityId: id, details: { kind: cur.kind, delivery }, ...this.operator(actor) })
       return { ok: true, invite: toInvite(r) }
     })
   }

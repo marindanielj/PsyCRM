@@ -2173,7 +2173,9 @@ export const api = {
     list: (loc: string) => req<{ invites: ClientInvite[] }>(`/loc/${loc}/invites`),
     create: (loc: string, input: { name: string; email: string; kind: 'adult' | 'guardian' }) =>
       req<InviteSendResult>(`/loc/${loc}/invites`, { method: 'POST', body: JSON.stringify(input) }),
-    resend: (loc: string, id: string) => req<InviteSendResult>(`/loc/${loc}/invites/${id}/resend`, { method: 'POST' }),
+    /** `deliver: 'none'` only issues the new link (no email is attempted), for the therapist to send herself. */
+    resend: (loc: string, id: string, deliver: 'email' | 'none' = 'email') =>
+      req<InviteSendResult>(`/loc/${loc}/invites/${id}/resend`, { method: 'POST', body: JSON.stringify({ deliver }) }),
     void: (loc: string, id: string) => req<{ ok: true }>(`/loc/${loc}/invites/${id}/void`, { method: 'POST' }),
   },
 
@@ -2205,8 +2207,14 @@ export const api = {
       req<{ requests: DocRequest[] }>(`/loc/${loc}/documents/requests${qs(filters)}`),
     sendPacket: (loc: string, input: { contactId: string; packetId: string; excludeFamilyIds: string[]; signers: { role: SignerRole; name: string; email: string }[] }) =>
       req<{ ok: true; request: DocRequest; signers: SentSigner[]; warnings: string[] }>(`/loc/${loc}/documents/requests`, { method: 'POST', body: JSON.stringify(input) }),
-    resend: (loc: string, requestId: string, signerId: string) =>
-      req<{ ok: true; signer: { id: string; role: SignerRole; link: string; emailed: boolean; emailIssue: string | null } }>(`/loc/${loc}/documents/requests/${requestId}/resend`, { method: 'POST', body: JSON.stringify({ signerId }) }),
+    resend: (loc: string, requestId: string, signerId: string, deliver: 'email' | 'none' = 'email') =>
+      req<{ ok: true; signer: { id: string; role: SignerRole; link: string; emailed: boolean; emailIssue: string | null } }>(`/loc/${loc}/documents/requests/${requestId}/resend`, { method: 'POST', body: JSON.stringify({ signerId, deliver }) }),
+    /** Codes the therapist reads out instead of emailing: off unless the practice turns them on. */
+    verification: (loc: string) => req<{ therapistCode: boolean }>(`/loc/${loc}/documents/verification`),
+    setVerification: (loc: string, therapistCode: boolean) =>
+      req<{ ok: true; therapistCode: boolean }>(`/loc/${loc}/documents/verification`, { method: 'PUT', body: JSON.stringify({ therapistCode }) }),
+    issueCode: (loc: string, requestId: string, signerId: string) =>
+      req<{ ok: true; code: string; expiresAt: string }>(`/loc/${loc}/documents/requests/${requestId}/signers/${signerId}/code`, { method: 'POST' }),
     voidRequest: (loc: string, requestId: string, reason: string) =>
       req<{ ok: true }>(`/loc/${loc}/documents/requests/${requestId}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
     acceptReview: (loc: string, requestId: string) => req<{ ok: true }>(`/loc/${loc}/documents/requests/${requestId}/accept-review`, { method: 'POST' }),

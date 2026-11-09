@@ -39,6 +39,11 @@ Todo el correo del sistema (la invitación al cliente, los documentos para firma
 5. **Confirmar que SES figura en la lista oficial de servicios elegibles para HIPAA** (tarea 1.4 de `INFRA_AWS.md`) y que el BAA está aceptado en Artifact.
 6. **Alarma** de tasa de rebote y de queja (la lista de alarmas de `INFRA_AWS.md` §3.9 ya la incluye).
 
+### Mientras SES siga en *sandbox*
+SES solo envía a direcciones verificadas, así que los correos a clientes reales rebotan. Para no depender de ellos:
+- **Invitación de registro:** se puede mandar por cuenta propia con **Copy link** / **Copy message** (ver `GUIA_RAPIDA.md`). No necesita correo.
+- **Documentos de onboarding:** el enlace también se copia, pero la página pide un **código de 6 dígitos que se envía por correo** para verificar a la persona. Con SES en *sandbox* ese código solo llega a direcciones verificadas en SES. Opciones: esperar la aprobación, o verificar la dirección del cliente en SES (el cliente debe pulsar un enlace que AWS le manda).
+
 ### Estado con el dominio `dramaritzamartinez.com` (nov 2026)
 - El dominio está registrado en Network Solutions con su DNS allí (servidores `ns11/ns12.worldnic.com`), una web activa en la raíz y **sin registros de correo** (ni MX ni TXT). Por eso solo se delega `app.dramaritzamartinez.com` a Route 53 y la web no se toca. El código de `infra/` crea la zona, la identidad de SES (DKIM 2048, MAIL FROM `bounce.app…`, DMARC estricto), el conjunto de configuración `psycrm` y el certificado. El remitente será `no-reply@app.dramaritzamartinez.com`.
 - Si algún día se quiere enviar como `@dramaritzamartinez.com` (sin `app.`), hay que crear la identidad de la raíz y pegar sus registros DKIM en Network Solutions. No es necesario para empezar.

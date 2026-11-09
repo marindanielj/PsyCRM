@@ -86,3 +86,14 @@ Contexto opcional: `enableGuardDuty` (false), `githubRepo`, `githubEnvironment`,
 ## Lo que no está aquí
 
 El **presupuesto** (AWS no deja crearlo desde una cuenta hija): se creó en la cuenta administradora como `psycrm-prod-monthly`. Dominio y zona de Route 53, certificado ACM, identidad de SES (dominio, DKIM, MAIL FROM, salida del *sandbox*), IAM Identity Center, el BAA, y un *trail* de la organización (este crea uno de la cuenta). La alarma de la cola de fallos de `pg-boss` no existe: esa cola vive en la base, no en CloudWatch.
+
+## Problemas del primer despliegue (9 de nov 2026)
+
+El registro completo está en [`docs/psycrm/RESULTADOS_DESPLIEGUE_AWS.md`](../docs/psycrm/RESULTADOS_DESPLIEGUE_AWS.md). Lo que hay que saber para repetirlo:
+
+- **Siempre pasar `-c desiredCount=1` y `-c imageTag=<etiqueta actual>`.** Si no, CDK pone el servicio en 0 tareas y, con otra etiqueta, cambia la imagen en producción. La etiqueta actual sale de `aws ecs describe-task-definition --task-definition psycrm-app --query 'taskDefinition.containerDefinitions[0].image' --output text`.
+- **El `sub` de OIDC de GitHub lleva ids numéricos.** La política de `psycrm-github-deploy` acepta esa forma y la antigua; si GitHub cambia el formato, el error es `Not authorized to perform sts:AssumeRoleWithWebIdentity`.
+- **`/tmp` debe ser escribible por `node`.** El `Dockerfile` lo declara como `VOLUME`; sin eso, la migración falla con `EACCES`.
+- **El presupuesto vive en la cuenta administradora**, no en la pila.
+- **`PGBOSS_CREATE_SCHEMA=false`** en producción: el esquema `pgboss` lo crea `db/roles.sql`.
+- **Fusionar un PR no crea recursos de AWS.** Solo `cdk deploy` lo hace.
