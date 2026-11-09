@@ -43,6 +43,8 @@ import { affiliatesRoute } from './routes/affiliates'
 import { assistantRoute } from './routes/assistant'
 import { OperatorsRepo } from './repos/operators-repo'
 import { authRoute } from './routes/auth'
+import { publicPageRoute } from './routes/public-page'
+import { inquiriesRoute, publicPageAdminRoute } from './routes/public-page-admin'
 import { blogRoute } from './routes/blog'
 import { calendarsRoute } from './routes/calendars'
 import { callsRoute } from './routes/calls'
@@ -207,7 +209,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }
     const strict = secureHeaders({ ...baseHeaders, contentSecurityPolicy: csp })
     const relaxed = secureHeaders({ ...baseHeaders, contentSecurityPolicy: undefined })
-    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') || c.req.path.startsWith('/d/') || c.req.path.startsWith('/i/') ? relaxed(c, next) : strict(c, next)))
+    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') || c.req.path.startsWith('/d/') || c.req.path.startsWith('/i/') || c.req.path.startsWith('/p/') ? relaxed(c, next) : strict(c, next)))
     app.use('/api/*', async (c, next) => {
       await next()
       c.header('Cache-Control', 'no-store')
@@ -293,6 +295,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // A practice's logo, for the pages its clients see.
   app.route('/brand', brandLogoRoute({ db: deps.db }))
   app.route('/i', publicInvitesRoute({ db: deps.db, dispatch: deps.dispatch }))
+  // A practice's public page and its request form. Off until the practice publishes it; a request lands in an inbox, not in a record.
+  app.route('/p', publicPageRoute({ db: deps.db, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
   app.route('/api/public/booking', publicBookingRoute({ db: deps.db, dispatch: deps.dispatch, requireDateOfBirth: true }))
 
   app.use('/api/locations', auth())
@@ -395,6 +399,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route('/api/loc/:loc/audit', auditRoute({ db: deps.db }))
   // The practice profile (name, license, fees, cancellation policy).
   app.route('/api/loc/:loc/practice', practiceRoute({ db: deps.db }))
+  // The practice's public page (its editor) and the inbox of requests that come from it.
+  app.route('/api/loc/:loc/public-page', publicPageAdminRoute({ db: deps.db, publicBaseUrl: deps.publicBaseUrl }))
+  app.route('/api/loc/:loc/inquiries', inquiriesRoute({ db: deps.db }))
 
   // Serve the built web app from this process (production container). Registered
   // last so every /api route wins; unknown non-API GETs fall back to index.html

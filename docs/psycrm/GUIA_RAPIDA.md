@@ -18,6 +18,13 @@ Para seguir el progreso, abra al cliente y mire **Documents**: ve qué documento
 
 La tarjeta del cliente en **Opportunities** avanza sola: New contact → Documents sent → Documents signed → First appointment booked → Active client. Si usted la mueve a mano, el sistema respeta su decisión y no la devuelve atrás.
 
+### Su página pública y las solicitudes
+- **Settings → Public page** es una página suya (`app.dramaritzamartinez.com/p/<nombre>`) con sus tarifas, si acepta planes médicos, las preguntas frecuentes, el horario y un formulario para pedir información o una cita. Así las personas ven esto antes de escribirle, y no hace falta llamar a cada una.
+- Escriba el contenido en el editor y use **Preview** para verla antes de publicarla. No se publica hasta que enciende *The page is public*.
+- El formulario ofrece **presencial o virtual**, los **días** (por ahora lunes o martes) y **mañana o tarde**, y pide marcar que leyeron las preguntas y vieron las tarifas (y, mientras no acepte planes médicos, que lo entienden). Lo que marcaron queda guardado con su solicitud.
+- Las solicitudes llegan a **Contacts → Requests**, **no** son clientes todavía. Con **Invite** abre la invitación con su nombre y correo ya puestos; al completarla es que se crea la ficha. **Handled** la archiva y **Delete** la borra.
+- Enlace la página desde su sitio web, Instagram y firma de correo.
+
 ### Enviar un enlace por mi cuenta (WhatsApp, mensaje de texto)
 Cuando el correo no está disponible, o cuando prefiere mandar el enlace usted misma:
 - **Invitación:** al invitar, la ventana muestra el enlace y **Copy message**, un texto listo para pegar en WhatsApp o un mensaje. Una invitación ya enviada tiene **Copy link** en la lista *Invitations* de Contacts.

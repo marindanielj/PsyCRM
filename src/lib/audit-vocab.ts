@@ -64,6 +64,12 @@ export const AUDIT_LABELS: Record<string, string> = {
   'packet.code_issued': 'Verification code given by the therapist',
   'document.verification_changed': 'Therapist-given verification codes turned on or off',
   'signer.locked': 'Signer locked after failed verification attempts',
+  'inquiry.received': 'Request received from the public page',
+  'inquiry.invited': 'Request answered with an invitation',
+  'inquiry.handled': 'Request marked as handled',
+  'inquiry.deleted': 'Request deleted',
+  'publicpage.updated': 'Public page edited',
+  'publicpage.banner_updated': 'Public page banner changed',
   'invite.sent': 'Client invitation sent',
   'invite.resent': 'Client invitation re-sent',
   'invite.voided': 'Client invitation cancelled',
@@ -80,14 +86,14 @@ export const AUDIT_LABELS: Record<string, string> = {
 
 export const AUDIT_CATEGORIES: { key: string; label: string; prefixes: string[] }[] = [
   { key: 'auth', label: 'Sign-ins', prefixes: ['auth.'] },
-  { key: 'contacts', label: 'Clients', prefixes: ['contact.', 'invite.'] },
+  { key: 'contacts', label: 'Clients', prefixes: ['contact.', 'invite.', 'inquiry.'] },
   { key: 'notes', label: 'Session notes', prefixes: ['note.', 'risk.'] },
   { key: 'documents', label: 'Documents', prefixes: ['template.', 'packet.', 'document.', 'signer.'] },
   { key: 'pipeline', label: 'Pipeline', prefixes: ['pipeline.', 'opportunity.'] },
   { key: 'appointments', label: 'Appointments', prefixes: ['appointment.'] },
   { key: 'workflows', label: 'Automations', prefixes: ['workflow.'] },
   { key: 'tasks', label: 'Tasks', prefixes: ['task.'] },
-  { key: 'settings', label: 'Settings', prefixes: ['practice.'] },
+  { key: 'settings', label: 'Settings', prefixes: ['practice.', 'publicpage.'] },
   { key: 'audit', label: 'Audit log', prefixes: ['audit.'] },
 ]
 

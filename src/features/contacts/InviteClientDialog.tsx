@@ -12,10 +12,10 @@ import { CopyLink } from '../documents/SendPacketDialog'
  * Invite a client: the therapist types a name and an email and the person fills in the rest on
  * their own page. No contact exists until they do, so every record starts with a date of birth.
  */
-export function InviteClientDialog({ locationId, onClose, onSent }: { locationId: string; onClose: () => void; onSent: () => void }) {
-  const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
-  const [kind, setKind] = useState<'adult' | 'guardian'>('adult')
+export function InviteClientDialog({ locationId, onClose, onSent, initial }: { locationId: string; onClose: () => void; onSent: (result: InviteSendResult) => void; initial?: { name: string; email: string; kind: 'adult' | 'guardian' } }) {
+  const [name, setName] = useState(initial?.name ?? '')
+  const [email, setEmail] = useState(initial?.email ?? '')
+  const [kind, setKind] = useState<'adult' | 'guardian'>(initial?.kind ?? 'adult')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sent, setSent] = useState<InviteSendResult | null>(null)
@@ -28,8 +28,9 @@ export function InviteClientDialog({ locationId, onClose, onSent }: { locationId
     setBusy(true)
     setError(null)
     try {
-      setSent(await api.invites.create(locationId, { name: name.trim(), email: email.trim(), kind }))
-      onSent()
+      const result = await api.invites.create(locationId, { name: name.trim(), email: email.trim(), kind })
+      setSent(result)
+      onSent(result)
     } catch (e) {
       const body = e instanceof ApiError ? (e.body as { error?: string } | undefined) : undefined
       setError(body?.error === 'already_invited' ? 'This email already has an open invitation. Use Resend in the list.' : 'Could not send the invitation. Check the email and try again.')

@@ -1627,3 +1627,39 @@ CREATE TABLE IF NOT EXISTS location_logos (
   data         bytea NOT NULL CHECK (octet_length(data) <= 307200),
   updated_at   timestamptz NOT NULL DEFAULT now()
 );
+
+-- ---- public page: a practice's own landing page at /p/<slug>, and the requests that come from it -------------
+-- The page's content lives in locations.settings.publicPage; the slug is a column so it can be unique.
+ALTER TABLE locations ADD COLUMN IF NOT EXISTS public_slug text;
+CREATE UNIQUE INDEX IF NOT EXISTS locations_public_slug ON locations(public_slug) WHERE public_slug IS NOT NULL;
+
+-- The banner picture (same idea as location_logos: kept apart so ordinary location queries never carry image bytes).
+CREATE TABLE IF NOT EXISTS location_banners (
+  location_id  text PRIMARY KEY REFERENCES locations(id) ON DELETE CASCADE,
+  content_type text NOT NULL CHECK (content_type IN ('image/png','image/jpeg','image/webp')),
+  data         bytea NOT NULL CHECK (octet_length(data) <= 716800),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+
+-- Requests for information or an appointment. NOT clients: no record, no date of birth. The therapist reads
+-- them in her inbox and invites the ones she wants to see; the person then registers through the invitation.
+CREATE TABLE IF NOT EXISTS inquiries (
+  id          text PRIMARY KEY,
+  location_id text NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  status      text NOT NULL DEFAULT 'new' CHECK (status IN ('new','invited','handled')),
+  name        text NOT NULL,
+  email       text NOT NULL,
+  phone       text,
+  who         text NOT NULL CHECK (who IN ('adult','minor')),
+  mode        text NOT NULL CHECK (mode IN ('presencial','virtual')),
+  days        text[] NOT NULL DEFAULT '{}',
+  slots       text[] NOT NULL DEFAULT '{}',
+  insurance   text,
+  message     text,
+  -- the statements the person ticked before asking (e.g. that fees were seen and no insurance is taken), word for word
+  acknowledged text[] NOT NULL DEFAULT '{}',
+  invite_id   text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS inquiries_by_location ON inquiries(location_id, status, created_at DESC);
