@@ -41,6 +41,14 @@ COPY server ./server
 COPY db ./db
 COPY --from=build /app/dist ./dist
 
+# ECS (Fargate) mounts an empty scratch volume on /tmp so the root filesystem can be read-only.
+# A mounted volume belongs to root (0755) unless the image declares it with VOLUME *after* setting
+# the owner; without this the unprivileged user could not create tsx's cache and every task died
+# with "EACCES: permission denied, mkdir '/tmp/tsx-1000'". The path must equal the task's containerPath.
+# https://docs.aws.amazon.com/AmazonECS/latest/developerguide/bind-mounts.html
+RUN chown node:node /tmp && chmod 1777 /tmp
+VOLUME ["/tmp"]
+
 # Run as the unprivileged user that ships with the node image.
 USER node
 EXPOSE 8790

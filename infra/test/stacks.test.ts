@@ -100,7 +100,10 @@ describe('foundation + data (no domain yet)', () => {
             Condition: {
               StringEquals: {
                 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-                'token.actions.githubusercontent.com:sub': 'repo:marindanielj/PsyCRM:environment:production',
+                'token.actions.githubusercontent.com:sub': [
+                  'repo:marindanielj@304752011/PsyCRM@1447179066:environment:production',
+                  'repo:marindanielj/PsyCRM:environment:production',
+                ],
               },
             },
           }),
