@@ -1,0 +1,9 @@
+{
+  "app": "npx tsx bin/psycrm.ts",
+  "context": {
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-ecs:enableImdsBlockingDeprecatedFeature": true,
+    "@aws-cdk/aws-rds:preventRenderingDeprecatedCredentials": true
+  }
+}

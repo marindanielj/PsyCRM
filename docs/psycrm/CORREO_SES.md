@@ -39,6 +39,21 @@ Todo el correo del sistema (la invitación al cliente, los documentos para firma
 5. **Confirmar que SES figura en la lista oficial de servicios elegibles para HIPAA** (tarea 1.4 de `INFRA_AWS.md`) y que el BAA está aceptado en Artifact.
 6. **Alarma** de tasa de rebote y de queja (la lista de alarmas de `INFRA_AWS.md` §3.9 ya la incluye).
 
+### Estado con el dominio `dramaritzamartinez.com` (nov 2026)
+- El dominio está registrado en Network Solutions con su DNS allí (servidores `ns11/ns12.worldnic.com`), una web activa en la raíz y **sin registros de correo** (ni MX ni TXT). Por eso solo se delega `app.dramaritzamartinez.com` a Route 53 y la web no se toca. El código de `infra/` crea la zona, la identidad de SES (DKIM 2048, MAIL FROM `bounce.app…`, DMARC estricto), el conjunto de configuración `psycrm` y el certificado. El remitente será `no-reply@app.dramaritzamartinez.com`.
+- Si algún día se quiere enviar como `@dramaritzamartinez.com` (sin `app.`), hay que crear la identidad de la raíz y pegar sus registros DKIM en Network Solutions. No es necesario para empezar.
+
+### Solicitud de acceso a producción (texto para el formulario de SES)
+Se hace en la cuenta `psycrm-prod`, región `us-east-1` (consola: *SES → Account dashboard → Request production access*, o `aws sesv2 put-account-details`). Texto propuesto, en inglés porque lo lee AWS:
+
+> **Mail type:** Transactional.
+> **Website URL:** https://app.dramaritzamartinez.com
+> **Use case:** We operate a practice-management application for a licensed psychologist in Puerto Rico. The only emails we send are transactional messages to the practice's own clients, one per event, each containing a single secure link to complete intake paperwork or to register, and one-time verification codes for that paperwork. Messages never contain clinical information. Recipients are existing clients or prospective clients who were invited by the practice itself; we never send marketing or bulk mail and we do not buy or scrape addresses.
+> **How recipients are obtained:** The therapist enters or confirms each client's email address herself when scheduling or inviting that client; every message is triggered by an action of the practice.
+> **Bounce and complaint handling:** We use a configuration set with the account-level suppression list enabled for bounces and complaints, reputation metrics, and CloudWatch alarms on bounce and complaint rates. Addresses that bounce are not retried.
+> **Expected volume:** Fewer than 200 emails per day, typically under 30.
+> **Sending identity:** app.dramaritzamartinez.com with DKIM, SPF (custom MAIL FROM) and DMARC configured.
+
 ## 3. Cómo probarlo
 1. Con la identidad verificada y el rol puesto, abrir **Settings → Email & SMS**, elegir **Amazon SES**, guardar y pulsar **Send test email** a una dirección verificada. Debe responder "Sent".
 2. Repetir el recorrido de punta a punta de `OPERACIONES.md` §7 con un cliente ficticio cuyo correo sea una dirección verificada (mientras dure el *sandbox*).

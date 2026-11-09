@@ -42,6 +42,9 @@ const EnvSchema = z.object({
       }
       return enabled
     }),
+  // Whether pg-boss may create its own schema at start. Set to "false" where the database role
+  // is not allowed to (production: db/roles.sql creates the schema).
+  PGBOSS_CREATE_SCHEMA: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
   // Public origin used to build links in outbound email (document signing, etc.).
   PUBLIC_BASE_URL: z.string().url().optional(),
   /** Amazon SES: the verified sender and region (the task's IAM role is the credential; there is no key). */
