@@ -52,6 +52,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Prints the claims GitHub presents to AWS (not secret: no token is printed). The deploy role's
+      # trust policy requires sub == repo:<owner>/<repo>:environment:production, so when AWS says
+      # "Not authorized to perform sts:AssumeRoleWithWebIdentity", compare this with the role.
+      - name: Show the OIDC claims this job presents
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, urllib.request
+          req = urllib.request.Request(os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=sts.amazonaws.com",
+                                       headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+          token = json.load(urllib.request.urlopen(req))["value"]
+          body = token.split(".")[1]
+          claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+          print(json.dumps({k: claims.get(k) for k in ("sub", "aud", "repository", "environment", "ref", "job_workflow_ref")}, indent=2))
+          PY
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
