@@ -155,7 +155,14 @@ export class FoundationStack extends Construct {
       assumedBy: new iam.WebIdentityPrincipal(oidc.openIdConnectProviderArn, {
         StringEquals: {
           'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-          'token.actions.githubusercontent.com:sub': `repo:${settings.githubRepo}:environment:${settings.githubEnvironment}`,
+          // GitHub's id-qualified subject, and the classic name form (only this repository, only this environment).
+          'token.actions.githubusercontent.com:sub': (() => {
+            const [owner = '', name = ''] = settings.githubRepo.split('/')
+            return [
+              `repo:${owner}@${settings.githubOwnerId}/${name}@${settings.githubRepoId}:environment:${settings.githubEnvironment}`,
+              `repo:${settings.githubRepo}:environment:${settings.githubEnvironment}`,
+            ]
+          })(),
         },
       }),
     })

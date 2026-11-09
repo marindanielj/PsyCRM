@@ -7,6 +7,13 @@ export interface Settings {
   alertEmails: string[]
   /** GitHub repository allowed to deploy (OIDC), as owner/name. */
   githubRepo: string
+  /**
+   * Numeric ids of the repository owner and of the repository. GitHub now puts them in the OIDC
+   * `sub` claim (repo:<owner>@<ownerId>/<repo>@<repoId>:environment:<env>). Both id forms and the
+   * classic name form are accepted. Find the ids in the deploy workflow's "OIDC claims" step.
+   */
+  githubOwnerId: string
+  githubRepoId: string
   /** GitHub environment whose jobs may assume the deploy role. */
   githubEnvironment: string
   /** Turn on GuardDuty (decision #4 in INFRA_AWS.md, off until decided). */
@@ -47,6 +54,8 @@ export function readSettings(app: App): Settings {
     region: 'us-east-1',
     alertEmails: emails ? emails.split(',').map((e) => e.trim()).filter(Boolean) : [],
     githubRepo: str(app, 'githubRepo') ?? 'marindanielj/PsyCRM',
+    githubOwnerId: str(app, 'githubOwnerId') ?? '304752011',
+    githubRepoId: str(app, 'githubRepoId') ?? '1447179066',
     githubEnvironment: str(app, 'githubEnvironment') ?? 'production',
     enableGuardDuty: bool(app, 'enableGuardDuty', false),
     imageTag: str(app, 'imageTag') ?? 'bootstrap',
