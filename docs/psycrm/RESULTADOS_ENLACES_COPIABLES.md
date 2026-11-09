@@ -23,10 +23,31 @@ El texto copiado usa las mismas palabras que los correos del sistema (`server/li
 
 La página de firma (`/d/<enlace>`) verifica a la persona con un **código de 6 dígitos enviado a su correo**. Con SES en *sandbox*, ese código solo llega a direcciones verificadas en SES. Por eso, aunque la terapeuta copie el enlace de los documentos, el cliente no podrá abrirlos hasta que el correo funcione para su dirección. La **invitación de registro no lleva código** y funciona completa con el enlace copiado.
 
-Opciones (decisión pendiente):
-1. Esperar la aprobación de SES (lo normal: 1 a 2 días hábiles).
-2. Verificar en SES la dirección de cada cliente que no pueda esperar (el cliente recibe un correo de AWS y pulsa un enlace).
-3. Un código que la terapeuta vea en la app y dicte por otro canal. **No construido**: quita la prueba de que la persona controla ese correo, y por eso no se hizo sin su decisión.
+Salidas:
+1. **Esperar la aprobación de SES** (lo normal: 1 a 2 días hábiles). Es la solución de fondo.
+2. **Verificar en SES la dirección de un cliente** que no pueda esperar (el cliente recibe un correo de AWS y pulsa un enlace).
+3. **Código dado por la terapeuta** (construido, **apagado por defecto**): ver la sección siguiente.
+
+## Código dado por la terapeuta (apagado por defecto)
+
+Pedido el mismo día al verse que, sin SES, el flujo de documentos se corta. Settings → Practice → *Verification codes for documents* → *Let me give a client the code myself*.
+
+| Con el interruptor | Qué pasa |
+|---|---|
+| Apagado (valor inicial) | Nada cambia. El servidor responde 403 si alguien intenta pedir un código, y la tarjeta no ofrece el botón |
+| Encendido | En la tarjeta del paquete, cada firmante tiene **Give a code**. Muestra un código de 6 dígitos **una sola vez**, válido 30 minutos |
+| El cliente | Abre su enlace; la página dice *"Su terapeuta le dio un código"* y ya tiene la caja abierta. Puede preferir recibirlo por correo |
+
+**Por qué está apagado:** es una verificación más débil. El código por correo prueba que la persona controla ese correo; el dado por la terapeuta depende de que ella sepa con quién habla. Por eso hay que encenderlo a propósito, y queda constancia en tres sitios:
+- La bitácora: `document.verification_changed` (quién lo encendió o apagó) y `packet.code_issued` (cada código dado, sin el código).
+- El documento firmado: `signed_documents.verified_via = 'therapist_code'` (y `email_otp` para los demás). El visor de documentos firmados lo muestra.
+- La pantalla de Settings lo explica y recomienda dar el código por un canal distinto al del enlace.
+
+**Controles:** el código nunca se guarda (solo su resumen) ni sale en la bitácora; 5 intentos fallidos bloquean el enlace y un código nuevo lo reabre; un código nuevo reemplaza al anterior; un enlace nuevo borra la verificación; máximo 10 códigos por hora por firmante; si la persona pide el código por correo y el correo falla, el código de la terapeuta sigue vigente.
+
+**Cómo quitarlo del todo:** apagar el interruptor basta; si más adelante no se quiere ni la opción, se borran el botón de `RequestCard.tsx` y la ruta `POST /requests/:id/signers/:signerId/code`.
+
+**Verificado:** 11 pruebas de servidor (`server/routes/documents-therapist-code.test.ts`) y 12 pasos en navegador real (capturas `docs/psycrm/e2e/code-*.png`).
 
 ## Verificado
 

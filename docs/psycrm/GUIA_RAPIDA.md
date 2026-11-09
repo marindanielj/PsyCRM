@@ -26,6 +26,7 @@ Cuando el correo no está disponible, o cuando prefiere mandar el enlace usted m
 - **Copy message** copia el texto con el enlace: saluda por el nombre, menciona la consulta y la vigencia (14 días). No incluye nada clínico.
 - **Resend** sigue existiendo: genera el enlace nuevo y además lo envía por correo.
 - **Los documentos piden un código por correo.** La persona abre el enlace, pulsa *Enviar código* y escribe el código de 6 dígitos que le llega al correo. Mientras el correo no funcione para esa dirección, no podrá abrir los documentos aunque tenga el enlace. La invitación de registro no lleva código.
+- **Si el correo no funciona:** en *Settings → Practice* puede encender *Let me give a client the code myself*. Entonces cada persona de la tarjeta de documentos tiene **Give a code**: le da un código de 6 dígitos (válido 30 minutos) que usted le dicta por teléfono o en persona, **no en el mismo mensaje que el enlace**. Es una verificación más débil y el documento firmado lo indica. Apáguelo cuando el correo vuelva a funcionar.
 
 ## 2. Un cliente menor de 18 años
 Use **Invite client → A parent or guardian**. El tutor llena los datos del paciente y los suyos. El paquete (con el consentimiento del tutor) sale a su correo. Si lo prefiere, entre la fecha de nacimiento y los datos del tutor (campos *Guardian*) y use **Send onboarding packet** en la ficha: se preselecciona el paquete **Adolescent**.

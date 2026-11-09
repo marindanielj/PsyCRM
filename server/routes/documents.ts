@@ -5,9 +5,11 @@ import type { AppEnv } from '../app-env'
 import type { Database } from '../db/database'
 import { clientIp } from '../lib/client-ip'
 import { todayIn } from '../lib/age'
-import { audit } from '../lib/audit'
+import { audit, auditContext } from '../lib/audit'
 import { sendLinkEmail } from '../lib/document-mail'
-import { REQUEST_TTL_DAYS, hashToken, newToken } from '../lib/document-tokens'
+import { THERAPIST_CODE_TTL_MS, setTherapistCodes, therapistCodesEnabled } from '../lib/document-verification'
+import { REQUEST_TTL_DAYS, hashOtp, hashToken, newOtp, newToken } from '../lib/document-tokens'
+import { SlidingWindowRateLimiter } from '../lib/rate-limit'
 import { sendDocumentPacket } from '../lib/document-send'
 import { renderDocumentHtml, renderPacketHtml, type RenderableTemplate, type RenderContact } from '../lib/document-render'
 import { type ResolvedEmailSender, resolveEmailSender } from '../lib/sending/resolve'
@@ -247,6 +249,27 @@ export function documentsRoute(deps: {
     if (copy) return c.json({ ok: true, signer: { id: r.signer.id, role: r.signer.role, link: `${baseUrl(c)}/d/${token}`, emailed: false, emailIssue: null } })
     const m = await mailLink(c, { to: r.signer.email, name: r.signer.name, token })
     return c.json({ ok: true, signer: { id: r.signer.id, role: r.signer.role, link: m.link, emailed: m.emailed, emailIssue: m.reason ?? null } })
+  })
+
+  // --- codes given by the therapist (off unless the practice turns it on) ----------------------------------
+  app.get('/verification', async (c) => c.json({ therapistCode: await therapistCodesEnabled(deps.db, c.get('locationId')) }))
+
+  app.put('/verification', zValidator('json', z.object({ therapistCode: z.boolean() })), async (c) => {
+    const { therapistCode } = c.req.valid('json')
+    await setTherapistCodes(deps.db, c.get('locationId'), therapistCode, auditContext(c))
+    return c.json({ ok: true, therapistCode })
+  })
+
+  const codeLimiter = new SlidingWindowRateLimiter(10, 60 * 60_000)
+  /** The therapist reads this code to the person. Shown once: only its hash is stored. */
+  app.post('/requests/:id/signers/:signerId/code', async (c) => {
+    if (!(await therapistCodesEnabled(deps.db, c.get('locationId')))) return c.json({ error: 'not_enabled' }, 403)
+    if (!codeLimiter.check(c.req.param('signerId'), Date.now()).allowed) return c.json({ error: 'rate_limited' }, 429)
+    const code = newOtp()
+    const expiresAt = new Date(Date.now() + THERAPIST_CODE_TTL_MS)
+    const r = await requests(c).issueTherapistCode(c.req.param('id'), c.req.param('signerId'), hashOtp(code), expiresAt, actor(c))
+    if (!r.ok) return c.json({ error: r.error }, r.error === 'not_found' ? 404 : 409)
+    return c.json({ ok: true, code, expiresAt: expiresAt.toISOString(), signer: { id: r.signer.id, role: r.signer.role } })
   })
 
   app.post('/requests/:id/void', zValidator('json', voidSchema), async (c) => {

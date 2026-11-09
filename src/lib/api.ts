@@ -2209,6 +2209,12 @@ export const api = {
       req<{ ok: true; request: DocRequest; signers: SentSigner[]; warnings: string[] }>(`/loc/${loc}/documents/requests`, { method: 'POST', body: JSON.stringify(input) }),
     resend: (loc: string, requestId: string, signerId: string, deliver: 'email' | 'none' = 'email') =>
       req<{ ok: true; signer: { id: string; role: SignerRole; link: string; emailed: boolean; emailIssue: string | null } }>(`/loc/${loc}/documents/requests/${requestId}/resend`, { method: 'POST', body: JSON.stringify({ signerId, deliver }) }),
+    /** Codes the therapist reads out instead of emailing: off unless the practice turns them on. */
+    verification: (loc: string) => req<{ therapistCode: boolean }>(`/loc/${loc}/documents/verification`),
+    setVerification: (loc: string, therapistCode: boolean) =>
+      req<{ ok: true; therapistCode: boolean }>(`/loc/${loc}/documents/verification`, { method: 'PUT', body: JSON.stringify({ therapistCode }) }),
+    issueCode: (loc: string, requestId: string, signerId: string) =>
+      req<{ ok: true; code: string; expiresAt: string }>(`/loc/${loc}/documents/requests/${requestId}/signers/${signerId}/code`, { method: 'POST' }),
     voidRequest: (loc: string, requestId: string, reason: string) =>
       req<{ ok: true }>(`/loc/${loc}/documents/requests/${requestId}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
     acceptReview: (loc: string, requestId: string) => req<{ ok: true }>(`/loc/${loc}/documents/requests/${requestId}/accept-review`, { method: 'POST' }),

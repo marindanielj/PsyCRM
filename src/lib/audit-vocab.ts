@@ -61,6 +61,8 @@ export const AUDIT_LABELS: Record<string, string> = {
   'packet.voided': 'Document packet voided',
   'packet.expired': 'Document packet expired',
   'packet.resent': 'Document link re-sent',
+  'packet.code_issued': 'Verification code given by the therapist',
+  'document.verification_changed': 'Therapist-given verification codes turned on or off',
   'signer.locked': 'Signer locked after failed verification attempts',
   'invite.sent': 'Client invitation sent',
   'invite.resent': 'Client invitation re-sent',
