@@ -41,6 +41,24 @@ export class OperatorsRepo {
     return rows[0]
   }
 
+  /** When the operator last changed their password (epoch ms), or null if never. Sessions issued earlier are void. */
+  async passwordChangedAt(id: string): Promise<number | null> {
+    const rows = await this.db.query<{ ms: number | null }>(
+      'SELECT (extract(epoch FROM password_changed_at) * 1000)::float8 AS ms FROM operators WHERE id=$1',
+      [id],
+    )
+    const ms = rows[0]?.ms
+    return ms === null || ms === undefined ? null : Number(ms)
+  }
+
+  async changePassword(id: string, passwordHash: string, atMs: number): Promise<void> {
+    await this.db.query('UPDATE operators SET password_hash=$2, password_changed_at=to_timestamp($3::float8 / 1000.0) WHERE id=$1', [
+      id,
+      passwordHash,
+      atMs,
+    ])
+  }
+
   async hasAccess(operatorId: string, locationId: string): Promise<boolean> {
     const rows = await this.db.query(
       'SELECT 1 FROM operator_locations WHERE operator_id=$1 AND location_id=$2',

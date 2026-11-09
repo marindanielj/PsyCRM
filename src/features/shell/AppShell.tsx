@@ -30,7 +30,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Avatar } from '../../components/ui/avatar'
 import { applyAccent, brandLogoUrl, brandName } from '../../lib/brand'
 import { type ModuleKey, moduleEnabled } from '../../lib/modules'
@@ -135,7 +135,7 @@ function Mark({ name, logo, size }: { name: string; logo: string | null; size: '
  *  Below lg the sidebar is an off-canvas drawer behind a hamburger top bar —
  *  a permanently-visible w-64 aside would cover most of a phone screen. */
 export function AppShell() {
-  const { operator, logout } = useAuth()
+  const { operator, logout, passwordChangedAt } = useAuth()
   const { current } = useTenant()
   const nav = NAV.filter((item) => !item.module || moduleEnabled(current, item.module))
   const [navOpen, setNavOpen] = useState(false)
@@ -231,6 +231,12 @@ export function AppShell() {
           <Mark name={name} logo={logo} size="sm" />
           <span className="min-w-0 truncate text-sm font-semibold tracking-tight text-slate-900">{name}</span>
         </header>
+        {passwordChangedAt === null && pathname !== '/settings/account' && (
+          <div role="status" className="ol-noprint flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+            <span>You are still using the password this account was created with.</span>
+            <Link to="/settings/account" className="font-semibold underline underline-offset-2">Choose your own</Link>
+          </div>
+        )}
         <Outlet />
       </main>
     </div>

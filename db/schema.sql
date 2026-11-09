@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS operators (
   password_hash text NOT NULL,
   created_at    timestamptz DEFAULT now()
 );
+-- When the operator last chose a new password. Sessions issued before it are rejected, so changing the
+-- password also signs out every other device. NULL = never changed (still the password it was created with).
+ALTER TABLE operators ADD COLUMN IF NOT EXISTS password_changed_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS operator_locations (
   operator_id text REFERENCES operators(id) ON DELETE CASCADE,

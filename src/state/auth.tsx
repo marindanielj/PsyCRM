@@ -6,6 +6,10 @@ type Status = 'loading' | 'authed' | 'anon'
 interface AuthValue {
   status: Status
   operator: Operator | null
+  /** When the operator last chose a password (epoch ms); null = never, it is still the one the account started with. */
+  passwordChangedAt: number | null
+  /** Call after a successful password change so the reminder banner goes away. */
+  markPasswordChanged: () => void
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
 }
@@ -17,6 +21,7 @@ const AuthContext = createContext<AuthValue | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<Status>('loading')
   const [operator, setOperator] = useState<Operator | null>(null)
+  const [passwordChangedAt, setPasswordChangedAt] = useState<number | null>(null)
 
   useEffect(() => {
     let active = true
@@ -25,6 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((r) => {
         if (!active) return
         setOperator(r.operator)
+        setPasswordChangedAt(r.passwordChangedAt ?? null)
         setStatus('authed')
       })
       .catch(() => {
@@ -52,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const r = await api.login(email, password)
     setOperator(r.operator)
+    setPasswordChangedAt(r.passwordChangedAt ?? null)
     setStatus('authed')
   }, [])
 
@@ -61,7 +68,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('anon')
   }, [])
 
-  return <AuthContext.Provider value={{ status, operator, login, logout }}>{children}</AuthContext.Provider>
+  const markPasswordChanged = useCallback(() => setPasswordChangedAt(Date.now()), [])
+
+  return <AuthContext.Provider value={{ status, operator, passwordChangedAt, markPasswordChanged, login, logout }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth(): AuthValue {

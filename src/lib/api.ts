@@ -2136,12 +2136,18 @@ export interface Branding {
 
 export const api = {
   login: (email: string, password: string) =>
-    req<{ ok: true; operator: Operator }>('/auth/login', {
+    req<{ ok: true; operator: Operator; passwordChangedAt: number | null }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }),
   logout: () => req<{ ok: true }>('/auth/logout', { method: 'POST' }),
-  me: () => req<{ operator: Operator }>('/auth/me'),
+  me: () => req<{ operator: Operator; passwordChangedAt: number | null }>('/auth/me'),
+  /** 403 = the current password is wrong; 400 = the new one is not acceptable; 429 = too many wrong guesses. */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    req<{ ok: true }>('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
 
   locations: () => req<{ locations: Location[] }>('/locations'),
 

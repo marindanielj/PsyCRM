@@ -7,7 +7,7 @@ import type { AppEnv } from '../app-env'
 import type { Database } from '../db/database'
 import { audit } from '../lib/audit'
 import { clientIp } from '../lib/client-ip'
-import { verifyPassword } from '../lib/password'
+import { hashPassword, verifyPassword } from '../lib/password'
 import { SlidingWindowRateLimiter } from '../lib/rate-limit'
 import { SESSION_TTL_SECONDS, createSession, readSession } from '../lib/session'
 import { SESSION_COOKIE, operatorAuth } from '../middleware/auth'
@@ -17,6 +17,14 @@ import { type Operator, OperatorsRepo } from '../repos/operators-repo'
  *  makes each guess expensive; this caps an online brute-force spray. */
 const LOGIN_MAX_ATTEMPTS = 10
 const LOGIN_WINDOW_MS = 60_000
+
+/** Changing a password asks for the current one, so it is a way to guess it from a stolen session:
+ *  at most 5 wrong guesses per operator per 15 minutes. */
+const CHANGE_MAX_ATTEMPTS = 5
+const CHANGE_WINDOW_MS = 15 * 60_000
+
+export const PASSWORD_MIN_LENGTH = 12
+export const PASSWORD_MAX_LENGTH = 128
 
 export interface AuthDeps {
   db: Database
@@ -29,9 +37,17 @@ export interface AuthDeps {
   idleTtlMs?: number
   /** Override the login throttle (tests pin small limits). */
   loginRateLimit?: { max: number; windowMs: number }
+  /** Override the change-password throttle (tests pin small limits). */
+  changeRateLimit?: { max: number; windowMs: number }
+  /** See OperatorAuthOptions.revokedBefore: lets a password change sign out the other sessions. */
+  revokedBefore?: (operatorId: string) => Promise<number | null>
 }
 
 const loginSchema = z.object({ email: z.string().min(1), password: z.string().min(1) })
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
+})
 
 function publicOperator(o: Operator) {
   return { id: o.id, email: o.email, name: o.name, role: o.role }
@@ -45,12 +61,22 @@ export function authRoute(deps: AuthDeps): Hono<AppEnv> {
     deps.loginRateLimit?.max ?? LOGIN_MAX_ATTEMPTS,
     deps.loginRateLimit?.windowMs ?? LOGIN_WINDOW_MS,
   )
+  const changeLimiter = new SlidingWindowRateLimiter(
+    deps.changeRateLimit?.max ?? CHANGE_MAX_ATTEMPTS,
+    deps.changeRateLimit?.windowMs ?? CHANGE_WINDOW_MS,
+  )
+  const cookieAuth = operatorAuth(deps.sessionSecret, {
+    idleTtlMs: deps.idleTtlMs,
+    secure: deps.secure,
+    now: deps.now,
+    revokedBefore: deps.revokedBefore,
+  })
 
   /** Write one audit row per practice the operator belongs to (usually one). */
   async function auditAuth(
     c: Context,
     operatorId: string,
-    action: 'auth.login' | 'auth.login_failed' | 'auth.logout',
+    action: 'auth.login' | 'auth.login_failed' | 'auth.logout' | 'auth.password_changed' | 'auth.password_change_failed',
     details: Record<string, unknown>,
     actorType: 'operator' | 'system',
   ) {
@@ -95,7 +121,7 @@ export function authRoute(deps: AuthDeps): Hono<AppEnv> {
       secure: deps.secure ?? false,
       maxAge: SESSION_TTL_SECONDS,
     })
-    return c.json({ ok: true, operator: publicOperator(operator), token })
+    return c.json({ ok: true, operator: publicOperator(operator), passwordChangedAt: await operators.passwordChangedAt(operator.id), token })
   })
 
   app.post('/logout', async (c) => {
@@ -107,10 +133,51 @@ export function authRoute(deps: AuthDeps): Hono<AppEnv> {
     return c.json({ ok: true })
   })
 
-  app.get('/me', operatorAuth(deps.sessionSecret, { idleTtlMs: deps.idleTtlMs, secure: deps.secure, now: deps.now }), async (c) => {
+  app.get('/me', cookieAuth, async (c) => {
     const operator = await operators.getById(c.get('operatorId'))
     if (!operator) return c.json({ error: 'not found' }, 404)
-    return c.json({ operator: publicOperator(operator) })
+    // null = the password has never been changed (it is still the one the account was created with).
+    return c.json({ operator: publicOperator(operator), passwordChangedAt: await operators.passwordChangedAt(operator.id) })
+  })
+
+  /**
+   * Choose a new password. Needs the current one (a stolen session alone cannot take the account over),
+   * is throttled, signs out every other session, and keeps this one open with a fresh cookie. The audit
+   * rows say it happened, never what the passwords were.
+   */
+  app.post('/change-password', cookieAuth, zValidator('json', changePasswordSchema, (result, c) => {
+    if (!result.success) return c.json({ error: 'invalid password', minLength: PASSWORD_MIN_LENGTH, maxLength: PASSWORD_MAX_LENGTH }, 400)
+  }), async (c) => {
+    const operatorId = c.get('operatorId')
+    const verdict = changeLimiter.check(operatorId, clock())
+    if (!verdict.allowed) {
+      c.header('Retry-After', String(Math.ceil(verdict.retryAfterMs / 1000)))
+      return c.json({ error: 'too many attempts' }, 429)
+    }
+    const { currentPassword, newPassword } = c.req.valid('json')
+    const operator = await operators.getById(operatorId)
+    if (!operator) return c.json({ error: 'not found' }, 404)
+    // 403, not 401: the web app treats 401 as "signed out".
+    if (!(await verifyPassword(operator.password_hash, currentPassword))) {
+      await auditAuth(c, operatorId, 'auth.password_change_failed', { reason: 'bad_current_password' }, 'operator')
+      return c.json({ error: 'incorrect password' }, 403)
+    }
+    if (newPassword === currentPassword) return c.json({ error: 'same password' }, 400)
+    if (newPassword.toLowerCase() === operator.email.toLowerCase()) return c.json({ error: 'weak password' }, 400)
+
+    const at = clock()
+    await operators.changePassword(operatorId, await hashPassword(newPassword), at)
+    await auditAuth(c, operatorId, 'auth.password_changed', {}, 'operator')
+    // Every session issued before `at` is void now; this device gets a new one.
+    const token = createSession({ operatorId }, deps.sessionSecret, { now: at })
+    setCookie(c, SESSION_COOKIE, token, {
+      httpOnly: true,
+      sameSite: 'Lax',
+      path: '/',
+      secure: deps.secure ?? false,
+      maxAge: SESSION_TTL_SECONDS,
+    })
+    return c.json({ ok: true, token })
   })
 
   return app

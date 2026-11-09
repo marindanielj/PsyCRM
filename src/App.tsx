@@ -33,6 +33,7 @@ import { TransactionsPage } from './features/payments/TransactionsPage'
 import { ProposalsPage } from './features/proposals/ProposalsPage'
 import { ReportingPage } from './features/reporting/ReportingPage'
 import { ReputationPage } from './features/reputation/ReputationPage'
+import { AccountSettingsPage } from './features/settings/AccountSettingsPage'
 import { AgentSettingsPage } from './features/settings/AgentSettingsPage'
 import { PaymentsSettingsPage } from './features/settings/PaymentsSettingsPage'
 import { SendingSettingsPage } from './features/settings/SendingSettingsPage'
@@ -105,6 +106,7 @@ export default function App() {
           <Route path="tags" element={<RequireModule module="tags"><TagsPage /></RequireModule>} />
           <Route path="settings" element={<SettingsLayout />}>
             <Route index element={<Navigate to="/settings/practice" replace />} />
+            <Route path="account" element={<AccountSettingsPage />} />
             <Route path="practice" element={<PracticeSettingsPage />} />
             <Route path="branding" element={<BrandingSettingsPage />} />
             <Route path="audit" element={<RequireModule module="audit"><AuditLogPage /></RequireModule>} />
