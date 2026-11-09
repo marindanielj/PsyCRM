@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS operators (
   password_hash text NOT NULL,
   created_at    timestamptz DEFAULT now()
 );
+-- When the operator last chose a new password. Sessions issued before it are rejected, so changing the
+-- password also signs out every other device. NULL = never changed (still the password it was created with).
+ALTER TABLE operators ADD COLUMN IF NOT EXISTS password_changed_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS operator_locations (
   operator_id text REFERENCES operators(id) ON DELETE CASCADE,
@@ -77,6 +80,9 @@ CREATE TABLE IF NOT EXISTS custom_fields (
   created_at  timestamptz DEFAULT now(),
   updated_at  timestamptz DEFAULT now()
 );
+-- Whether the form a client fills in from an invitation asks for this field. On by default: a field the
+-- practice adds today appears on the next invitation; switch it off for fields only staff should fill in.
+ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS show_on_invite boolean NOT NULL DEFAULT true;
 CREATE UNIQUE INDEX IF NOT EXISTS custom_fields_key
   ON custom_fields(location_id, key);
 CREATE INDEX IF NOT EXISTS custom_fields_by_location

@@ -21,6 +21,8 @@ export interface CustomField {
   /** Choices for a 'dropdown' field; empty for every other type. */
   options: string[]
   placeholder: string | null
+  /** Asked of the client on the registration form of an invitation. */
+  show_on_invite: boolean
   position: number
   created_at: string
   updated_at: string
@@ -31,6 +33,7 @@ export interface CustomFieldInput {
   type?: string
   options?: string[]
   placeholder?: string | null
+  showOnInvite?: boolean
 }
 
 /** Patch a definition's editable attributes. The `key` is intentionally absent —
@@ -40,6 +43,7 @@ export interface CustomFieldPatch {
   type?: string
   options?: string[]
   placeholder?: string | null
+  showOnInvite?: boolean
   position?: number
 }
 
@@ -94,8 +98,8 @@ export class CustomFieldsRepo extends LocationScopedRepo {
       const id = nanoid()
       try {
         const rows = await this.scopedWrite<CustomField>(
-          `INSERT INTO custom_fields (id, location_id, key, label, type, options, placeholder, position)
-           VALUES ($2,$1,$3,$4,$5,$6,$7,$8) RETURNING *`,
+          `INSERT INTO custom_fields (id, location_id, key, label, type, options, placeholder, position, show_on_invite)
+           VALUES ($2,$1,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
           [
             id,
             key,
@@ -104,6 +108,7 @@ export class CustomFieldsRepo extends LocationScopedRepo {
             JSON.stringify(input.options ?? []),
             input.placeholder ?? null,
             position,
+            input.showOnInvite ?? true,
           ],
         )
         return rows[0]!
@@ -131,6 +136,7 @@ export class CustomFieldsRepo extends LocationScopedRepo {
     if (patch.type !== undefined) push('type', patch.type)
     if (patch.options !== undefined) push('options', JSON.stringify(patch.options))
     if (patch.placeholder !== undefined) push('placeholder', patch.placeholder)
+    if (patch.showOnInvite !== undefined) push('show_on_invite', patch.showOnInvite)
     if (patch.position !== undefined) push('position', patch.position)
     if (sets.length === 0) return undefined
     sets.push('updated_at=now()')

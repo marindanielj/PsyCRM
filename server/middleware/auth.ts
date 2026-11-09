@@ -17,6 +17,11 @@ export interface OperatorAuthOptions {
   /** Set Secure on the re-issued cookie (true in production over HTTPS). */
   secure?: boolean
   now?: () => number
+  /**
+   * When the operator last changed their password (epoch ms) or null. A session issued before that moment is
+   * rejected: changing the password signs out every other device. Left unset, sessions are purely stateless.
+   */
+  revokedBefore?: (operatorId: string) => Promise<number | null>
 }
 
 /**
@@ -46,6 +51,10 @@ export function operatorAuth(secret: string, opts: OperatorAuthOptions = {}) {
       idleTtlMs: fromBearer ? undefined : opts.idleTtlMs,
     })
     if (!claims) return c.json({ error: 'unauthorized' }, 401)
+    if (opts.revokedBefore) {
+      const cutoff = await opts.revokedBefore(claims.operatorId)
+      if (cutoff !== null && claims.iat < cutoff) return c.json({ error: 'unauthorized' }, 401)
+    }
     c.set('operatorId', claims.operatorId)
 
     if (opts.idleTtlMs !== undefined && !fromBearer && now - claims.last > IDLE_REFRESH_AFTER_MS) {

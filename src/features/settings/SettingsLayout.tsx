@@ -1,4 +1,4 @@
-import { Bot, Braces, Palette, CreditCard, GitBranch, History, type LucideIcon, Phone, Send, Share2, SlidersHorizontal, Stethoscope } from 'lucide-react'
+import { Bot, Braces, KeyRound, Palette, CreditCard, GitBranch, History, type LucideIcon, Phone, Send, Share2, SlidersHorizontal, Stethoscope } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { type ModuleKey, moduleEnabled } from '../../lib/modules'
 import { cn } from '../../lib/utils'
@@ -18,6 +18,12 @@ interface SettingsNavItem {
 // information architecture: the dark left rail is for daily work, this lighter
 // secondary rail is for set-up-once configuration.
 const SETTINGS_NAV: SettingsNavItem[] = [
+  {
+    to: '/settings/account',
+    label: 'Account',
+    icon: KeyRound,
+    description: 'Your password and sign-in',
+  },
   {
     to: '/settings/practice',
     label: 'Practice',

@@ -268,6 +268,8 @@ export interface CustomField {
   type: 'text' | 'textarea' | 'number' | 'date' | 'dropdown' | 'checkbox'
   options: string[]
   placeholder: string | null
+  /** Asked of the client on the registration form of an invitation. */
+  show_on_invite: boolean
   position: number
   created_at: string
   updated_at: string
@@ -278,6 +280,7 @@ export interface NewCustomField {
   type?: CustomField['type']
   options?: string[]
   placeholder?: string | null
+  showOnInvite?: boolean
 }
 
 /** A location-level custom *value* (GHL "Custom Values"): a named business
@@ -2136,12 +2139,18 @@ export interface Branding {
 
 export const api = {
   login: (email: string, password: string) =>
-    req<{ ok: true; operator: Operator }>('/auth/login', {
+    req<{ ok: true; operator: Operator; passwordChangedAt: number | null }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }),
   logout: () => req<{ ok: true }>('/auth/logout', { method: 'POST' }),
-  me: () => req<{ operator: Operator }>('/auth/me'),
+  me: () => req<{ operator: Operator; passwordChangedAt: number | null }>('/auth/me'),
+  /** 403 = the current password is wrong; 400 = the new one is not acceptable; 429 = too many wrong guesses. */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    req<{ ok: true }>('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
 
   locations: () => req<{ locations: Location[] }>('/locations'),
 
@@ -2361,7 +2370,7 @@ export const api = {
   updateCustomField: (
     loc: string,
     id: string,
-    patch: Partial<Pick<CustomField, 'label' | 'type' | 'options' | 'placeholder' | 'position'>>,
+    patch: Partial<Pick<CustomField, 'label' | 'type' | 'options' | 'placeholder' | 'position'>> & { showOnInvite?: boolean },
   ) =>
     req<{ ok: true; field: CustomField }>(`/loc/${loc}/custom-fields/${id}`, {
       method: 'PATCH',

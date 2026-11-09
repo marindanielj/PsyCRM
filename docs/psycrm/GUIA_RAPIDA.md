@@ -54,7 +54,8 @@ Abra la nota → **Print / Save as PDF** y elija "Guardar como PDF".
 - **El cliente no recibió el correo:** pídale que revise "spam"; en **Documents** o **Invitations** use **Resend**. Si el correo no está configurado, el sistema le muestra el enlace para que lo envíe usted (**Copy link**).
 - **"Este enlace no es válido o expiró":** pasan 14 días, se anuló o ya se usó. Use **Resend**.
 - **Un paquete queda "Needs your review":** la fecha de nacimiento que el cliente escribió no coincide con la del expediente. Revísela; si está bien, **Accept as complete**.
-- **Olvidé mi contraseña:** pida al administrador que la cambie (no se envía por correo).
+- **Cambiar mi contraseña:** *Settings → Account*. Pide la actual y la nueva (12 caracteres o más), y cierra la sesión en los demás dispositivos. Mientras la contraseña sea la que se le entregó al crear la cuenta, aparece un aviso amarillo arriba con el enlace.
+- **Olvidé mi contraseña:** pida al administrador que la cambie (no se envía por correo; todavía no hay recuperación automática).
 - **Algo no cuadra con una nota o un documento:** no lo corrija "a mano": use un anexo y avise al administrador.
 
 **Si un cliente está en crisis:** llame al **988** o al **911**. Estos números aparecen también en el paso de Riesgo y en los documentos (y deben verificarse antes de usar el sistema con clientes).

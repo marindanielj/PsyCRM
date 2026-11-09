@@ -5,6 +5,8 @@ export const AUDIT_LABELS: Record<string, string> = {
   'auth.login': 'Signed in',
   'auth.login_failed': 'Failed sign-in attempt',
   'auth.logout': 'Signed out',
+  'auth.password_changed': 'Password changed',
+  'auth.password_change_failed': 'Failed password change (wrong current password)',
   'contact.created': 'Client created',
   'contact.updated': 'Client details changed',
   'contact.viewed': 'Client record opened',

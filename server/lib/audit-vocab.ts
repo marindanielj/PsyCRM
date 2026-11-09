@@ -11,6 +11,8 @@ export const AUDIT_ACTIONS = {
   'auth.login': 'Signed in',
   'auth.login_failed': 'Failed sign-in attempt',
   'auth.logout': 'Signed out',
+  'auth.password_changed': 'Password changed',
+  'auth.password_change_failed': 'Failed password change (wrong current password)',
   // contacts
   'contact.created': 'Client created',
   'contact.updated': 'Client details changed',

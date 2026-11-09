@@ -78,7 +78,7 @@ test('me returns the operator for a valid session', async () => {
     headers: { Cookie: `${SESSION_COOKIE}=${token}` },
   })
   expect(res.status).toBe(200)
-  expect(await res.json()).toEqual({ operator: operatorRow })
+  expect(await res.json()).toEqual({ operator: operatorRow, passwordChangedAt: null })
 })
 
 test('me without a session is 401', async () => {

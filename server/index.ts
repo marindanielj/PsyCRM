@@ -41,6 +41,7 @@ import { operatorAuth } from './middleware/auth'
 import { locationAccess } from './middleware/location-access'
 import { affiliatesRoute } from './routes/affiliates'
 import { assistantRoute } from './routes/assistant'
+import { OperatorsRepo } from './repos/operators-repo'
 import { authRoute } from './routes/auth'
 import { blogRoute } from './routes/blog'
 import { calendarsRoute } from './routes/calendars'
@@ -120,6 +121,12 @@ export interface AppDeps {
   resolveEmail?: (db: Database, locationId: string) => Promise<ResolvedEmailSender>
   /** Public origin for the links in emails (PUBLIC_BASE_URL). Falls back to each request's origin. */
   publicBaseUrl?: string
+  /**
+   * When an operator last changed their password (epoch ms) or null; sessions issued before it are rejected.
+   * Defaults to reading operators.password_changed_at. Tests that queue canned rows on a FakeDatabase pass
+   * `async () => null` so the extra read does not consume what they queued for the query under test.
+   */
+  revokedBefore?: (operatorId: string) => Promise<number | null>
 }
 
 /** Route-group -> module key, for PsyCRM-mode gating. Groups missing here
@@ -172,7 +179,10 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
   const on = new Set<Integration>(deps.integrations ?? [])
   const idleTtlMs = deps.idleTtlMs ?? IDLE_TTL_MS
-  const auth = () => operatorAuth(deps.sessionSecret, { idleTtlMs, secure: deps.secure })
+  // A password change voids the sessions issued before it, so each request asks when the operator last changed theirs.
+  const operatorsRepo = new OperatorsRepo(deps.db)
+  const revokedBefore = deps.revokedBefore ?? ((operatorId: string) => operatorsRepo.passwordChangedAt(operatorId))
+  const auth = () => operatorAuth(deps.sessionSecret, { idleTtlMs, secure: deps.secure, revokedBefore })
 
   {
     // Clinical data: nothing cacheable, nothing embeddable, no referrer leakage
@@ -217,7 +227,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.get('/health', (c) => c.json({ ok: true, service: 'psycrm' }))
 
-  app.route('/api/auth', authRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure, idleTtlMs }))
+  app.route('/api/auth', authRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure, idleTtlMs, revokedBefore }))
   // Integrations that carry client data to third parties. NONE is mounted unless it
   // is named in `deps.integrations` (ENABLED_INTEGRATIONS): enabling one is a
   // deliberate step that should follow a BAA with that vendor. Only the public

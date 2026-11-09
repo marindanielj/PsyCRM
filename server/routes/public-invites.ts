@@ -9,6 +9,7 @@ import { clientIp } from '../lib/client-ip'
 import { renderInvalidPage } from '../lib/document-page'
 import { hashToken, looksLikeToken } from '../lib/document-tokens'
 import { completeInvite } from '../lib/invite-complete'
+import { MAX_ANSWERS, MAX_TEXTAREA, inviteFields } from '../lib/invite-custom-fields'
 import { renderInviteDone, renderInviteForm } from '../lib/invite-page'
 import { normalizeBranding, logoUrl, readableBrand } from '../lib/branding'
 import { enabledModules } from '../lib/modules'
@@ -24,6 +25,11 @@ const submitSchema = z.object({
   dateOfBirth: z.string().trim().max(10),
   guardianName: z.string().trim().max(120).optional(),
   guardianPhone: z.string().trim().max(40).optional(),
+  // The practice's custom fields, by key. Checked field by field against today's definitions in completeInvite.
+  custom: z
+    .record(z.string().max(80), z.union([z.string().max(MAX_TEXTAREA), z.number(), z.boolean(), z.null()]))
+    .refine((o) => Object.keys(o).length <= MAX_ANSWERS)
+    .optional(),
   // A field people never see: a bot that fills it in is quietly ignored.
   website: z.string().max(200).optional(),
 })
@@ -77,11 +83,13 @@ export function publicInvitesRoute(deps: { db: Database; dispatch?: WorkflowDisp
     if (!v.usable) return c.html(renderInviteDone({ practice: v.practice, brand: v.brand, logoUrl: v.logoUrl, nonce }))
     // First time the link is opened: the therapist's list shows "Opened" instead of "Sent".
     if (!v.invite.openedAt) await deps.db.query('UPDATE client_invites SET opened_at = $3 WHERE location_id = $1 AND id = $2 AND opened_at IS NULL', [v.locationId, v.invite.id, clock().toISOString()])
-    return c.html(renderInviteForm({ practice: v.practice, brand: v.brand, logoUrl: v.logoUrl, token: c.req.param('token'), nonce, kind: v.invite.kind, name: v.invite.name, email: v.invite.email }))
+    // The fields are read now, not when the invitation was created: today's changes are on this form.
+    const fields = await inviteFields(deps.db, v.locationId)
+    return c.html(renderInviteForm({ practice: v.practice, brand: v.brand, logoUrl: v.logoUrl, token: c.req.param('token'), nonce, kind: v.invite.kind, name: v.invite.name, email: v.invite.email, fields }))
   })
 
   app.post('/:token/submit', zValidator('json', submitSchema, (res, c) => (res.success ? undefined : c.json({ error: 'invalid' }, 422))), async (c) => {
-    if (Number(c.req.header('content-length') ?? 0) > 20_000) return c.json({ error: 'invalid' }, 413)
+    if (Number(c.req.header('content-length') ?? 0) > 120_000) return c.json({ error: 'invalid' }, 413)
     if (!submits.check(clientIp(c), clock().getTime()).allowed) return c.json({ error: 'rate_limited' }, 429)
     const v = await resolveLink(c.req.param('token'))
     if (!v) return c.json({ error: 'closed' }, 404)
@@ -91,9 +99,9 @@ export function publicInvitesRoute(deps: { db: Database; dispatch?: WorkflowDisp
 
     const ip = clientIp(c)
     const r = await completeInvite(deps.db, v.locationId, v.invite, {
-      firstName: body.firstName, lastName: body.lastName, phone: body.phone, dateOfBirth: body.dateOfBirth, guardianName: body.guardianName, guardianPhone: body.guardianPhone,
+      firstName: body.firstName, lastName: body.lastName, phone: body.phone, dateOfBirth: body.dateOfBirth, guardianName: body.guardianName, guardianPhone: body.guardianPhone, custom: body.custom,
     }, { ip: ip === 'unknown' ? null : ip, userAgent: c.req.header('user-agent') ?? null, now: clock() })
-    if (!r.ok) return c.json({ error: r.error }, r.error === 'closed' ? 409 : 422)
+    if (!r.ok) return c.json(r.error === 'invalid_custom_field' ? { error: r.error, field: r.field } : { error: r.error }, r.error === 'closed' ? 409 : 422)
 
     // After the commit: a NEW client starts onboarding (the packet goes out by itself when that automation is on).
     if (r.created) {

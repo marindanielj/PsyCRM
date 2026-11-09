@@ -17,6 +17,7 @@ import { Label } from '../../components/ui/label'
 import { PageSpinner } from '../../components/ui/spinner'
 import { Textarea } from '../../components/ui/textarea'
 import { type CustomField, api } from '../../lib/api'
+import { RESERVED_INVITE_KEYS } from '../../lib/invite-fields'
 import { useTenant } from '../../state/location'
 
 type FieldType = CustomField['type']
@@ -53,6 +54,7 @@ interface FieldDraft {
   type: FieldType
   options: string[]
   placeholder: string | null
+  showOnInvite: boolean
 }
 
 /**
@@ -156,7 +158,8 @@ export function CustomFieldsPage() {
           <h1 className="text-base font-semibold text-slate-900">Custom Fields</h1>
           <p className="text-xs text-slate-500">
             Extra fields on every contact — a dropdown, a date, a number. You decide the shape;
-            each contact carries its own value.
+            each contact carries its own value. Clients are asked for these when they register from
+            an invitation, as they are defined at that moment.
           </p>
         </div>
         {!creating ? (
@@ -258,6 +261,9 @@ export function CustomFieldsPage() {
                                 {f.type === 'dropdown' && f.options.length > 0
                                   ? ` · ${f.options.join(', ')}`
                                   : ''}
+                                {!f.show_on_invite && !RESERVED_INVITE_KEYS.includes(f.key) ? (
+                                  <span className="ml-1 rounded bg-amber-50 px-1.5 py-0.5 font-medium text-amber-700">Not on the invitation</span>
+                                ) : null}
                               </p>
                             </div>
                           </div>
@@ -308,7 +314,7 @@ function FieldForm({
   onSubmit,
   onCancel,
 }: {
-  initial?: Pick<CustomField, 'label' | 'type' | 'options' | 'placeholder'>
+  initial?: Pick<CustomField, 'label' | 'type' | 'options' | 'placeholder'> & { key?: string; show_on_invite?: boolean }
   submitLabel: string
   busy: boolean
   lockType?: boolean
@@ -319,6 +325,9 @@ function FieldForm({
   const [type, setType] = useState<FieldType>(initial?.type ?? 'text')
   const [optionsText, setOptionsText] = useState((initial?.options ?? []).join('\n'))
   const [placeholder, setPlaceholder] = useState(initial?.placeholder ?? '')
+  const [showOnInvite, setShowOnInvite] = useState(initial?.show_on_invite ?? true)
+  // The invitation already asks these with its own questions, so the choice would mean nothing.
+  const askedAlready = initial?.key !== undefined && RESERVED_INVITE_KEYS.includes(initial.key)
 
   const showOptions = type === 'dropdown'
   const showPlaceholder =
@@ -337,6 +346,7 @@ function FieldForm({
       type,
       options: showOptions ? options : [],
       placeholder: showPlaceholder && placeholder.trim() ? placeholder.trim() : null,
+      showOnInvite,
     })
   }
 
@@ -408,6 +418,23 @@ function FieldForm({
           />
         </div>
       ) : null}
+
+      {askedAlready ? (
+        <p className="text-xs text-slate-500">The registration form of an invitation already asks for this.</p>
+      ) : (
+        <label className="flex cursor-pointer items-start gap-2 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 rounded border-slate-300"
+            checked={showOnInvite}
+            onChange={(e) => setShowOnInvite(e.target.checked)}
+          />
+          <span>
+            Ask the client for this when they register from an invitation
+            <span className="block text-xs text-slate-400">Turn it off for notes or details only you should fill in.</span>
+          </span>
+        </label>
+      )}
 
       <div className="flex justify-end gap-2 pt-1">
         <Button size="sm" variant="ghost" onClick={onCancel}>
