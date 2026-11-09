@@ -3,8 +3,10 @@ import { createApp } from './index'
 import type { SendTextFn } from './lib/operator-tools'
 import { createSession } from './lib/session'
 
+// A FakeDatabase hands back the rows a test queued, in order; the session-revocation read that every
+// authenticated request makes would take the first of them. These tests are about the queries after it.
 function app(db = new FakeDatabase()) {
-  return createApp({ db, sessionSecret: 'sek', webhookSecret: 'whsek' })
+  return createApp({ db, sessionSecret: 'sek', webhookSecret: 'whsek', revokedBefore: async () => null })
 }
 
 test('health is public', async () => {
@@ -60,7 +62,7 @@ test('createApp threads the gateway text rail into the assistant /confirm send_t
     return { ok: true, messageId: 'gw1' }
   }
   const token = createSession({ operatorId: 'op1' }, 'sek')
-  const res = await createApp({ db, sessionSecret: 'sek', webhookSecret: 'whsek', integrations: ['ai'], sendText }).request(
+  const res = await createApp({ db, sessionSecret: 'sek', webhookSecret: 'whsek', integrations: ['ai'], sendText, revokedBefore: async () => null }).request(
     '/api/loc/locA/assistant/confirm',
     {
       method: 'POST',
@@ -280,4 +282,22 @@ test('the public signing pages carry their own nonce-based CSP (not the app-wide
   expect(res.headers.get('x-frame-options')).toBe('DENY')
   // and the app's own API keeps the strict policy
   expect((await app(new FakeDatabase()).request('/health')).headers.get('content-security-policy')).toContain("script-src 'self'")
+})
+
+// --- a password change signs out the other devices (wired through createApp, on a real database) -----------
+
+test('createApp rejects a session issued before the operator last changed their password', async () => {
+  const { freshDb, addLocation } = await import('./test-utils/pglite')
+  const { db } = await freshDb()
+  const loc = await addLocation(db, 'loc_a')
+  await db.query("INSERT INTO operators (id, email, name, password_hash) VALUES ('op1','dra@x.com','Dra','h')")
+  await db.query("INSERT INTO operator_locations (operator_id, location_id) VALUES ('op1',$1)", [loc])
+  const real = createApp({ db, sessionSecret: 'sek', webhookSecret: 'whsek' }) // the default revocation: reads the database
+  const get = (token: string) => real.request('/api/locations', { headers: { Cookie: `ol_session=${token}` } })
+
+  const before = createSession({ operatorId: 'op1' }, 'sek', { now: Date.now() - 20 * 60_000 }) // 20 min old, inside the 30 min idle window
+  expect((await get(before)).status).toBe(200) // never changed: every session is good
+  await db.query("UPDATE operators SET password_changed_at = now() - interval '10 minutes' WHERE id='op1'")
+  expect((await get(before)).status).toBe(401) // issued before the change
+  expect((await get(createSession({ operatorId: 'op1' }, 'sek'))).status).toBe(200) // issued after it
 })

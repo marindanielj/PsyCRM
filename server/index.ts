@@ -121,6 +121,12 @@ export interface AppDeps {
   resolveEmail?: (db: Database, locationId: string) => Promise<ResolvedEmailSender>
   /** Public origin for the links in emails (PUBLIC_BASE_URL). Falls back to each request's origin. */
   publicBaseUrl?: string
+  /**
+   * When an operator last changed their password (epoch ms) or null; sessions issued before it are rejected.
+   * Defaults to reading operators.password_changed_at. Tests that queue canned rows on a FakeDatabase pass
+   * `async () => null` so the extra read does not consume what they queued for the query under test.
+   */
+  revokedBefore?: (operatorId: string) => Promise<number | null>
 }
 
 /** Route-group -> module key, for PsyCRM-mode gating. Groups missing here
@@ -175,7 +181,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   const idleTtlMs = deps.idleTtlMs ?? IDLE_TTL_MS
   // A password change voids the sessions issued before it, so each request asks when the operator last changed theirs.
   const operatorsRepo = new OperatorsRepo(deps.db)
-  const revokedBefore = (operatorId: string) => operatorsRepo.passwordChangedAt(operatorId)
+  const revokedBefore = deps.revokedBefore ?? ((operatorId: string) => operatorsRepo.passwordChangedAt(operatorId))
   const auth = () => operatorAuth(deps.sessionSecret, { idleTtlMs, secure: deps.secure, revokedBefore })
 
   {
