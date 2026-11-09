@@ -1,6 +1,7 @@
 import { App, Stack, Tags } from 'aws-cdk-lib'
 import { AppStack } from '../lib/app-stack'
 import { DataStack } from '../lib/data-stack'
+import { DomainConstruct } from '../lib/domain'
 import { FoundationStack } from '../lib/foundation-stack'
 import { readSettings } from '../lib/settings'
 
@@ -16,5 +17,6 @@ const stack = new Stack(app, 'Psycrm', {
 })
 const foundation = new FoundationStack(stack, 'Foundation', settings)
 const data = new DataStack(stack, 'Data', foundation, settings)
-if (settings.publicBaseUrl || settings.certificateArn) new AppStack(stack, 'App', foundation, data, settings)
+const domain = settings.domainName ? new DomainConstruct(stack, 'Domain', settings.domainName, settings) : undefined
+if (settings.publicBaseUrl || settings.certificateArn || domain?.certificate) new AppStack(stack, 'App', foundation, data, settings, domain)
 Tags.of(app).add('app', 'psycrm')

@@ -17,6 +17,10 @@ export interface Settings {
   imageTag: string
   /** 0 until the first image is pushed; then 1. */
   desiredCount: number
+  /** A name delegated to Route 53 for the app and its email, e.g. app.dramaritzamartinez.com. */
+  domainName?: string
+  /** Second phase: request the certificate, once the registrar delegates `domainName` to the zone. */
+  enableCertificate: boolean
   /** https:// address of the app (needs a domain). Required to synthesize PsycrmApp. */
   publicBaseUrl?: string
   /** ACM certificate for the ALB's 443 listener. Required with publicBaseUrl. */
@@ -50,6 +54,8 @@ export function readSettings(app: App): Settings {
     enableGuardDuty: bool(app, 'enableGuardDuty', false),
     imageTag: str(app, 'imageTag') ?? 'bootstrap',
     desiredCount: num(app, 'desiredCount', 0),
+    domainName: str(app, 'domainName'),
+    enableCertificate: bool(app, 'enableCertificate', false),
     publicBaseUrl: str(app, 'publicBaseUrl'),
     certificateArn: str(app, 'certificateArn'),
     sesFromAddress: str(app, 'sesFromAddress'),

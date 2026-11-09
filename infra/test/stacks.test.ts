@@ -3,6 +3,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions'
 import { describe, expect, it } from 'vitest'
 import { AppStack } from '../lib/app-stack'
 import { DataStack } from '../lib/data-stack'
+import { DomainConstruct } from '../lib/domain'
 import { FoundationStack } from '../lib/foundation-stack'
 import { readSettings } from '../lib/settings'
 
@@ -12,7 +13,8 @@ function build(ctx: Record<string, string>) {
   const stack = new Stack(app, 'Psycrm', { env: { region: 'us-east-1' } })
   const foundation = new FoundationStack(stack, 'Foundation', settings)
   const data = new DataStack(stack, 'Data', foundation, settings)
-  if (settings.publicBaseUrl || settings.certificateArn) new AppStack(stack, 'App', foundation, data, settings)
+  const domain = settings.domainName ? new DomainConstruct(stack, 'Domain', settings.domainName, settings) : undefined
+  if (settings.publicBaseUrl || settings.certificateArn || domain?.certificate) new AppStack(stack, 'App', foundation, data, settings, domain)
   return Template.fromStack(stack)
 }
 
@@ -184,5 +186,56 @@ describe('public service (with a domain)', () => {
   it('refuses to build without an https address or a certificate', () => {
     expect(() => build({ ...BASE, publicBaseUrl: 'http://app.example.com', certificateArn: 'x' })).toThrow(/https/)
     expect(() => build({ ...BASE, publicBaseUrl: 'https://app.example.com' })).toThrow(/certificateArn/)
+  })
+})
+
+describe('delegated domain (app.dramaritzamartinez.com)', () => {
+  const DOMAIN = { ...BASE, domainName: 'app.dramaritzamartinez.com' }
+
+  describe('phase 1: zone and email identity, no certificate yet', () => {
+    const t = build(DOMAIN)
+    it('creates only the delegated zone, never the registrant\'s whole domain', () => {
+      t.resourceCountIs('AWS::Route53::HostedZone', 1)
+      t.hasResourceProperties('AWS::Route53::HostedZone', { Name: 'app.dramaritzamartinez.com.' })
+    })
+    it('signs mail with 2048-bit DKIM and a MAIL FROM subdomain, and keeps bounce/complaint suppression', () => {
+      t.hasResourceProperties('AWS::SES::EmailIdentity', {
+        EmailIdentity: 'app.dramaritzamartinez.com',
+        DkimAttributes: { SigningEnabled: true },
+        MailFromAttributes: Match.objectLike({ MailFromDomain: 'bounce.app.dramaritzamartinez.com' }),
+      })
+      t.hasResourceProperties('AWS::SES::ConfigurationSet', {
+        Name: 'psycrm',
+        ReputationOptions: { ReputationMetricsEnabled: true },
+        SuppressionOptions: { SuppressedReasons: ['BOUNCE', 'COMPLAINT'] },
+        DeliveryOptions: { TlsPolicy: 'REQUIRE' },
+      })
+    })
+    it('publishes a strict DMARC policy', () => {
+      t.hasResourceProperties('AWS::Route53::RecordSet', { Name: '_dmarc.app.dramaritzamartinez.com.', Type: 'TXT' })
+    })
+    it('does not request the certificate or create the service before the registrar delegates', () => {
+      t.resourceCountIs('AWS::CertificateManager::Certificate', 0)
+      t.resourceCountIs('AWS::ECS::Service', 0)
+    })
+  })
+
+  describe('phase 2: certificate, service and the app record', () => {
+    const t = build({ ...DOMAIN, enableCertificate: 'true', desiredCount: '1' })
+    it('requests a DNS-validated certificate for the name', () => {
+      t.hasResourceProperties('AWS::CertificateManager::Certificate', { DomainName: 'app.dramaritzamartinez.com', ValidationMethod: 'DNS' })
+    })
+    it('points the name at the load balancer and sends mail only as no-reply@ that name', () => {
+      t.hasResourceProperties('AWS::Route53::RecordSet', { Name: 'app.dramaritzamartinez.com.', Type: 'A', AliasTarget: Match.anyValue() })
+      t.hasResourceProperties('AWS::IAM::Policy', {
+        PolicyDocument: Match.objectLike({
+          Statement: [Match.objectLike({ Action: 'ses:SendEmail', Condition: { StringEquals: { 'ses:FromAddress': 'no-reply@app.dramaritzamartinez.com' } } })],
+        }),
+      })
+      const defs = Object.values(t.findResources('AWS::ECS::TaskDefinition')) as { Properties: { Family: string; ContainerDefinitions: { Environment?: { Name: string; Value: string }[] }[] } }[]
+      const env = Object.fromEntries((defs.find((d) => d.Properties.Family === 'psycrm-app')?.Properties.ContainerDefinitions[0]?.Environment ?? []).map((e) => [e.Name, e.Value]))
+      expect(env).toMatchObject({ PUBLIC_BASE_URL: 'https://app.dramaritzamartinez.com', SES_FROM_ADDRESS: 'no-reply@app.dramaritzamartinez.com' })
+      expect(JSON.stringify(env.SES_CONFIGURATION_SET)).toContain('ConfigSet')
+    })
   })
 })

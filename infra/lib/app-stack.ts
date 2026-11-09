@@ -6,8 +6,11 @@ import * as ecs from 'aws-cdk-lib/aws-ecs'
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2'
 import * as acm from 'aws-cdk-lib/aws-certificatemanager'
 import * as iam from 'aws-cdk-lib/aws-iam'
+import * as route53 from 'aws-cdk-lib/aws-route53'
+import * as targets from 'aws-cdk-lib/aws-route53-targets'
 import { Construct } from 'constructs'
 import type { DataStack } from './data-stack'
+import type { DomainConstruct } from './domain'
 import type { FoundationStack } from './foundation-stack'
 import { NAMES, type Settings } from './settings'
 
@@ -15,11 +18,14 @@ const PORT = 8790
 
 /** The public service: the ALB, the Fargate task, and the alarms. Needs a domain and its certificate. */
 export class AppStack extends Construct {
-  constructor(scope: Construct, id: string, foundation: FoundationStack, data: DataStack, settings: Settings) {
+  constructor(scope: Construct, id: string, foundation: FoundationStack, data: DataStack, settings: Settings, domain?: DomainConstruct) {
     super(scope, id)
-    const { publicBaseUrl, certificateArn } = settings
+    const publicBaseUrl = settings.publicBaseUrl ?? domain?.publicBaseUrl
+    const certificateArn = settings.certificateArn ?? domain?.certificate?.certificateArn
+    const sesFromAddress = settings.sesFromAddress ?? domain?.fromAddress
+    const sesConfigurationSet = settings.sesConfigurationSet ?? domain?.sesConfigurationSet.configurationSetName
     if (!publicBaseUrl?.startsWith('https://')) throw new Error('PsycrmApp needs -c publicBaseUrl=https://app.<domain> (the server refuses to start in production without it)')
-    if (!certificateArn) throw new Error('PsycrmApp needs -c certificateArn=<ACM certificate for that domain>')
+    if (!certificateArn) throw new Error('PsycrmApp needs a certificate: -c enableCertificate=true (after delegating the domain) or -c certificateArn=<ACM certificate>')
     const { vpc, repo, sgAlb, sgApp, appLogGroup, topic } = foundation
 
     // ---- roles: the execution role starts the task; the task role is what the code itself may do
@@ -30,14 +36,14 @@ export class AppStack extends Construct {
     data.sessionSecret.grantRead(execRole)
 
     const taskRole = new iam.Role(this, 'TaskRole', { roleName: NAMES.taskRole, assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com') })
-    if (settings.sesFromAddress) {
-      const resources = [`arn:${Aws.PARTITION}:ses:${Aws.REGION}:${Aws.ACCOUNT_ID}:identity/*`]
-      if (settings.sesConfigurationSet) resources.push(`arn:${Aws.PARTITION}:ses:${Aws.REGION}:${Aws.ACCOUNT_ID}:configuration-set/${settings.sesConfigurationSet}`)
+    if (sesFromAddress) {
+      const resources = [`arn:${Aws.PARTITION}:ses:${Aws.REGION}:${Aws.ACCOUNT_ID}:identity/${domain?.name ?? '*'}`]
+      if (sesConfigurationSet) resources.push(`arn:${Aws.PARTITION}:ses:${Aws.REGION}:${Aws.ACCOUNT_ID}:configuration-set/${sesConfigurationSet}`)
       taskRole.addToPolicy(
         new iam.PolicyStatement({
           actions: ['ses:SendEmail'],
           resources,
-          conditions: { StringEquals: { 'ses:FromAddress': settings.sesFromAddress } },
+          conditions: { StringEquals: { 'ses:FromAddress': sesFromAddress } },
         }),
       )
     }
@@ -65,8 +71,8 @@ export class AppStack extends Construct {
         AWS_REGION: settings.region,
         PGBOSS_CREATE_SCHEMA: 'false', // db/roles.sql created the schema; the app's role may not create schemas
         PUBLIC_BASE_URL: publicBaseUrl,
-        ...(settings.sesFromAddress ? { SES_FROM_ADDRESS: settings.sesFromAddress, SES_REGION: settings.region } : {}),
-        ...(settings.sesConfigurationSet ? { SES_CONFIGURATION_SET: settings.sesConfigurationSet } : {}),
+        ...(sesFromAddress ? { SES_FROM_ADDRESS: sesFromAddress, SES_REGION: settings.region } : {}),
+        ...(sesConfigurationSet ? { SES_CONFIGURATION_SET: sesConfigurationSet } : {}),
       },
       secrets: {
         DATABASE_URL: ecs.Secret.fromSecretsManager(data.databaseUrl),
@@ -122,6 +128,8 @@ export class AppStack extends Construct {
       open: false,
       defaultAction: elbv2.ListenerAction.redirect({ protocol: 'HTTPS', port: '443', permanent: true }),
     })
+
+    if (domain) new route53.ARecord(this, 'AppRecord', { zone: domain.zone, target: route53.RecordTarget.fromAlias(new targets.LoadBalancerTarget(alb)) })
 
     // ---- alarms → SNS → the therapist and the admin
     const action = new cwActions.SnsAction(topic)
