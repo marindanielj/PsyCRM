@@ -2128,6 +2128,60 @@ export interface ClientInvite {
   completedAt: string | null
   contactId: string | null
 }
+// ---- public page + requests ------------------------------------------------------------------------------
+
+export type PageDay = 'lunes' | 'martes' | 'miercoles' | 'jueves' | 'viernes' | 'sabado'
+export type PageSlot = 'manana' | 'tarde'
+export type PageMode = 'presencial' | 'virtual'
+
+/** What a practice's public page says (stored in its settings). */
+export interface PublicPage {
+  enabled: boolean
+  headline: string
+  subheadline: string
+  about: string
+  services: { title: string; text: string }[]
+  showFees: boolean
+  insurance: { accepted: boolean; plans: string[]; note: string }
+  faq: { q: string; a: string }[]
+  hours: string
+  location: string
+  showTherapist: boolean
+  showCrisis: boolean
+  form: { intro: string; askInsurance: boolean; acknowledgements: string[]; modes: PageMode[]; days: PageDay[]; slots: PageSlot[] }
+  bannerVersion: string | null
+}
+export interface PublicPageState {
+  page: PublicPage
+  slug: string | null
+  url: string | null
+  suggestedSlug: string
+  suggestedQuestions: string[]
+  practiceName: string
+  fees: { session: string; intake: string; late_cancel: string }
+  bannerUrl: string | null
+}
+export type PublicPageInput = Omit<PublicPage, 'bannerVersion'> & { slug: string | null }
+
+export type InquiryStatus = 'new' | 'invited' | 'handled'
+/** A request that came from the public page. Not a client: no record, no date of birth. */
+export interface Inquiry {
+  id: string
+  status: InquiryStatus
+  name: string
+  email: string
+  phone: string | null
+  who: 'adult' | 'minor'
+  mode: PageMode
+  days: PageDay[]
+  slots: PageSlot[]
+  insurance: string | null
+  message: string | null
+  acknowledged: string[]
+  inviteId: string | null
+  createdAt: string
+}
+
 export interface InviteSendResult { ok: true; invite: ClientInvite; link: string; emailed: boolean; emailIssue: string | null }
 
 export interface Branding {
@@ -2169,6 +2223,21 @@ export const api = {
     removeLogo: (loc: string) => req<{ ok: true; branding: Branding }>(`/loc/${loc}/branding/logo`, { method: 'DELETE' }),
   },
 
+  publicPage: {
+    get: (loc: string) => req<PublicPageState>(`/loc/${loc}/public-page`),
+    save: (loc: string, input: PublicPageInput) =>
+      req<{ ok: true; page: PublicPage; slug: string | null; url: string | null }>(`/loc/${loc}/public-page`, { method: 'PUT', body: JSON.stringify(input) }),
+    putBanner: (loc: string, dataUrl: string) => req<{ ok: true; page: PublicPage }>(`/loc/${loc}/public-page/banner`, { method: 'PUT', body: JSON.stringify({ dataUrl }) }),
+    removeBanner: (loc: string) => req<{ ok: true; page: PublicPage }>(`/loc/${loc}/public-page/banner`, { method: 'DELETE' }),
+    /** Opens in a new tab with the operator's session. */
+    previewUrl: (loc: string) => `/api/loc/${loc}/public-page/preview`,
+  },
+  inquiries: {
+    list: (loc: string, status?: InquiryStatus) => req<{ inquiries: Inquiry[]; newCount: number }>(`/loc/${loc}/inquiries${status ? `?status=${status}` : ''}`),
+    setHandled: (loc: string, id: string, handled: boolean) => req<{ ok: true; inquiry: Inquiry }>(`/loc/${loc}/inquiries/${id}`, { method: 'PATCH', body: JSON.stringify({ handled }) }),
+    markInvited: (loc: string, id: string, inviteId: string) => req<{ ok: true; inquiry: Inquiry }>(`/loc/${loc}/inquiries/${id}/invited`, { method: 'POST', body: JSON.stringify({ inviteId }) }),
+    remove: (loc: string, id: string) => req<{ ok: true }>(`/loc/${loc}/inquiries/${id}`, { method: 'DELETE' }),
+  },
   invites: {
     list: (loc: string) => req<{ invites: ClientInvite[] }>(`/loc/${loc}/invites`),
     create: (loc: string, input: { name: string; email: string; kind: 'adult' | 'guardian' }) =>

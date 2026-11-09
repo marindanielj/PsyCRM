@@ -10,6 +10,7 @@ import { cn, formatPhone } from '../../lib/utils'
 import { useTenant } from '../../state/location'
 import { AddContactDialog } from './AddContactDialog'
 import { ContactDetail } from './ContactDetail'
+import { InquiriesPanel } from './InquiriesPanel'
 import { InvitationsPanel } from './InvitationsPanel'
 import { InviteClientDialog } from './InviteClientDialog'
 
@@ -166,6 +167,7 @@ export function ContactsPage() {
             </TabButton>
           </div>
 
+          {view === 'active' && <InquiriesPanel locationId={loc} onInvited={() => setInviteTick((n) => n + 1)} />}
           {view === 'active' && <InvitationsPanel locationId={loc} refreshKey={inviteTick} onCompleted={reloadContacts} />}
 
           {view === 'active' && (

@@ -34,6 +34,7 @@ import { ProposalsPage } from './features/proposals/ProposalsPage'
 import { ReportingPage } from './features/reporting/ReportingPage'
 import { ReputationPage } from './features/reputation/ReputationPage'
 import { AccountSettingsPage } from './features/settings/AccountSettingsPage'
+import { PublicPageSettingsPage } from './features/settings/PublicPageSettingsPage'
 import { AgentSettingsPage } from './features/settings/AgentSettingsPage'
 import { PaymentsSettingsPage } from './features/settings/PaymentsSettingsPage'
 import { SendingSettingsPage } from './features/settings/SendingSettingsPage'
@@ -109,6 +110,7 @@ export default function App() {
             <Route path="account" element={<AccountSettingsPage />} />
             <Route path="practice" element={<PracticeSettingsPage />} />
             <Route path="branding" element={<BrandingSettingsPage />} />
+            <Route path="public-page" element={<PublicPageSettingsPage />} />
             <Route path="audit" element={<RequireModule module="audit"><AuditLogPage /></RequireModule>} />
             <Route path="pipelines" element={<PipelinesSettingsPage />} />
             <Route path="custom-fields" element={<CustomFieldsPage />} />

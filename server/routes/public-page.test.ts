@@ -130,6 +130,15 @@ test('everything the practice wrote is escaped: a question, a plan or a headline
   expect(html.match(/<script nonce=/g)).toHaveLength(1) // only the form's own script
 })
 
+test('the answer to the visitor lives outside the form, so hiding the form after sending does not hide the thanks', async () => {
+  const s = await setup()
+  await s.publish()
+  const html = (await s.call(s.app, 'GET', '/p/dra-rivera')).text
+  const form = /<form id="req"[\s\S]*?<\/form>/.exec(html)![0]
+  expect(form).not.toContain('id="msg"')
+  expect(html).toContain('<div id="msg" class="msg" hidden role="status"></div>')
+})
+
 test('the page sets its own strict policy with a nonce and is not cached', async () => {
   const s = await setup()
   await s.publish()

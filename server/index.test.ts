@@ -301,3 +301,12 @@ test('createApp rejects a session issued before the operator last changed their 
   expect((await get(before)).status).toBe(401) // issued before the change
   expect((await get(createSession({ operatorId: 'op1' }, 'sek'))).status).toBe(200) // issued after it
 })
+
+test('a practice\'s public page is served outside the session, with its own policy and not the app\'s', async () => {
+  const res = await app().request('/p/anything-at-all')
+  expect(res.status).toBe(404) // no such page: the same "not available" for every unknown address
+  const csp = res.headers.get('content-security-policy') ?? ''
+  expect(csp).toContain("default-src 'none'") // the page's own policy…
+  expect(csp).not.toContain("default-src 'self'") // …not the app's
+  expect(res.headers.get('x-frame-options')).toBe('DENY')
+})

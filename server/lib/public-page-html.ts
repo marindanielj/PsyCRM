@@ -163,10 +163,10 @@ ${insurance}
 <label class="l" for="message">¿Algo que debamos saber para contactarle? <span class="hint">(opcional, máx. ${MAX_MESSAGE} caracteres)</span></label><textarea class="t" id="message" name="message" rows="3" maxlength="${MAX_MESSAGE}"></textarea>
 <div style="margin-top:1.2em">${acks}<label class="ack"><input type="checkbox" id="consent" required> <span>Autorizo a ${escText(o.displayName || 'la consulta')} a contactarme con estos datos para responder a mi solicitud.</span></label></div>
 <div class="hp" aria-hidden="true"><label>No llenar<input name="website" tabindex="-1" autocomplete="off"></label></div>
-<div id="msg" class="msg" hidden role="status"></div>
 ${o.preview ? '<div class="msg pv">Vista previa: el formulario está desactivado.</div>' : ''}
 <div style="margin-top:1.2em"><button class="btn" id="go" type="button"${o.preview ? ' disabled' : ''}>Enviar solicitud</button></div>
-</form></div></section>`
+</form>
+<div id="msg" class="msg" hidden role="status"></div></div></section>`
 }
 
 const SCRIPT = (slug: string) => `const SLUG=${jsonForScript(slug)};
