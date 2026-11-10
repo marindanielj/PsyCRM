@@ -74,7 +74,7 @@ Leer una dirección que escribe un usuario, desde un servidor dentro de la red d
 - **El bloqueo es para toda la práctica**, no por calendario (una práctica = una persona). Si algún día hay varios terapeutas (B9), pasa a ser por usuario.
 - **La disponibilidad sigue siendo "horas semanales fijas, menos lo ocupado"**. La idea del §3.1 de "abierto por defecto, bloqueado por su calendario" (cambia el cálculo de `server/lib/availability.ts`) **queda pendiente de que ella lo confirme**; este extra no la necesita.
 - **Títulos en español** (`Cita` / `Ocupado`) porque se muestran en su teléfono personal, no en la interfaz de la terapeuta. Es una constraint de base de datos.
-- **Pendiente de confirmar con ella:** ¿su calendario de referencia está en iCloud o en Google? No cambia el código (las dos usan `.ics`), pero cambia qué instrucciones hay que probar primero.
+- **Confirmado (2026-11-10):** su calendario de referencia es **Google (Gmail)**. No cambia el código; sí significa que la lectura de su calendario depende de la "dirección secreta en formato iCal", que Google solo muestra en la versión web (Configuración del calendario → Integrar calendario) y que un administrador de Google Workspace puede desactivar. Y que el feed de salida hacia su teléfono lo refrescará Google con retraso de horas si lo suscribe en Google Calendar; en un iPhone con el calendario de Apple se refresca antes.
 
 ## Archivos
 

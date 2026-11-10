@@ -67,9 +67,9 @@ Módulo nuevo `billing`. Una práctica que ya existe tiene su lista `enabledModu
 
 ## Pendiente de confirmar con ella
 
-- ¿Quiere los honorarios por CPT, o un solo precio por sesión? (se soportan los dos).
-- ¿Tiene ya NPI y qué ID fiscal usa (EIN o SSN)? Sin NPI no se puede emitir.
-- ¿Los códigos CPT sugeridos coinciden con cómo ella cobra (p. ej. si usa 90837 para sesiones de 60 minutos)?
+- **Confirmado (2026-11-10):** ya tiene NPI.
+- **Los códigos CPT sugeridos se usan tal cual por ahora** (90837 para 53 minutos o más, etc.). Ella los revisará con su práctica real y se corrigen después; no hay que cambiar nada para empezar, porque cada cargo se revisa antes de guardarse y las sugerencias están en un solo lugar (`suggestCpt` en `server/lib/billing-vocab.ts`).
+- Falta saber si quiere honorarios por código o un solo precio por sesión (se soportan los dos), y si usa EIN o SSN.
 
 ## Archivos y pruebas
 
