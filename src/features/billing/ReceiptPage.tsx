@@ -1,4 +1,4 @@
-import { ArrowLeft, Ban, Printer } from 'lucide-react'
+import { ArrowLeft, Ban, Mail, Printer } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
@@ -12,6 +12,7 @@ import '../session-notes/note-print.css'
 import './doc-print.css'
 import { ReasonDialog } from './BillingDialogs'
 import { PracticeLogo } from './PracticeLogo'
+import { SendDocumentDialog } from './SendDocumentDialog'
 
 /**
  * A receipt: the proof of one payment. Written in SPANISH for the client, and frozen as issued. It says what was paid, when and
@@ -26,6 +27,7 @@ export function ReceiptPage() {
   const [rec, setRec] = useState<ReceiptDetail | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'missing'>('loading')
   const [voiding, setVoiding] = useState(false)
+  const [emailing, setEmailing] = useState(false)
 
   const load = useCallback(async () => {
     if (!loc) return
@@ -61,6 +63,7 @@ export function ReceiptPage() {
           <span className="font-mono text-sm text-slate-700">{rec.number}</span>
           {voided && <span className="rounded bg-rose-50 px-1.5 py-0.5 text-xs font-medium text-rose-700">Voided</span>}
           <div className="ml-auto flex gap-2">
+            {!voided && <Button size="sm" variant="outline" onClick={() => setEmailing(true)}><Mail className="h-4 w-4" /> Send by email</Button>}
             <Button size="sm" variant="outline" onClick={print}><Printer className="h-4 w-4" /> Print / Save as PDF</Button>
             {!voided && <Button size="sm" variant="outline" className="text-rose-600 hover:bg-rose-50" onClick={() => setVoiding(true)}><Ban className="h-4 w-4" /> Void</Button>}
           </div>
@@ -135,6 +138,7 @@ export function ReceiptPage() {
         </article>
       </div>
 
+      {emailing && <SendDocumentDialog loc={loc} kind="receipt" documentId={rec.id} contactId={rec.contact_id} clientName={client.name} onClose={() => setEmailing(false)} />}
       {voiding && (
         <ReasonDialog
           title="Void this receipt?"

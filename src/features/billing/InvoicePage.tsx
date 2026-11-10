@@ -1,4 +1,4 @@
-import { ArrowLeft, Ban, HandCoins, Printer } from 'lucide-react'
+import { ArrowLeft, Ban, Mail, HandCoins, Printer } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
@@ -13,6 +13,7 @@ import './doc-print.css'
 import { ReasonDialog } from './BillingDialogs'
 import { RecordPaymentDialog } from './PaymentDialogs'
 import { PracticeLogo } from './PracticeLogo'
+import { SendDocumentDialog } from './SendDocumentDialog'
 
 /**
  * An issued invoice. The document is in SPANISH because the client reads it (the toolbar around it stays in English, as the
@@ -28,6 +29,7 @@ export function InvoicePage() {
   const [inv, setInv] = useState<InvoiceDetail | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'missing'>('loading')
   const [voiding, setVoiding] = useState(false)
+  const [emailing, setEmailing] = useState(false)
   const [paying, setPaying] = useState<ChargeRow[] | null>(null)
 
   const load = useCallback(async () => {
@@ -73,6 +75,7 @@ export function InvoicePage() {
           <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${voided ? 'bg-rose-50 text-rose-700' : paid ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>{voided ? 'Voided' : paid ? 'Paid' : 'Open'}</span>
           <div className="ml-auto flex flex-wrap gap-2">
             {inv.status === 'open' && <Button size="sm" onClick={() => void startPayment()}><HandCoins className="h-4 w-4" /> Record payment</Button>}
+            {!voided && <Button size="sm" variant="outline" onClick={() => setEmailing(true)}><Mail className="h-4 w-4" /> Send by email</Button>}
             <Button size="sm" variant="outline" onClick={print}><Printer className="h-4 w-4" /> Print / Save as PDF</Button>
             {!voided && <Button size="sm" variant="outline" className="text-rose-600 hover:bg-rose-50" onClick={() => setVoiding(true)}><Ban className="h-4 w-4" /> Void</Button>}
           </div>
@@ -162,6 +165,7 @@ export function InvoicePage() {
           onRecorded={(receiptId) => navigate(`/billing/receipts/${receiptId}`)}
         />
       )}
+      {emailing && <SendDocumentDialog loc={loc} kind="invoice" documentId={inv.id} contactId={inv.contact_id} clientName={client.name} onClose={() => setEmailing(false)} />}
       {voiding && (
         <ReasonDialog
           title="Void this invoice?"

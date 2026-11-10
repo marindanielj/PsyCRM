@@ -2501,6 +2501,8 @@ export const api = {
     issueInvoice: (loc: string, input: { contactId: string; chargeIds: string[]; dueOn?: string | null; note?: string; clientAddress?: string }) =>
       req<{ ok: true; invoice: InvoiceDetail }>(`/loc/${loc}/billing/invoices`, { method: 'POST', body: JSON.stringify(input) }),
     invoice: (loc: string, id: string) => req<{ invoice: InvoiceDetail }>(`/loc/${loc}/billing/invoices/${id}`),
+    sendInvoice: (loc: string, id: string, email: string) => req<{ ok: true; emailed: true }>(`/loc/${loc}/billing/invoices/${id}/send`, { method: 'POST', body: JSON.stringify({ email }) }),
+    sendReceipt: (loc: string, id: string, email: string) => req<{ ok: true; emailed: true }>(`/loc/${loc}/billing/receipts/${id}/send`, { method: 'POST', body: JSON.stringify({ email }) }),
     invoicePrinted: (loc: string, id: string) => req<{ ok: true }>(`/loc/${loc}/billing/invoices/${id}/printed`, { method: 'POST' }),
     voidInvoice: (loc: string, id: string, reason: string) =>
       req<{ ok: true }>(`/loc/${loc}/billing/invoices/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),

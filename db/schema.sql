@@ -1992,3 +1992,22 @@ END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS charge_guard ON charges;
 CREATE TRIGGER charge_guard BEFORE UPDATE OR DELETE ON charges
   FOR EACH ROW EXECUTE FUNCTION charge_guard();
+
+-- Invoices and receipts emailed to the client. The email carries only a link; the page behind it asks for a one-time code
+-- sent to the same address. Only the hash of the link token and of the code are stored.
+CREATE TABLE IF NOT EXISTS billing_shares (
+  id             text PRIMARY KEY,
+  location_id    text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id     text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  kind           text NOT NULL CHECK (kind IN ('invoice','receipt')),
+  document_id    text NOT NULL,
+  email          text NOT NULL,
+  token_hash     text NOT NULL UNIQUE,
+  otp_hash       text,
+  otp_expires_at timestamptz,
+  otp_attempts   integer NOT NULL DEFAULT 0,
+  created_by     text NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  expires_at     timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS billing_shares_by_document ON billing_shares(location_id, kind, document_id, created_at DESC);
