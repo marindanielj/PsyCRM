@@ -58,6 +58,8 @@ async function main() {
     // No pg-boss against pglite — run the dispatch in-process so triggers fire
     // (and `wait` steps defer via the runner's default setTimeout) right here.
     dispatch,
+    // Opt-in for trying the Calendar sync settings page locally (DEV_ENABLE_CALENDAR_SYNC=1). The poller does not run here.
+    integrations: process.env.DEV_ENABLE_CALENDAR_SYNC === '1' ? ['calendar_sync'] : [],
   })
 
   // Dev-only helpers, never mounted by the production entry point (server/index.ts).

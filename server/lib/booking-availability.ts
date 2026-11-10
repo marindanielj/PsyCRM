@@ -1,5 +1,6 @@
 import type { Database } from '../db/database'
 import { AppointmentsRepo } from '../repos/appointments-repo'
+import { CalendarSyncRepo } from '../repos/calendar-sync-repo'
 import type { Calendar } from '../repos/calendars-repo'
 import {
   type AvailabilityWindow,
@@ -51,8 +52,8 @@ export function toConfig(cal: Calendar): BookingConfig {
 /**
  * The calendar's busy spans around a local date — its own non-cancelled
  * appointments, widened by a day each side so events crossing local midnight are
- * still counted. Location-scoped through `AppointmentsRepo`, so it can never see
- * another tenant's calendar.
+ * still counted, plus any time blocked in her personal calendar (calendar sync). Location-scoped through the
+ * repos, so it can never see another tenant's calendar.
  */
 export async function calendarBusyFor(
   db: Database,
@@ -65,5 +66,7 @@ export async function calendarBusyFor(
   const fromISO = new Date(midnight.getTime() - ONE_DAY_MS).toISOString()
   const toISO = new Date(midnight.getTime() + 2 * ONE_DAY_MS).toISOString()
   const appts = await new AppointmentsRepo(db, locationId).listByCalendarRange(cal.id, fromISO, toISO)
-  return appts.map((a) => ({ start: new Date(a.starts_at), end: new Date(a.ends_at) }))
+  // Time she has blocked in her own calendar (read by calendar sync) is busy for EVERY calendar of the practice: it is one person.
+  const external = await new CalendarSyncRepo(db, locationId).busyBetween(new Date(fromISO), new Date(toISO))
+  return [...appts.map((a) => ({ start: new Date(a.starts_at), end: new Date(a.ends_at) })), ...external]
 }

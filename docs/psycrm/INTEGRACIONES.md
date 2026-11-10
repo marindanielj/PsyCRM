@@ -12,7 +12,7 @@
 |---|---|---|
 | **Qué controla** | Qué partes del producto ve y puede usar una práctica (menú, páginas, rutas de la API) | Si el servidor **monta** código que envía o recibe datos de un proveedor externo |
 | **Dónde se configura** | Por práctica, en la base de datos: `locations.settings.enabledModules` | Por despliegue, en una variable de entorno: `ENABLED_INTEGRATIONS` |
-| **Valor por defecto** | Contactos, etiquetas, oportunidades, tareas, calendarios, automatizaciones, dashboard, documentos, notas de sesión y auditoría | **Ninguna** |
+| **Valor por defecto** | Contactos, etiquetas, oportunidades, tareas, calendarios, automatizaciones, dashboard, documentos, notas de sesión, auditoría y cobros (`billing`: cargos y superbills, que no envían nada a terceros) | **Ninguna** |
 | **Si está apagado** | El menú no lo muestra, la página redirige al inicio y la API responde 404 | Las rutas **no existen** (404) y no se crea ningún cliente del proveedor |
 | **Código** | `server/lib/modules.ts`, `server/middleware/module-gate.ts` | `server/lib/integrations.ts`, `server/index.ts` |
 
@@ -27,6 +27,7 @@ Valor: nombres separados por comas, por ejemplo `ENABLED_INTEGRATIONS=voice,paym
 | Nombre | Qué monta | Proveedor que recibe datos | Variables / secretos que además necesita |
 |---|---|---|---|
 | `chatwoot` | `POST /api/webhooks/chatwoot` (mensajes entrantes) y el disparador "mensaje recibido" de las automatizaciones | El servidor de Chatwoot y los canales detrás de él (SMS, WhatsApp, email…) | `CHATWOOT_WEBHOOK_SECRET` (≥ 32 caracteres; en producción deja de aceptar el valor de desarrollo) |
+| `calendar_sync` | `GET /cal/<token>.ics` (el feed de la práctica), `/api/loc/:loc/calendar-sync` y el trabajo que lee sus calendarios personales cada 5 minutos | El servidor del calendario cuya dirección ella pega (Google, Apple…). **Solo cruzan bloques de tiempo, nunca datos de clientes** | Ninguno: usa `SESSION_SECRET` para cifrar la dirección que ella pega. Ver §3.1 |
 | `ai` | Cliente de IA (Claude), el worker de respuestas del agente, las rutas del asistente y el canal de texto con aprobación | Anthropic (y el *gateway* de texto) | Clave de Anthropic por práctica; `GATEWAY_TEXT_URL`, `INTERNAL_PUSH_SECRET` |
 | `public_pages` | Páginas públicas de marketing: embudos, formularios, reseñas, cursos, blog, comunidades, encuestas, propuestas, enlaces de seguimiento y afiliados | Ninguno directamente, pero los visitantes envían datos personales a páginas sin sesión | — |
 | `payments` | `/api/public/pay` (avisos de Stripe o Square) | Stripe o Square | Claves del proveedor por práctica |
@@ -56,10 +57,12 @@ Estos módulos están **apagados por defecto** (no están en la lista de arriba 
 | `social` | Facebook, Instagram, LinkedIn, X | — | No debe llevar datos de clientes; revisar el contenido que se publica |
 | `reputation` | Google y Facebook (reseñas) | — | Las reseñas son públicas; no responder con datos clínicos |
 | `sites`, `forms`, `surveys`, `proposals`, `blog`, `communities`, `memberships`, `trigger_links`, `affiliates` | Páginas públicas sin sesión | `public_pages` | Revisar qué datos personales recogen y añadir el texto de privacidad; las páginas públicas llevan un script en línea, por lo que hoy salen **sin** política CSP |
-| `calendar_sync` (semana 2, **por construir**) | Calendarios del teléfono de la terapeuta (Google o iCloud) por URL `.ics`, **sin OAuth** | `calendar_sync` | Sin BAA: solo cruzan bloques de tiempo, nunca datos de clientes (ver §3.1) |
+| `calendar_sync` (**construido**; apagado hasta encenderlo en `ENABLED_INTEGRATIONS`) | Calendarios del teléfono de la terapeuta (Google o iCloud) por URL `.ics`, **sin OAuth** | `calendar_sync` | Sin BAA: solo cruzan bloques de tiempo, nunca datos de clientes (ver §3.1) |
 | `documents` (día 5-6) y la invitación al cliente | Correo de Amazon SES para enviar los enlaces y los códigos (adaptador **ya escrito**; ver [`CORREO_SES.md`](CORREO_SES.md)) | — | Cubierto por el BAA de AWS **si** SES figura en la lista de servicios elegibles (tarea 1.4 de `INFRA_AWS.md`). Falta la cuenta de AWS, la identidad verificada y salir del *sandbox* |
 
-### 3.1 Sincronización de calendario por `.ics` (semana 2)
+### 3.1 Sincronización de calendario por `.ics` (construida)
+
+> **Estado:** construida y probada (spec: [`specs/extra-calendar-sync.md`](specs/extra-calendar-sync.md)). Para usarla hay que añadir `calendar_sync` a `ENABLED_INTEGRATIONS` y seguir el §4. Pantalla: **Settings → Calendar sync**.
 
 **Por qué:** la terapeuta no tiene horario fijo; su calendario de referencia es el del teléfono y las citas se acomodan alrededor de su vida personal. Se necesita ver todo en un solo calendario, sin enviar datos de clientes a Google o Apple.
 
@@ -104,7 +107,19 @@ Para **apagarla** de nuevo basta con quitar el nombre y desplegar: no hace falta
 
 ## 5. Cómo se enciende un módulo para una práctica
 
-Hoy no existe una pantalla para esto (es un pendiente: Settings → Modules). Se hace con una sentencia SQL sobre la práctica, **una vez resueltos los pendientes de su fila en el §3**:
+Hoy no existe una pantalla para esto (es un pendiente: Settings → Modules). Se hace con un comando de una sola vez, **una vez resueltos los pendientes de su fila en el §3** (si el módulo depende de un tercero):
+
+```bash
+DATABASE_URL=… PRACTICE_SLUG=<slug-de-la-practica> MODULE=billing npm run enable-module
+```
+
+Es repetible (si el módulo ya estaba, no cambia nada), solo acepta nombres de módulo válidos (un error de tipeo no se guarda), no toca ningún otro ajuste de la práctica y **deja una línea en el log de auditoría** (`practice.module_enabled`). Imprime la lista de módulos que quedó. En producción se corre como tarea única de ECS: ver [`OPERACIONES.md`](OPERACIONES.md) §2.1.
+
+**Una práctica que ya existía** guarda su lista completa, así que un módulo nuevo (como `billing`, añadido con A4) **no le aparece solo**: hay que encenderlo con este comando. Las prácticas nuevas lo reciben por defecto. Un cambio se nota en unos 5 segundos (la API guarda el resultado en memoria ese tiempo) y en la web al recargar.
+
+Los nombres válidos están en `server/lib/modules.ts`. Si la práctica **no** tiene la clave `enabledModules`, recibe la lista por defecto del §1.
+
+<details><summary>Equivalente en SQL (solo si no se puede usar el comando)</summary>
 
 ```sql
 -- Ver lo que tiene hoy
@@ -113,11 +128,12 @@ SELECT settings->'enabledModules' FROM locations WHERE slug = '<slug-de-la-pract
 -- Fijar la lista completa (reemplaza la anterior; incluya los módulos que ya tenía)
 UPDATE locations
 SET settings = jsonb_set(settings, '{enabledModules}',
-  '["contacts","tags","opportunities","tasks","calendars","automations","reporting","documents","session_notes","audit","marketing"]')
+  '["contacts","tags","opportunities","tasks","calendars","automations","reporting","documents","session_notes","audit","billing"]')
 WHERE slug = '<slug-de-la-practica>';
 ```
 
-Los nombres válidos están en `server/lib/modules.ts`; uno que no exista se ignora. Si la práctica **no** tiene la clave `enabledModules`, recibe la lista por defecto del §1. Un cambio se nota en unos 5 segundos (la API guarda el resultado en memoria ese tiempo) y en la web al recargar.
+Esta vía **no** escribe en el log de auditoría.
+</details>
 
 ---
 

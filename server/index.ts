@@ -14,6 +14,7 @@ import {
   enqueueAgentReply,
   enqueueWorkflowEvent,
   registerAgentReplyWorker,
+  registerCalendarSyncWorker,
   registerWorkflowDispatchWorker,
   startBoss,
 } from './jobs/boss'
@@ -46,7 +47,9 @@ import { authRoute } from './routes/auth'
 import { publicPageRoute } from './routes/public-page'
 import { inquiriesRoute, publicPageAdminRoute } from './routes/public-page-admin'
 import { blogRoute } from './routes/blog'
+import { billingRoute } from './routes/billing'
 import { calendarsRoute } from './routes/calendars'
+import { calendarFeedRoute, calendarSyncRoute } from './routes/calendar-sync'
 import { callsRoute } from './routes/calls'
 import { campaignsRoute } from './routes/campaigns'
 import { communitiesRoute } from './routes/communities'
@@ -161,6 +164,8 @@ const ROUTE_MODULE: Record<string, Module> = {
   proposals: 'proposals',
   'trigger-links': 'trigger_links',
   affiliates: 'affiliates',
+  'calendar-sync': 'calendars',
+  billing: 'billing',
   tasks: 'tasks',
   templates: 'templates',
   tags: 'tags',
@@ -297,6 +302,10 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route('/i', publicInvitesRoute({ db: deps.db, dispatch: deps.dispatch }))
   // A practice's public page and its request form. Off until the practice publishes it; a request lands in an inbox, not in a record.
   app.route('/p', publicPageRoute({ db: deps.db, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
+  if (on.has('calendar_sync')) {
+    // The practice's .ics feed. No session: the unguessable token in the address is the credential. Only generic time blocks.
+    app.route('/cal', calendarFeedRoute({ db: deps.db }))
+  }
   app.route('/api/public/booking', publicBookingRoute({ db: deps.db, dispatch: deps.dispatch, requireDateOfBirth: true }))
 
   app.use('/api/locations', auth())
@@ -334,7 +343,13 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // delete of pipelines and their stages, with guarded deletes (never a silent
   // cascade over live deals).
   app.route('/api/loc/:loc/pipelines', pipelinesRoute({ db: deps.db }))
-  app.route('/api/loc/:loc/calendars', calendarsRoute({ db: deps.db, dispatch: deps.dispatch }))
+  app.route('/api/loc/:loc/calendars', calendarsRoute({ db: deps.db, dispatch: deps.dispatch, externalBusy: on.has('calendar_sync') }))
+  if (on.has('calendar_sync')) {
+    // Settings -> Calendar sync: her feed address and the personal calendars PsyCRM reads for busy time.
+    app.route('/api/loc/:loc/calendar-sync', calendarSyncRoute({ db: deps.db, secret: deps.sessionSecret, publicBaseUrl: deps.publicBaseUrl }))
+  }
+  // Charges and superbills (A4). Bookkeeping only: nothing here moves money or leaves the system.
+  app.route('/api/loc/:loc/billing', billingRoute({ db: deps.db, secret: deps.sessionSecret }))
   app.route('/api/loc/:loc/campaigns', campaignsRoute({ db: deps.db }))
   app.route('/api/loc/:loc/workflows', workflowsRoute({ db: deps.db }))
   app.route('/api/loc/:loc/reporting', reportingRoute({ db: deps.db }))
@@ -504,6 +519,8 @@ async function bootstrap() {
     await registerAgentReplyWorker(boss, { db, claude, dispatch })
   }
   await registerWorkflowDispatchWorker(boss, { db, dispatch, publicBaseUrl: config.PUBLIC_BASE_URL })
+  // Reads the therapist's personal calendars for busy time every few minutes (only when calendar sync is on).
+  if (has('calendar_sync')) await registerCalendarSyncWorker(boss, { db, secret: config.SESSION_SECRET })
 
   const app = createApp({
     db,

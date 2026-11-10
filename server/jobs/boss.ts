@@ -1,11 +1,15 @@
 import { nanoid } from 'nanoid'
 import { PgBoss } from 'pg-boss'
 import { type AgentReplyDeps, type AgentReplyPayload, handleAgentReply } from './agent-reply'
+import { type SyncDeps, syncDue } from '../lib/calendar-sync'
 import { type WorkflowEvent, dispatchWorkflowEvent } from './workflow-dispatcher'
 import type { WorkflowRunnerDeps } from './workflow-runner'
 
 export const AGENT_REPLY_QUEUE = 'agent.reply.dispatch'
 export const WORKFLOW_DISPATCH_QUEUE = 'workflow.dispatch'
+export const CALENDAR_SYNC_QUEUE = 'calendar.sync'
+/** Every five minutes; a calendar is only re-read once its last attempt is older than SYNC_MIN_AGE_MS, so a pass is cheap. */
+export const CALENDAR_SYNC_CRON = '*/5 * * * *'
 
 // Where a job lands once it has exhausted every retry. pg-boss copies the failed
 // job's payload here instead of letting it vanish, so a reply or automation that
@@ -105,4 +109,17 @@ export async function registerWorkflowDispatchWorker(
 export async function enqueueWorkflowEvent(boss: PgBoss, event: WorkflowEvent): Promise<void> {
   // The id lets a retried job pick its runs back up instead of repeating their steps.
   await boss.send(WORKFLOW_DISPATCH_QUEUE, { ...event, eventId: event.eventId ?? nanoid() })
+}
+
+/**
+ * Start the calendar-sync poller: a scheduled tick that reads every personal calendar that is due. Only registered when the
+ * `calendar_sync` integration is on. A tick that fails is simply the next tick's work (no retries needed: the data is
+ * re-read from scratch each time), so the queue keeps pg-boss's default policy.
+ */
+export async function registerCalendarSyncWorker(boss: PgBoss, deps: SyncDeps): Promise<void> {
+  await boss.createQueue(CALENDAR_SYNC_QUEUE)
+  await boss.schedule(CALENDAR_SYNC_QUEUE, CALENDAR_SYNC_CRON)
+  await boss.work(CALENDAR_SYNC_QUEUE, SINGLE_JOB, async () => {
+    await syncDue(deps)
+  })
 }

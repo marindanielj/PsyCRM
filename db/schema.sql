@@ -1663,3 +1663,165 @@ CREATE TABLE IF NOT EXISTS inquiries (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS inquiries_by_location ON inquiries(location_id, status, created_at DESC);
+
+-- Calendar sync by .ics (INTEGRACIONES.md §3.1). Only TIME BLOCKS cross in either direction: never a client name,
+-- title, reason or note.
+--
+-- Outbound: one secret feed URL per practice, which the therapist subscribes to from her phone. Only the SHA-256 of the
+-- token is stored, so a database copy cannot reveal a working URL; regenerating replaces the hash and revoking deletes the row.
+CREATE TABLE IF NOT EXISTS calendar_feeds (
+  location_id     text PRIMARY KEY REFERENCES locations(id) ON DELETE CASCADE,
+  token_hash      text NOT NULL UNIQUE,
+  title           text NOT NULL DEFAULT 'Cita' CHECK (title IN ('Cita','Ocupado')),
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  rotated_at      timestamptz,
+  last_fetched_at timestamptz,
+  fetch_count     bigint NOT NULL DEFAULT 0
+);
+
+-- Inbound: the secret .ics address of the therapist's personal calendar. The address IS the credential (anyone holding it can
+-- read that calendar), so it is stored sealed (AES-256-GCM, key derived from SESSION_SECRET) and never returned by the API.
+CREATE TABLE IF NOT EXISTS external_calendars (
+  id             text PRIMARY KEY,
+  location_id    text NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  label          text NOT NULL DEFAULT 'My calendar' CHECK (char_length(label) BETWEEN 1 AND 60),
+  url_sealed     text NOT NULL,
+  host           text NOT NULL,                       -- shown to the person ("calendar.google.com"); the path is the secret
+  enabled        boolean NOT NULL DEFAULT true,
+  last_synced_at timestamptz,
+  last_attempt_at timestamptz,
+  last_status    text CHECK (last_status IN ('ok','error')),
+  last_error     text CHECK (last_error IN ('blocked_address','not_https','unreachable','timeout','http_error','too_large','not_calendar','too_many_redirects','secret_unreadable')),
+  block_count    int NOT NULL DEFAULT 0,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS external_calendars_by_location ON external_calendars(location_id);
+
+-- The busy blocks read from those calendars: START AND END ONLY. Each sync replaces a calendar's whole set.
+CREATE TABLE IF NOT EXISTS external_busy (
+  id                   bigserial PRIMARY KEY,
+  location_id          text NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  external_calendar_id text NOT NULL REFERENCES external_calendars(id) ON DELETE CASCADE,
+  starts_at            timestamptz NOT NULL,
+  ends_at              timestamptz NOT NULL CHECK (ends_at > starts_at)
+);
+CREATE INDEX IF NOT EXISTS external_busy_by_time ON external_busy(location_id, starts_at);
+CREATE INDEX IF NOT EXISTS external_busy_by_calendar ON external_busy(external_calendar_id);
+
+-- Billing (A4): charges and superbills. This only WRITES DOWN what already happened: it never charges a card or moves money.
+-- A superbill is the statement a client sends their insurer to ask for out-of-network reimbursement.
+
+-- An issued superbill is frozen: `snapshot` holds exactly what was issued (provider, client, diagnoses, lines, totals).
+-- The only change the database allows is voiding it, with a reason; it is never deleted.
+CREATE TABLE IF NOT EXISTS superbills (
+  id          text PRIMARY KEY,
+  location_id text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id  text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  number      text NOT NULL,
+  period_from date NOT NULL,
+  period_to   date NOT NULL,
+  snapshot    jsonb NOT NULL,
+  issued_at   timestamptz NOT NULL DEFAULT now(),
+  issued_by   text NOT NULL,
+  voided_at   timestamptz,
+  voided_by   text,
+  void_reason text,
+  CONSTRAINT superbill_void_complete CHECK ((voided_at IS NULL) = (void_reason IS NULL)),
+  CONSTRAINT superbill_period CHECK (period_to >= period_from)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS superbills_number ON superbills(location_id, number);
+CREATE INDEX IF NOT EXISTS superbills_by_contact ON superbills(location_id, contact_id, issued_at DESC);
+
+CREATE OR REPLACE FUNCTION superbill_guard() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'superbill_no_delete' USING ERRCODE = 'P0001';
+  END IF;
+  IF OLD.voided_at IS NOT NULL THEN
+    RAISE EXCEPTION 'superbill_voided' USING ERRCODE = 'P0001';
+  END IF;
+  -- Voiding is the one thing allowed; everything else about an issued superbill is frozen.
+  IF (to_jsonb(NEW) - ARRAY['voided_at','voided_by','void_reason'])
+     <> (to_jsonb(OLD) - ARRAY['voided_at','voided_by','void_reason']) THEN
+    RAISE EXCEPTION 'superbill_immutable' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS superbill_guard ON superbills;
+CREATE TRIGGER superbill_guard BEFORE UPDATE OR DELETE ON superbills
+  FOR EACH ROW EXECUTE FUNCTION superbill_guard();
+
+-- One line per session. Money is whole cents, never a decimal.
+CREATE TABLE IF NOT EXISTS charges (
+  id               text PRIMARY KEY,
+  location_id      text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id       text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  -- Informational, deliberately NOT a foreign key: deleting an appointment must never touch a charge that may be on a superbill.
+  appointment_id   text,
+  session_note_id  text REFERENCES session_notes(id) ON DELETE SET NULL,
+  service_date     date NOT NULL,
+  cpt_code         text NOT NULL CHECK (cpt_code ~ '^([0-9]{4}[0-9FT]|[A-Z][0-9]{4})$'),
+  modifiers        text[] NOT NULL DEFAULT '{}',
+  place_of_service text NOT NULL DEFAULT '11' CHECK (place_of_service ~ '^[0-9]{2}$'),
+  units            int NOT NULL DEFAULT 1 CHECK (units BETWEEN 1 AND 99),
+  diagnosis_codes  text[] NOT NULL DEFAULT '{}' CHECK (cardinality(diagnosis_codes) <= 12),
+  fee_cents        int NOT NULL CHECK (fee_cents >= 0),
+  paid_cents       int NOT NULL DEFAULT 0 CHECK (paid_cents >= 0),
+  paid_at          timestamptz,
+  payment_method   text CHECK (payment_method IN ('cash','card','check','transfer','other')),
+  superbill_id     text REFERENCES superbills(id) ON DELETE RESTRICT,
+  created_by       text NOT NULL,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  voided_at        timestamptz,
+  voided_by        text,
+  void_reason      text,
+  CONSTRAINT charge_not_overpaid CHECK (paid_cents <= fee_cents),
+  CONSTRAINT charge_payment_complete CHECK (paid_cents = 0 OR (payment_method IS NOT NULL AND paid_at IS NOT NULL)),
+  CONSTRAINT charge_void_complete CHECK ((voided_at IS NULL) = (void_reason IS NULL))
+);
+CREATE INDEX IF NOT EXISTS charges_by_contact ON charges(location_id, contact_id, service_date DESC);
+CREATE INDEX IF NOT EXISTS charges_by_superbill ON charges(superbill_id) WHERE superbill_id IS NOT NULL;
+-- A signed note has at most one LIVE charge (a voided one frees the note).
+CREATE UNIQUE INDEX IF NOT EXISTS charges_one_per_note ON charges(session_note_id) WHERE session_note_id IS NOT NULL AND voided_at IS NULL;
+
+CREATE OR REPLACE FUNCTION charge_guard() RETURNS trigger AS $$
+DECLARE
+  old_sb superbills%ROWTYPE;
+  new_sb superbills%ROWTYPE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'charge_no_delete' USING ERRCODE = 'P0001';
+  END IF;
+  NEW.id := OLD.id; NEW.location_id := OLD.location_id; NEW.contact_id := OLD.contact_id;
+  NEW.created_at := OLD.created_at; NEW.created_by := OLD.created_by;
+  IF OLD.voided_at IS NOT NULL THEN
+    RAISE EXCEPTION 'charge_voided' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- While the charge sits on a live superbill, only the payment may change.
+  IF OLD.superbill_id IS NOT NULL THEN
+    SELECT * INTO old_sb FROM superbills WHERE id = OLD.superbill_id;
+    IF old_sb.voided_at IS NULL THEN
+      IF NEW.superbill_id IS DISTINCT FROM OLD.superbill_id OR NEW.voided_at IS NOT NULL
+         OR (to_jsonb(NEW) - ARRAY['paid_cents','paid_at','payment_method','updated_at'])
+            <> (to_jsonb(OLD) - ARRAY['paid_cents','paid_at','payment_method','updated_at']) THEN
+        RAISE EXCEPTION 'charge_issued' USING ERRCODE = 'P0001';
+      END IF;
+    END IF;
+  END IF;
+
+  -- Attaching to a superbill: it must be live and belong to the same client and practice.
+  IF NEW.superbill_id IS NOT NULL AND NEW.superbill_id IS DISTINCT FROM OLD.superbill_id THEN
+    SELECT * INTO new_sb FROM superbills WHERE id = NEW.superbill_id;
+    IF NOT FOUND OR new_sb.voided_at IS NOT NULL OR new_sb.contact_id <> NEW.contact_id OR new_sb.location_id <> NEW.location_id THEN
+      RAISE EXCEPTION 'charge_superbill_mismatch' USING ERRCODE = 'P0001';
+    END IF;
+  END IF;
+
+  NEW.updated_at := now();
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS charge_guard ON charges;
+CREATE TRIGGER charge_guard BEFORE UPDATE OR DELETE ON charges
+  FOR EACH ROW EXECUTE FUNCTION charge_guard();

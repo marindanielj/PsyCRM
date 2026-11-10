@@ -1,5 +1,5 @@
 import { ArrowLeft, CalendarDays, ChevronDown, ExternalLink, Globe, MapPin, Plus, Settings2 } from 'lucide-react'
-import { type FormEvent, useEffect, useMemo, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
@@ -89,6 +89,7 @@ export function CalendarsPage() {
   // picker; the back button surfaces the picker. Desktop shows both panes.
   const [agendaOpen, setAgendaOpen] = useState(true)
   const [view, setView] = useState<'agenda' | 'month'>('month')
+  const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
     if (!loc) return
@@ -151,10 +152,15 @@ export function CalendarsPage() {
 
   async function createAppt(input: NewAppointment) {
     if (!loc) return
-    await api.createAppointment(loc, input)
+    const r = await api.createAppointment(loc, input)
     setShowDialog(false)
+    // Booking over her own personal calendar is allowed, but she should know.
+    setNotice(r.warnings?.includes('overlaps_personal_calendar') ? 'Booked. That time overlaps something in your personal calendar.' : null)
     await reload()
   }
+
+  // Grey "Busy" blocks from her personal calendar. Stable identity so the month view does not refetch on every render.
+  const loadBusy = useCallback((from: string, to: string) => api.calendarSync.busy(loc ?? '', from, to).then((r) => r.blocks), [loc])
 
   async function createCalendar(e: FormEvent) {
     e.preventDefault()
@@ -333,6 +339,13 @@ export function CalendarsPage() {
           </div>
         </header>
 
+        {notice && (
+          <div role="status" className="flex items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 lg:px-6">
+            <span>{notice}</span>
+            <button type="button" className="text-xs font-medium underline" onClick={() => setNotice(null)}>Dismiss</button>
+          </div>
+        )}
+
         <TodayPanel />
 
         {calendars.length === 0 ? (
@@ -348,7 +361,7 @@ export function CalendarsPage() {
             </Button>
           </div>
         ) : view === 'month' ? (
-          <MonthView appts={filtered} calendars={calById} onStatus={setStatusOf} contactName={contactName} />
+          <MonthView appts={filtered} calendars={calById} onStatus={setStatusOf} contactName={contactName} loadBusy={loadBusy} />
         ) : (
           <div className="ol-scroll min-h-0 flex-1 overflow-y-auto bg-slate-50 px-3 py-4 lg:px-6 lg:py-5">
             {filtered.length === 0 ? (

@@ -289,7 +289,7 @@ Los specs de cada día están en [`specs/`](specs/README.md). La infraestructura
 | A1 | **Recordatorios de citas** por SMS/email (24 h y 2 h antes) + confirmación | `workflows` + `wait` + `lib/sending` (Twilio/Brevo) | Menos ausencias (no-shows), el problema #1 de las prácticas privadas |
 | A2 | **Instrumentos estandarizados** (PHQ-9, GAD-7, PCL-5, ORS/SRS) con puntuación automática y gráfica de tendencia por cliente | `surveys` + `survey_submissions` + `reporting` | Cuidado basado en medición; muchas aseguradoras lo valoran |
 | A3 | **Autoagendamiento** con cuestionario de cribado previo | Reserva pública (`public-booking.ts`) + `forms` | Llena la agenda sin llamadas |
-| A4 | **Facturación y superbills** (CPT 90791/90834/90837, ICD-10, NPI) para que el cliente pida reembolso a su seguro | `invoices`, `products`, `payments` (Stripe/Square) | Cobro y reembolso sin un sistema aparte |
+| A4 | **Facturación y superbills** (CPT 90791/90834/90837, ICD-10, NPI) para que el cliente pida reembolso a su seguro. ✅ **Hecha**: [`specs/extra-billing-superbills.md`](specs/extra-billing-superbills.md). No reutiliza `invoices`/`payments` (arrastran Stripe/Square y no guardan CPT ni diagnóstico por servicio) sino un libro de cargos propio, módulo `billing` | Notas de sesión firmadas, perfil de la práctica | Cobro y reembolso sin un sistema aparte; no factura a aseguradoras (eso es B6) |
 | A5 | **Cobro con tarjeta guardada** y política de cancelación tardía | `subscriptions`, `payments`, `coupons` | Cobra las cancelaciones tardías automáticamente |
 | A6 | **Dashboard clínico**: casos activos, notas sin firmar o por bloquearse, ausencias, ingresos, documentos pendientes | `reporting-repo.ts` | Visión diaria de la práctica |
 | A7 | **Plantillas de cartas** (asistencia, referido, alta) con merge fields | `templates` + `merge-fields.ts` | Ahorra tiempo administrativo |
@@ -313,6 +313,7 @@ Los specs de cada día están en [`specs/`](specs/README.md). La infraestructura
 | B8 | **Exportación del expediente completo** (PDF firmado) para solicitudes del cliente o de un tribunal | Derecho de acceso (HIPAA §164.524) |
 | B9 | **Multiusuario con roles** (terapeuta, asistente administrativo sin acceso a notas, supervisor con co-firma de internos) | Crecimiento de la práctica |
 | B10 | **Cifrado a nivel de campo** de notas y MSE (claves en KMS) + MFA obligatorio + alertas de acceso inusual | Defensa en profundidad para PHI |
+| B11 | **Nota de primera sesión (intake)**: variante de la nota de sesión con consentimientos verificados desde los documentos firmados, historia clínica, formulación, impresión diagnóstica y metas iniciales. Reutiliza el riesgo, el MSE y el bloqueo de 72 h. Ver [`specs/future-intake-notes.md`](specs/future-intake-notes.md) | Alimenta el plan de tratamiento (B1) y la bandera de riesgo; es el primer paso del expediente clínico |
 
 ### C. Expansión futura: todo bilingüe (español / inglés)
 
@@ -323,6 +324,6 @@ Los specs de cada día están en [`specs/`](specs/README.md). La infraestructura
 | C3 | Interfaz de la terapeuta | i18n del SPA (`react-i18next` o similar), con selector de idioma por usuario |
 | C4 | Reportes clínicos | Etiquetas del reporte de notas, MSE y riesgo en ES/EN (lo que se escribe en la nota queda en el idioma original) |
 
-**Semana 2 (ya definida en los specs, día 8 §6):** MFA → esperas durables en workflows → **reconsentimiento al cumplir 18** → versiones en inglés del onboarding (C1) → PDF del expediente → **sincronización de calendario por `.ics`** (feed de salida con título genérico y lectura de ocupado/libre; ver [`INTEGRACIONES.md`](INTEGRACIONES.md) §3.1).
+**Semana 2 (ya definida en los specs, día 8 §6):** MFA → esperas durables en workflows → **reconsentimiento al cumplir 18** → versiones en inglés del onboarding (C1) → PDF del expediente → **sincronización de calendario por `.ics`** (feed de salida con título genérico y lectura de ocupado/libre; ver [`INTEGRACIONES.md`](INTEGRACIONES.md) §3.1). ✅ Hecha: [`specs/extra-calendar-sync.md`](specs/extra-calendar-sync.md).
 
 **Prioridad sugerida después del MVP:** A1 → C1 → B1 → A2 → A4/A5 → B2 → B3 → A6 → el resto. **A12** (constructor de páginas) entra cuando se necesite una segunda página pública o el inglés (C2); hasta entonces la página pública actual alcanza.

@@ -29,6 +29,7 @@ export type ModuleKey =
   | 'documents'
   | 'session_notes'
   | 'audit'
+  | 'billing'
 
 /** True when the location has the module on. A location object without the list
  *  (an older server) is treated as "everything on", i.e. the original product. */

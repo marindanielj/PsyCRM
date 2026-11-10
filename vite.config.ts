@@ -14,6 +14,8 @@ export default defineConfig({
       '^/d/.*': { target: 'http://localhost:8790', changeOrigin: true },
       '^/i/.*': { target: 'http://localhost:8790', changeOrigin: true },
       '^/brand/.*': { target: 'http://localhost:8790', changeOrigin: true },
+      // the practice's .ics calendar feed
+      '^/cal/.*': { target: 'http://localhost:8790', changeOrigin: true },
       // a practice's public page and its request form
       '^/p/.*': { target: 'http://localhost:8790', changeOrigin: true },
     },

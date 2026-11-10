@@ -1,0 +1,36 @@
+/* Printing a superbill: only the document, as a clean letter-size page. The app frame is released by the shared
+   `.ol-print-reset` / `.ol-noprint` rules in session-notes/note-print.css. */
+
+.superbill-doc {
+  font-family: Georgia, 'Times New Roman', serif;
+}
+
+@media print {
+  .superbill-doc {
+    box-shadow: none !important;
+    border: 0 !important;
+    margin: 0 !important;
+    padding: 0 0 22pt !important;
+    max-width: none !important;
+    font-size: 10.5pt;
+    line-height: 1.35;
+    color: #000;
+  }
+  .superbill-doc section,
+  .superbill-doc tr {
+    break-inside: avoid;
+  }
+  .superbill-doc thead {
+    display: table-header-group;
+  }
+  .superbill-doc .sb-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    font-size: 8pt;
+    color: #555;
+    border-top: 1px solid #bbb;
+    padding-top: 4pt;
+  }
+}
