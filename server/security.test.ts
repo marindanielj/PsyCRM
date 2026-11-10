@@ -90,6 +90,10 @@ test('every console call in the server logs a code or a fixed message, never a r
     /console\.log\($/, // db/seed-practice.ts: the practice id (multi-line call)
     /console\.log\(`psycrm: documents seeded/,
     /console\.error\(err instanceof Error \? err\.message : err\)/, // seed scripts, run by an administrator
+    // db/enable-module.ts (an administrator's one-off command): fixed sentences, the module names from the closed list, and a usage message or a database error CODE
+    /console\.(log|error)\('enable-module: (module turned on|already on, nothing changed|unknown module name|no practice with that slug)'\)/,
+    /console\.log\(`enable-module: modules now: \$\{r\.modules\.join\(', '\)\}`\)/,
+    /console\.error\('enable-module failed:', err instanceof UsageError/,
   ]
   const offenders = calls.filter((c) => !allowed.some((re) => re.test(c.line)))
   expect(offenders, JSON.stringify(offenders, null, 1)).toEqual([])
