@@ -236,7 +236,7 @@ test('a superbill cannot be issued with anything missing, and the answer says ex
   const r = await s.call(s.A, 'POST', '/superbills', { contactId: 'c1', chargeIds: [ok, noDx, free] })
   expect(r.status).toBe(422)
   expect(r.body.error).toBe('incomplete')
-  expect(r.body.missing).toEqual(expect.arrayContaining([{ code: 'provider_npi' }, { code: 'provider_tax_id' }, { code: 'charge_no_diagnosis', chargeId: noDx }, { code: 'charge_zero_fee', chargeId: free }]))
+  expect(r.body.missing).toEqual(expect.arrayContaining([{ code: 'provider_npi' }, { code: 'charge_no_diagnosis', chargeId: noDx }, { code: 'charge_zero_fee', chargeId: free }]))
   expect(r.body.missing).not.toContainEqual({ code: 'practice_license' }) // that one is set
   expect(await s.db.query('SELECT 1 FROM superbills')).toHaveLength(0)
 
@@ -246,6 +246,16 @@ test('a superbill cannot be issued with anything missing, and the answer says ex
   await s.db.query("UPDATE locations SET settings = jsonb_set(settings, '{practice}', $2::jsonb) WHERE id = $1", [s.locA, JSON.stringify({ ...PRACTICE, license: '', address: '' })])
   const r2 = await s.call(s.A, 'POST', '/superbills', { contactId: 'c2', chargeIds: [c2] })
   expect(r2.body.missing.map((m: any) => m.code).sort()).toEqual(['client_date_of_birth', 'practice_address', 'practice_license'])
+})
+
+test('the tax id is optional: a superbill issues without one and carries no tax id', async () => {
+  const s = await setup()
+  await s.call(s.A, 'PUT', '/profile', { npi: NPI })
+  const id = (await s.call(s.A, 'POST', '/charges', s.charge())).body.charge.id
+  const r = await s.call(s.A, 'POST', '/superbills', { contactId: 'c1', chargeIds: [id] })
+  expect(r.status).toBe(201)
+  expect(r.body.superbill.snapshot.provider.taxId).toBeNull()
+  expect(r.body.superbill.snapshot.provider.taxIdLast4).toBe('')
 })
 
 test('issuing freezes a complete superbill: numbered, with diagnosis letters, pointers and totals', async () => {

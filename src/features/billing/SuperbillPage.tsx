@@ -97,7 +97,7 @@ export function SuperbillPage() {
               <dl className="mt-2 text-sm">
                 <div><dt className="inline text-slate-500">License: </dt><dd className="inline">{provider.license}</dd></div>
                 <div><dt className="inline text-slate-500">NPI: </dt><dd className="inline font-mono">{provider.npi}</dd></div>
-                <div><dt className="inline text-slate-500">{provider.taxIdType === 'ssn' ? 'SSN' : 'EIN'}: </dt><dd className="inline font-mono">{provider.taxId ?? `ending ${provider.taxIdLast4}`}</dd></div>
+                {(provider.taxId || provider.taxIdLast4) && <div><dt className="inline text-slate-500">{provider.taxIdType === 'ssn' ? 'SSN' : 'EIN'}: </dt><dd className="inline font-mono">{provider.taxId ?? `ending ${provider.taxIdLast4}`}</dd></div>}
                 {provider.taxonomy && <div><dt className="inline text-slate-500">Taxonomy: </dt><dd className="inline font-mono">{provider.taxonomy}</dd></div>}
               </dl>
             </section>

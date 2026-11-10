@@ -510,7 +510,7 @@ export class SuperbillsRepo {
       if (!practice.license.trim()) missing.push({ code: 'practice_license' })
       if (!practice.address.trim()) missing.push({ code: 'practice_address' })
       if (!billing.npi) missing.push({ code: 'provider_npi' })
-      if (!billing.hasTaxId) missing.push({ code: 'provider_tax_id' })
+      // The tax id is optional: a superbill without one is issued with that line left off.
       if (!contact.dob) missing.push({ code: 'client_date_of_birth' })
       for (const c of charges) {
         if (c.diagnosis_codes.length === 0) missing.push({ code: 'charge_no_diagnosis', chargeId: c.id })

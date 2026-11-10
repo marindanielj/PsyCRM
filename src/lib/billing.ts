@@ -19,7 +19,6 @@ export const MISSING_MESSAGES: Record<string, string> = {
   practice_license: 'Add your license number in Settings → Practice.',
   practice_address: 'Add the practice address in Settings → Practice.',
   provider_npi: 'Add your NPI in Settings → Billing.',
-  provider_tax_id: 'Add your tax ID (EIN or SSN) in Settings → Billing.',
   client_date_of_birth: 'This client has no date of birth on file.',
   charge_no_diagnosis: 'A charge has no diagnosis code. Edit it and add one.',
   charge_zero_fee: 'A charge has no fee. Edit it and set the amount.',
