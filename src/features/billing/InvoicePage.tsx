@@ -12,6 +12,7 @@ import '../session-notes/note-print.css'
 import './doc-print.css'
 import { ReasonDialog } from './BillingDialogs'
 import { RecordPaymentDialog } from './PaymentDialogs'
+import { PracticeLogo } from './PracticeLogo'
 
 /**
  * An issued invoice. The document is in SPANISH because the client reads it (the toolbar around it stays in English, as the
@@ -82,9 +83,12 @@ export function InvoicePage() {
         {voided && <p className="ol-noprint mx-auto mb-4 max-w-[8.5in] rounded-lg bg-rose-50 px-4 py-2 text-sm text-rose-800">This invoice was voided{inv.void_reason ? `: ${inv.void_reason}` : ''}. Its charges are free to put on a new one.</p>}
         <article lang="es" className="billing-doc mx-auto max-w-[8.5in] rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
           <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-300 pb-3">
-            <div>
-              <h1 className="text-xl font-bold text-slate-900">Factura</h1>
-              <p className="text-sm font-semibold text-slate-800">{provider.practiceName || provider.name}</p>
+            <div className="flex items-start gap-4">
+              <PracticeLogo loc={loc} />
+              <div>
+                <h1 className="text-xl font-bold text-slate-900">Factura</h1>
+                <p className="text-sm font-semibold text-slate-800">{provider.practiceName || provider.name}</p>
+              </div>
             </div>
             <div className="text-right text-sm">
               <div className="font-mono font-semibold">{inv.number}</div>

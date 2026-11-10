@@ -11,6 +11,7 @@ import { useTenant } from '../../state/location'
 import '../session-notes/note-print.css'
 import './doc-print.css'
 import { ReasonDialog } from './BillingDialogs'
+import { PracticeLogo } from './PracticeLogo'
 
 const PLACE_LABELS: Record<string, string> = { '11': 'Office', '10': 'Telehealth (home)', '02': 'Telehealth' }
 
@@ -72,9 +73,12 @@ export function SuperbillPage() {
         <article className="billing-doc mx-auto max-w-[8.5in] rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
           <p className="text-center text-[10px] font-semibold uppercase tracking-widest text-slate-500">Confidential — Protected health information</p>
           <header className="mt-2 flex flex-wrap items-start justify-between gap-4 border-b border-slate-300 pb-3">
-            <div>
-              <h1 className="text-xl font-bold text-slate-900">Superbill</h1>
-              <p className="text-sm text-slate-600">Statement of services for out-of-network reimbursement</p>
+            <div className="flex items-start gap-4">
+              <PracticeLogo loc={loc} />
+              <div>
+                <h1 className="text-xl font-bold text-slate-900">Superbill</h1>
+                <p className="text-sm text-slate-600">Statement of services for out-of-network reimbursement</p>
+              </div>
             </div>
             <div className="text-right text-sm">
               <div className="font-mono font-semibold">{sb.number}</div>

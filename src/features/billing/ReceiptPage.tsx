@@ -11,6 +11,7 @@ import { useTenant } from '../../state/location'
 import '../session-notes/note-print.css'
 import './doc-print.css'
 import { ReasonDialog } from './BillingDialogs'
+import { PracticeLogo } from './PracticeLogo'
 
 /**
  * A receipt: the proof of one payment. Written in SPANISH for the client, and frozen as issued. It says what was paid, when and
@@ -70,9 +71,12 @@ export function ReceiptPage() {
         {voided && <p className="ol-noprint mx-auto mb-4 max-w-[8.5in] rounded-lg bg-rose-50 px-4 py-2 text-sm text-rose-800">This receipt was voided{rec.void_reason ? `: ${rec.void_reason}` : ''}. The payments it proved were voided with it.</p>}
         <article lang="es" className="billing-doc mx-auto max-w-[8.5in] rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
           <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-300 pb-3">
-            <div>
-              <h1 className="text-xl font-bold text-slate-900">Recibo de pago</h1>
-              <p className="text-sm font-semibold text-slate-800">{provider.practiceName || provider.name}</p>
+            <div className="flex items-start gap-4">
+              <PracticeLogo loc={loc} />
+              <div>
+                <h1 className="text-xl font-bold text-slate-900">Recibo de pago</h1>
+                <p className="text-sm font-semibold text-slate-800">{provider.practiceName || provider.name}</p>
+              </div>
             </div>
             <div className="text-right text-sm">
               <div className="font-mono font-semibold">{rec.number}</div>
