@@ -2,8 +2,8 @@ import { type ReactNode, useState } from 'react'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
-import { ApiError, type BillingMeta, type ChargeInput, type ChargeRow, type ChargeSuggestion, type MissingItem, type PaymentMethod, api } from '../../lib/api'
-import { PAYMENT_LABELS, billingMessage, centsToInput, dollarsToCents, describeMissing } from '../../lib/billing'
+import { ApiError, type BillingMeta, type ChargeInput, type ChargeRow, type ChargeSuggestion, type MissingItem, api } from '../../lib/api'
+import { billingMessage, centsToInput, dollarsToCents, describeMissing } from '../../lib/billing'
 import { formatMoneyExact } from '../../lib/utils'
 
 export function Modal({ title, children, onClose, wide }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
@@ -27,7 +27,7 @@ function Footer({ onClose, children }: { onClose: () => void; children: ReactNod
 }
 
 /** A short code from the API, or a generic line when the form itself was malformed (HTTP 400). */
-function apiMessage(e: unknown): string {
+export function apiMessage(e: unknown): string {
   if (e instanceof ApiError) return e.status === 400 ? 'Check the form: codes must look like 90834 and F41.1, and the fee must be an amount.' : billingMessage(e.message)
   return billingMessage(undefined)
 }
@@ -171,59 +171,9 @@ export function ChargeDialog({ loc, meta, contacts, draft, editingId, onClose, o
   )
 }
 
-// --- record a payment ----------------------------------------------------------------------------------------------
+// (Recording a payment, and issuing an invoice, live in PaymentDialogs.tsx.)
 
-export function PaymentDialog({ loc, charge, onClose, onSaved }: { loc: string; charge: ChargeRow; onClose: () => void; onSaved: () => void }) {
-  const [amount, setAmount] = useState(centsToInput(charge.paid_cents > 0 ? charge.paid_cents : charge.fee_cents))
-  const [method, setMethod] = useState<PaymentMethod>(charge.payment_method ?? 'card')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const cents = dollarsToCents(amount)
-
-  async function save(total: number) {
-    if (busy) return
-    setBusy(true)
-    setError(null)
-    try {
-      await api.billing.setPayment(loc, charge.id, total, total > 0 ? method : null)
-      onSaved()
-    } catch (e) {
-      setError(apiMessage(e))
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Modal title="Record payment" onClose={onClose}>
-      <p className="mt-1 text-sm text-slate-600">{charge.contact_name ?? 'Client'} · {charge.cpt_code} · fee {formatMoneyExact(charge.fee_cents)}</p>
-      <div className="mt-4 space-y-4">
-        <div>
-          <Label htmlFor="pay-amount">Total paid so far ($)</Label>
-          <Input id="pay-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
-          <p className="mt-1 text-xs text-slate-500">This is the whole amount paid, not an extra payment. Change it to correct a mistake.</p>
-          {amount.trim() !== '' && cents === null && <p role="alert" className="mt-1 text-xs font-medium text-rose-600">Use an amount like 110 or 110.50.</p>}
-          {cents !== null && cents > charge.fee_cents && <p role="alert" className="mt-1 text-xs font-medium text-rose-600">That is more than the fee.</p>}
-        </div>
-        <div>
-          <Label htmlFor="pay-method">How it was paid</Label>
-          <select id="pay-method" value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
-            {Object.entries(PAYMENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        </div>
-      </div>
-      {error && <p role="alert" className="mt-3 text-sm font-medium text-rose-600">{error}</p>}
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
-        <Button type="button" variant="ghost" disabled={busy || charge.paid_cents === 0} onClick={() => void save(0)}>Clear payment</Button>
-        <div className="flex gap-2">
-          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-          <Button type="button" disabled={busy || cents === null || cents > charge.fee_cents || cents === 0} onClick={() => cents !== null && void save(cents)}>{busy ? 'Saving…' : 'Save'}</Button>
-        </div>
-      </div>
-    </Modal>
-  )
-}
-
-// --- void (a charge or a superbill) ---------------------------------------------------------------------------------
+// --- void (a charge, a superbill, an invoice or a receipt) ---------------------------------------------------------------------------------
 
 export function ReasonDialog({ title, intro, confirm, onSubmit, onClose }: { title: string; intro: string; confirm: string; onSubmit: (reason: string) => Promise<void>; onClose: () => void }) {
   const [reason, setReason] = useState('')

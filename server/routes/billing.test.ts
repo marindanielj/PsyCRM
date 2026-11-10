@@ -48,7 +48,10 @@ async function setup() {
   const charge = (over: Record<string, unknown> = {}) => ({ contactId: 'c1', serviceDate: '2026-11-02', cptCode: '90834', modifiers: [], placeOfService: '11', units: 1, diagnosisCodes: ['F41.1'], feeCents: 10000, ...over })
   /** A fully set-up practice: NPI and tax id saved. */
   const completeProfile = (app = A) => call(app, 'PUT', '/profile', { npi: NPI, taxId: EIN })
-  return { db, pg, locA, locB, A, B, call, charge, completeProfile }
+  /** Record a payment (and so its receipt) of `cents` on one charge. */
+  const pay = (chargeId: string, cents: number, method = 'cash', contactId = 'c1', app = A) =>
+    call(app, 'POST', '/payments', { contactId, method, paidOn: '2026-11-02', allocations: [{ chargeId, amountCents: cents }] })
+  return { db, pg, locA, locB, A, B, call, charge, completeProfile, pay }
 }
 
 const dbError = async (p: Promise<unknown>) => { try { await p } catch (e) { return String((e as Error).message) } return null }
@@ -175,26 +178,22 @@ test('a charge can be edited until it is on a superbill; an edit that changes no
   expect(edited.body.charge).toMatchObject({ fee_cents: 12000, cpt_code: '90837', diagnosis_codes: ['F32.A'] })
   expect((await s.call(s.A, 'PATCH', `/charges/${id}`, { feeCents: 12000 })).body.error).toBe('nothing_to_change')
   expect((await s.call(s.A, 'PATCH', `/charges/${id}`, { cptCode: 'bad' })).status).toBe(400)
-  await s.call(s.A, 'PUT', `/charges/${id}/payment`, { paidCents: 5000, method: 'cash' })
+  await s.pay(id, 5000)
   expect((await s.call(s.A, 'PATCH', `/charges/${id}`, { feeCents: 4000 })).body.error).toBe('overpaid') // below what was already paid
   expect((await s.call(s.B, 'PATCH', `/charges/${id}`, { feeCents: 1 })).status).toBe(404)
 })
 
-test('payments set the total paid: a method is required, it cannot exceed the fee, and zero clears it', async () => {
+test('a charge with a payment cannot be voided until its receipt is, and an old-style "total paid" no longer exists', async () => {
   const s = await setup()
   const id = (await s.call(s.A, 'POST', '/charges', s.charge())).body.charge.id
-  expect((await s.call(s.A, 'PUT', `/charges/${id}/payment`, { paidCents: 5000 })).status).toBe(400) // no method
-  expect((await s.call(s.A, 'PUT', `/charges/${id}/payment`, { paidCents: 10001, method: 'card' })).body.error).toBe('overpaid')
-  const half = await s.call(s.A, 'PUT', `/charges/${id}/payment`, { paidCents: 5000, method: 'card' })
-  expect(half.body.charge).toMatchObject({ paid_cents: 5000, payment_method: 'card' })
-  expect(half.body.charge.paid_at).toBeTruthy()
-  const full = await s.call(s.A, 'PUT', `/charges/${id}/payment`, { paidCents: 10000, method: 'cash' })
-  expect(full.body.charge).toMatchObject({ paid_cents: 10000, payment_method: 'cash' })
-  const cleared = await s.call(s.A, 'PUT', `/charges/${id}/payment`, { paidCents: 0 })
-  expect(cleared.body.charge).toMatchObject({ paid_cents: 0, payment_method: null, paid_at: null })
-  expect((await s.call(s.B, 'PUT', `/charges/${id}/payment`, { paidCents: 100, method: 'cash' })).status).toBe(404)
-  const log = await s.db.query<{ details: { from: number; to: number } }>("SELECT details FROM audit_log WHERE action = 'charge.payment_recorded' ORDER BY id")
-  expect(log.map((r) => [r.details.from, r.details.to])).toEqual([[0, 5000], [5000, 10000], [10000, 0]])
+  const receipt = (await s.pay(id, 3000)).body.receipt
+  const refused = await s.call(s.A, 'POST', `/charges/${id}/void`, { reason: 'Entered by mistake' })
+  expect(refused.status).toBe(409)
+  expect(refused.body.error).toBe('has_payments')
+  await s.call(s.A, 'POST', `/receipts/${receipt.id}/void`, { reason: 'Paid by mistake' })
+  expect((await s.call(s.A, 'POST', `/charges/${id}/void`, { reason: 'Entered by mistake' })).status).toBe(200)
+  // the earlier "set the total paid" endpoint is gone: a payment is recorded, with its receipt
+  expect([404, 405]).toContain((await s.call(s.A, 'PUT', `/charges/${id}/payment`, { paidCents: 100, method: 'cash' })).status)
 })
 
 test('a voided charge needs a reason, stays visible, and cannot be changed again', async () => {
@@ -204,12 +203,17 @@ test('a voided charge needs a reason, stays visible, and cannot be changed again
   const v = await s.call(s.A, 'POST', `/charges/${id}/void`, { reason: 'Session was cancelled' })
   expect(v.body.charge).toMatchObject({ void_reason: 'Session was cancelled' })
   expect(v.body.charge.voided_at).toBeTruthy()
-  for (const r of [await s.call(s.A, 'PATCH', `/charges/${id}`, { feeCents: 1 }), await s.call(s.A, 'PUT', `/charges/${id}/payment`, { paidCents: 1, method: 'cash' }), await s.call(s.A, 'POST', `/charges/${id}/void`, { reason: 'again again' })]) {
+  for (const r of [await s.call(s.A, 'PATCH', `/charges/${id}`, { feeCents: 1 }), await s.call(s.A, 'POST', `/charges/${id}/void`, { reason: 'again again' })]) {
     expect(r.status).toBe(409)
     expect(r.body.error).toBe('voided')
   }
+  // a voided charge cannot be paid either: it is not a charge any more
+  const pay = await s.pay(id, 100)
+  expect([pay.status, pay.body.error]).toEqual([409, 'charges_unavailable'])
   expect((await s.call(s.A, 'GET', '/charges?status=void')).body.charges).toHaveLength(1)
-  expect((await s.call(s.A, 'GET', '/charges?status=unbilled')).body.charges).toHaveLength(0)
+  expect((await s.call(s.A, 'GET', '/charges?status=active')).body.charges).toHaveLength(0)
+  expect((await s.call(s.A, 'GET', '/charges')).body.charges).toHaveLength(0) // active is the default
+  expect((await s.call(s.A, 'GET', '/charges?status=all')).body.charges).toHaveLength(1)
 })
 
 test('the charge list can be filtered by client and status, and only shows this practice\'s charges', async () => {
@@ -249,7 +253,7 @@ test('issuing freezes a complete superbill: numbered, with diagnosis letters, po
   await s.completeProfile()
   const a = (await s.call(s.A, 'POST', '/charges', s.charge({ diagnosisCodes: ['F41.1', 'F32.A'], feeCents: 11000, serviceDate: '2026-11-01', cptCode: '90791' }))).body.charge.id
   const b = (await s.call(s.A, 'POST', '/charges', s.charge({ diagnosisCodes: ['F32.A'], feeCents: 10000, serviceDate: '2026-11-08', modifiers: ['95'], placeOfService: '10' }))).body.charge.id
-  await s.call(s.A, 'PUT', `/charges/${a}/payment`, { paidCents: 11000, method: 'card' })
+  await s.pay(a, 11000, 'card')
   const r = await s.call(s.A, 'POST', '/superbills', { contactId: 'c1', chargeIds: [b, a], clientAddress: 'Calle Sol 5, Ponce PR', memberId: 'XYZ123' })
   expect(r.status).toBe(201)
   const sb = r.body.superbill
@@ -267,9 +271,10 @@ test('issuing freezes a complete superbill: numbered, with diagnosis letters, po
   expect(sb.snapshot.provider).toMatchObject({ name: 'Dra. Rivera', practiceName: 'Consultorio Rivera', license: 'PR-1234', npi: NPI, taxId: EIN, taxIdLast4: '4321' })
   expect(sb.snapshot.provider.taxIdSealed).toBeUndefined() // the sealed copy never leaves the server
 
-  // the charges are now billed
-  expect((await s.call(s.A, 'GET', '/charges?status=billed')).body.charges.map((c: any) => c.superbill_number)).toEqual([`SB-${YEAR}-0001`, `SB-${YEAR}-0001`])
-  expect((await s.call(s.A, 'GET', '/charges?status=unbilled')).body.charges).toEqual([])
+  // each charge now says which superbill it is on; the one with a balance left is still "unpaid"
+  expect((await s.call(s.A, 'GET', '/charges')).body.charges.map((c: any) => c.superbill_number)).toEqual([`SB-${YEAR}-0001`, `SB-${YEAR}-0001`])
+  expect((await s.call(s.A, 'GET', '/charges?status=unpaid')).body.charges.map((c: any) => c.id)).toEqual([b])
+  expect((await s.call(s.A, 'GET', '/charges?status=paid')).body.charges.map((c: any) => c.id)).toEqual([a])
   // numbers go on in order
   const c = (await s.call(s.A, 'POST', '/charges', s.charge({ serviceDate: '2026-11-15' }))).body.charge.id
   expect((await s.call(s.A, 'POST', '/superbills', { contactId: 'c1', chargeIds: [c] })).body.superbill.number).toBe(`SB-${YEAR}-0002`)
@@ -362,7 +367,7 @@ test('once issued, the database refuses to change, delete or re-point the superb
   expect(await dbError(s.db.query("UPDATE superbills SET number = 'SB-1' WHERE id = $1", [sbId]))).toMatch(/superbill_immutable/)
   expect(await dbError(s.db.query('DELETE FROM superbills WHERE id = $1', [sbId]))).toMatch(/superbill_no_delete/)
   // ...but a payment can still be written down
-  expect((await s.call(s.A, 'PUT', `/charges/${id}/payment`, { paidCents: 10000, method: 'check' })).status).toBe(200)
+  expect((await s.pay(id, 10000, 'check')).status).toBe(201)
 })
 
 test('the database refuses a superbill that mixes clients, a live superbill on another client\'s charge, and bad money', async () => {
@@ -425,9 +430,9 @@ test('opening and printing a superbill are audited; the audit log never holds na
   const sbId = (await s.call(s.A, 'POST', '/superbills', { contactId: 'c1', chargeIds: [id], clientAddress: 'Calle Sol 5, Ponce', memberId: 'XYZ123' })).body.superbill.id
   await s.call(s.A, 'GET', `/superbills/${sbId}`)
   await s.call(s.A, 'POST', `/superbills/${sbId}/printed`)
-  await s.call(s.A, 'PUT', `/charges/${id}/payment`, { paidCents: 100, method: 'cash' })
-  const actions = (await s.db.query<{ action: string }>("SELECT action FROM audit_log WHERE action ~ '^(charge|superbill|billing)\\.' ORDER BY id")).map((r) => r.action)
-  expect(actions).toEqual(['billing.profile_updated', 'charge.created', 'superbill.issued', 'superbill.viewed', 'superbill.printed', 'charge.payment_recorded'])
+  await s.pay(id, 100)
+  const actions = (await s.db.query<{ action: string }>("SELECT action FROM audit_log WHERE action ~ '^(charge|superbill|billing|payment|receipt)\\.' ORDER BY id")).map((r) => r.action)
+  expect(actions).toEqual(['billing.profile_updated', 'charge.created', 'superbill.issued', 'superbill.viewed', 'superbill.printed', 'payment.recorded', 'receipt.issued'])
   const dump = JSON.stringify(await s.db.query('SELECT details, entity_id, actor_label FROM audit_log'))
   expect(dump).not.toMatch(/Maria|Lopez|F41|F32|Calle|Ponce|XYZ123|98-7654321|987654321|1234567893|1990-04-12/)
 })

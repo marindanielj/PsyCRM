@@ -2262,7 +2262,7 @@ export interface BillingMeta {
   maxDiagnoses: number
 }
 
-export type PaymentMethod = 'cash' | 'card' | 'check' | 'transfer' | 'other'
+export type PaymentMethod = 'cash' | 'card' | 'check' | 'transfer' | 'ath_movil' | 'other'
 
 export interface ChargeRow {
   id: string
@@ -2282,6 +2282,8 @@ export interface ChargeRow {
   payment_method: PaymentMethod | null
   superbill_id: string | null
   superbill_number: string | null
+  invoice_id: string | null
+  invoice_number: string | null
   voided_at: string | null
   void_reason: string | null
 }
@@ -2356,6 +2358,100 @@ export interface MissingItem {
   chargeId?: string
 }
 
+// --- Receipts and invoices (client documents, in Spanish): a charge's other two capabilities ----------------------------
+
+export interface ReceiptSnapshot {
+  number: string
+  issuedAt: string
+  paidOn: string
+  method: PaymentMethod
+  provider: { name: string; practiceName: string; address: string; phone: string; email: string }
+  client: { name: string }
+  lines: { chargeId: string; serviceDate: string; description: string; amountCents: number; feeCents: number; balanceAfterCents: number }[]
+  /** Numbers of the invoices these charges are on, so the receipt can say which invoice it pays. */
+  invoices: string[]
+  totals: { paidCents: number }
+}
+
+export interface ReceiptSummary {
+  id: string
+  contact_id: string
+  contact_name: string | null
+  number: string
+  method: PaymentMethod
+  paid_on: string
+  issued_at: string
+  voided_at: string | null
+  void_reason: string | null
+  total_cents: number
+  line_count: number
+}
+
+export interface ReceiptDetail {
+  id: string
+  contact_id: string
+  number: string
+  method: PaymentMethod
+  paid_on: string
+  issued_at: string
+  voided_at: string | null
+  void_reason: string | null
+  snapshot: ReceiptSnapshot
+}
+
+export type BillingInvoiceStatus = 'open' | 'paid' | 'void'
+
+export interface InvoiceSnapshot {
+  number: string
+  issuedAt: string
+  dueOn: string | null
+  note: string
+  provider: { name: string; practiceName: string; address: string; phone: string; email: string }
+  client: { name: string; address: string }
+  lines: { chargeId: string; serviceDate: string; description: string; feeCents: number; paidAtIssueCents: number; dueCents: number }[]
+  totals: { billedCents: number; paidCents: number; dueCents: number }
+}
+
+export interface InvoiceSummary {
+  id: string
+  contact_id: string
+  contact_name: string | null
+  number: string
+  due_on: string | null
+  issued_at: string
+  voided_at: string | null
+  void_reason: string | null
+  status: BillingInvoiceStatus
+  total_cents: number
+  paid_cents: number
+  balance_cents: number
+  line_count: number
+}
+
+export interface InvoiceDetail {
+  id: string
+  contact_id: string
+  number: string
+  due_on: string | null
+  issued_at: string
+  voided_at: string | null
+  void_reason: string | null
+  /** Derived live from the payments of its charges; the snapshot itself never changes. */
+  status: BillingInvoiceStatus
+  paid_cents: number
+  balance_cents: number
+  paid_by_charge: Record<string, number>
+  snapshot: InvoiceSnapshot
+}
+
+export interface PaymentInput {
+  contactId: string
+  method: PaymentMethod
+  /** YYYY-MM-DD, not in the future. */
+  paidOn: string
+  allocations: { chargeId: string; amountCents: number }[]
+}
+
 export const api = {
   login: (email: string, password: string) =>
     req<{ ok: true; operator: Operator; passwordChangedAt: number | null }>('/auth/login', {
@@ -2385,15 +2481,28 @@ export const api = {
     saveProfile: (loc: string, input: BillingProfileInput) =>
       req<{ ok: true; profile: BillingProfile }>(`/loc/${loc}/billing/profile`, { method: 'PUT', body: JSON.stringify(input) }),
     suggestions: (loc: string) => req<{ suggestions: ChargeSuggestion[] }>(`/loc/${loc}/billing/suggestions`),
-    charges: (loc: string, filter: { contactId?: string; status?: 'unbilled' | 'billed' | 'void' | 'all' } = {}) =>
+    charges: (loc: string, filter: { contactId?: string; status?: 'active' | 'unpaid' | 'paid' | 'void' | 'all' } = {}) =>
       req<{ charges: ChargeRow[] }>(`/loc/${loc}/billing/charges${qs(filter)}`),
     createCharge: (loc: string, input: ChargeInput) =>
       req<{ ok: true; charge: ChargeRow }>(`/loc/${loc}/billing/charges`, { method: 'POST', body: JSON.stringify(input) }),
     updateCharge: (loc: string, id: string, patch: Partial<Omit<ChargeInput, 'contactId' | 'appointmentId' | 'sessionNoteId'>>) =>
       req<{ ok: true; charge: ChargeRow }>(`/loc/${loc}/billing/charges/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-    /** Sets the TOTAL paid so far (not an increment): safe to repeat, easy to correct. Zero clears it. */
-    setPayment: (loc: string, id: string, paidCents: number, method: PaymentMethod | null) =>
-      req<{ ok: true; charge: ChargeRow }>(`/loc/${loc}/billing/charges/${id}/payment`, { method: 'PUT', body: JSON.stringify({ paidCents, method }) }),
+    /** Records a payment over one or more of a client's charges and issues its receipt in the same act. */
+    recordPayment: (loc: string, input: PaymentInput) =>
+      req<{ ok: true; receipt: ReceiptDetail }>(`/loc/${loc}/billing/payments`, { method: 'POST', body: JSON.stringify(input) }),
+    receipts: (loc: string, contactId?: string) => req<{ receipts: ReceiptSummary[] }>(`/loc/${loc}/billing/receipts${qs({ contactId })}`),
+    receipt: (loc: string, id: string) => req<{ receipt: ReceiptDetail }>(`/loc/${loc}/billing/receipts/${id}`),
+    receiptPrinted: (loc: string, id: string) => req<{ ok: true }>(`/loc/${loc}/billing/receipts/${id}/printed`, { method: 'POST' }),
+    /** Voids the receipt and the payments it proves. */
+    voidReceipt: (loc: string, id: string, reason: string) =>
+      req<{ ok: true }>(`/loc/${loc}/billing/receipts/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    invoices: (loc: string, contactId?: string) => req<{ invoices: InvoiceSummary[] }>(`/loc/${loc}/billing/invoices${qs({ contactId })}`),
+    issueInvoice: (loc: string, input: { contactId: string; chargeIds: string[]; dueOn?: string | null; note?: string; clientAddress?: string }) =>
+      req<{ ok: true; invoice: InvoiceDetail }>(`/loc/${loc}/billing/invoices`, { method: 'POST', body: JSON.stringify(input) }),
+    invoice: (loc: string, id: string) => req<{ invoice: InvoiceDetail }>(`/loc/${loc}/billing/invoices/${id}`),
+    invoicePrinted: (loc: string, id: string) => req<{ ok: true }>(`/loc/${loc}/billing/invoices/${id}/printed`, { method: 'POST' }),
+    voidInvoice: (loc: string, id: string, reason: string) =>
+      req<{ ok: true }>(`/loc/${loc}/billing/invoices/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
     voidCharge: (loc: string, id: string, reason: string) =>
       req<{ ok: true; charge: ChargeRow }>(`/loc/${loc}/billing/charges/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
     superbills: (loc: string, contactId?: string) => req<{ superbills: SuperbillSummary[] }>(`/loc/${loc}/billing/superbills${qs({ contactId })}`),

@@ -10,6 +10,8 @@ import { CalendarSyncSettingsPage } from './features/settings/CalendarSyncSettin
 import { BillingSettingsPage } from './features/settings/BillingSettingsPage'
 import { BillingPage } from './features/billing/BillingPage'
 import { SuperbillPage } from './features/billing/SuperbillPage'
+import { InvoicePage } from './features/billing/InvoicePage'
+import { ReceiptPage } from './features/billing/ReceiptPage'
 import { AuditLogPage } from './features/audit/AuditLogPage'
 import { NoteReportPage } from './features/session-notes/NoteReportPage'
 import { NoteWizardPage } from './features/session-notes/NoteWizard'
@@ -110,6 +112,8 @@ export default function App() {
           <Route path="documents/packets/:id" element={<RequireModule module="documents"><PacketEditorPage /></RequireModule>} />
           <Route path="billing" element={<RequireModule module="billing"><BillingPage /></RequireModule>} />
           <Route path="billing/superbills/:id" element={<RequireModule module="billing"><SuperbillPage /></RequireModule>} />
+          <Route path="billing/invoices/:id" element={<RequireModule module="billing"><InvoicePage /></RequireModule>} />
+          <Route path="billing/receipts/:id" element={<RequireModule module="billing"><ReceiptPage /></RequireModule>} />
           <Route path="tags" element={<RequireModule module="tags"><TagsPage /></RequireModule>} />
           <Route path="settings" element={<SettingsLayout />}>
             <Route index element={<Navigate to="/settings/practice" replace />} />

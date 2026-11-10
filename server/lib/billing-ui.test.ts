@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { formatCents, parseMoneyToCents } from './billing-vocab'
-import { BILLING_MESSAGES, MISSING_MESSAGES, billingMessage, centsToInput, describeMissing, dollarsToCents, formatServiceDate } from '../../src/lib/billing'
+import { PAYMENT_METHODS, PAYMENT_METHOD_LABEL_ES, formatCents, parseMoneyToCents } from './billing-vocab'
+import { BILLING_MESSAGES, MISSING_MESSAGES, PAYMENT_LABELS, PAYMENT_LABELS_ES, billingMessage, centsToInput, describeMissing, dollarsToCents, formatDateEs, formatServiceDate } from '../../src/lib/billing'
 
-const ROUTE = readFileSync(fileURLToPath(new URL('../routes/billing.ts', import.meta.url)), 'utf8')
-const REPO = readFileSync(fileURLToPath(new URL('../repos/billing-repo.ts', import.meta.url)), 'utf8')
+const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
+// the superbill/charge routes and repos, plus the payments/receipts/invoices ones
+const ROUTE = read('../routes/billing.ts') + read('../routes/billing-documents.ts')
+const REPO = read('../repos/billing-repo.ts') + read('../repos/billing-documents-repo.ts')
 
 test('the web parses money exactly like the server, so what she types is what is stored', () => {
   for (const t of ['$100', '100', '$1,000.50', '99.5', '0.07', '19.99', '1.15', '', '$', 'abc', '1.234', '-5', '12345678', '$100 per session']) {
@@ -48,6 +50,21 @@ test('every error the billing API can answer with has a message, and unknown one
   for (const code of codes) expect(BILLING_MESSAGES[code], code).toBeTruthy()
   expect(billingMessage('nope')).toBe('Something went wrong. Please try again.')
   expect(billingMessage(undefined)).toBe('Something went wrong. Please try again.')
+})
+
+test('the web and the server agree on every payment method, ATH Móvil included, in English and in Spanish', () => {
+  expect(Object.keys(PAYMENT_LABELS).sort()).toEqual([...PAYMENT_METHODS].sort())
+  expect(PAYMENT_LABELS_ES).toEqual(PAYMENT_METHOD_LABEL_ES) // what the client reads on a receipt is the same on both sides
+  expect(PAYMENT_LABELS.ath_movil).toBe('ATH Móvil')
+  expect(PAYMENT_LABELS_ES.ath_movil).toBe('ATH Móvil')
+})
+
+test('dates on the documents the client receives read in Spanish, taken from the text so no time zone moves them', () => {
+  expect(formatDateEs('2026-11-02')).toBe('2 de noviembre de 2026')
+  expect(formatDateEs('2026-01-31')).toBe('31 de enero de 2026')
+  expect(formatDateEs('2026-12-05T00:00:00Z')).toBe('5 de diciembre de 2026')
+  expect(formatDateEs(null)).toBe('')
+  expect(formatDateEs('garbage')).toBe('garbage')
 })
 
 test('a service date is read from its text, so no time zone can move it', () => {

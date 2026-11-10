@@ -1768,7 +1768,7 @@ CREATE TABLE IF NOT EXISTS charges (
   fee_cents        int NOT NULL CHECK (fee_cents >= 0),
   paid_cents       int NOT NULL DEFAULT 0 CHECK (paid_cents >= 0),
   paid_at          timestamptz,
-  payment_method   text CHECK (payment_method IN ('cash','card','check','transfer','other')),
+  payment_method   text CHECK (payment_method IN ('cash','card','check','transfer','ath_movil','other')),
   superbill_id     text REFERENCES superbills(id) ON DELETE RESTRICT,
   created_by       text NOT NULL,
   created_at       timestamptz NOT NULL DEFAULT now(),
@@ -1816,6 +1816,173 @@ BEGIN
     SELECT * INTO new_sb FROM superbills WHERE id = NEW.superbill_id;
     IF NOT FOUND OR new_sb.voided_at IS NOT NULL OR new_sb.contact_id <> NEW.contact_id OR new_sb.location_id <> NEW.location_id THEN
       RAISE EXCEPTION 'charge_superbill_mismatch' USING ERRCODE = 'P0001';
+    END IF;
+  END IF;
+
+  NEW.updated_at := now();
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS charge_guard ON charges;
+CREATE TRIGGER charge_guard BEFORE UPDATE OR DELETE ON charges
+  FOR EACH ROW EXECUTE FUNCTION charge_guard();
+
+-- =============================================================================
+-- Billing, part 2 (A4): payments, receipts and invoices from a charge.
+--
+-- A payment is a fact (date, amount, method) and is never edited or deleted, only voided with a reason. Its receipt is
+-- its proof: one receipt per payment, issued with it. `charges.paid_cents` stays as a DERIVED figure: the sum of the live
+-- payments, recomputed by the application in the same transaction.
+-- Invoices and receipts hold a frozen copy of what was issued; the database refuses to change one, and voiding is the
+-- only change it allows. They carry no diagnosis, no CPT code, no tax id and no NPI: clients show them to employers,
+-- family and banks.
+-- =============================================================================
+
+-- ATH Móvil. `charges` already exists in production, so its constraint is replaced in place (idempotent).
+ALTER TABLE charges DROP CONSTRAINT IF EXISTS charges_payment_method_check;
+ALTER TABLE charges ADD CONSTRAINT charges_payment_method_check
+  CHECK (payment_method IN ('cash','card','check','transfer','ath_movil','other'));
+
+-- Shared by invoices, receipts and payments: a row can never be deleted, and the only change allowed is to void it once.
+CREATE OR REPLACE FUNCTION void_only_guard() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION '%_no_delete', TG_TABLE_NAME USING ERRCODE = 'P0001';
+  END IF;
+  IF OLD.voided_at IS NOT NULL THEN
+    RAISE EXCEPTION '%_voided', TG_TABLE_NAME USING ERRCODE = 'P0001';
+  END IF;
+  IF (to_jsonb(NEW) - ARRAY['voided_at','voided_by','void_reason'])
+     <> (to_jsonb(OLD) - ARRAY['voided_at','voided_by','void_reason']) THEN
+    RAISE EXCEPTION '%_immutable', TG_TABLE_NAME USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TABLE IF NOT EXISTS billing_invoices (
+  id          text PRIMARY KEY,
+  location_id text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id  text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  number      text NOT NULL,
+  due_on      date,
+  snapshot    jsonb NOT NULL,
+  issued_at   timestamptz NOT NULL DEFAULT now(),
+  issued_by   text NOT NULL,
+  voided_at   timestamptz,
+  voided_by   text,
+  void_reason text,
+  CONSTRAINT billing_invoice_void_complete CHECK ((voided_at IS NULL) = (void_reason IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_invoices_number ON billing_invoices(location_id, number);
+CREATE INDEX IF NOT EXISTS billing_invoices_by_contact ON billing_invoices(location_id, contact_id, issued_at DESC);
+DROP TRIGGER IF EXISTS billing_invoices_guard ON billing_invoices;
+CREATE TRIGGER billing_invoices_guard BEFORE UPDATE OR DELETE ON billing_invoices
+  FOR EACH ROW EXECUTE FUNCTION void_only_guard();
+
+CREATE TABLE IF NOT EXISTS billing_receipts (
+  id          text PRIMARY KEY,
+  location_id text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id  text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  number      text NOT NULL,
+  method      text NOT NULL CHECK (method IN ('cash','card','check','transfer','ath_movil','other')),
+  paid_on     date NOT NULL,
+  snapshot    jsonb NOT NULL,
+  issued_at   timestamptz NOT NULL DEFAULT now(),
+  issued_by   text NOT NULL,
+  voided_at   timestamptz,
+  voided_by   text,
+  void_reason text,
+  CONSTRAINT billing_receipt_void_complete CHECK ((voided_at IS NULL) = (void_reason IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_receipts_number ON billing_receipts(location_id, number);
+CREATE INDEX IF NOT EXISTS billing_receipts_by_contact ON billing_receipts(location_id, contact_id, issued_at DESC);
+DROP TRIGGER IF EXISTS billing_receipts_guard ON billing_receipts;
+CREATE TRIGGER billing_receipts_guard BEFORE UPDATE OR DELETE ON billing_receipts
+  FOR EACH ROW EXECUTE FUNCTION void_only_guard();
+
+CREATE TABLE IF NOT EXISTS payments (
+  id          text PRIMARY KEY,
+  location_id text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id  text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  charge_id   text NOT NULL REFERENCES charges(id) ON DELETE RESTRICT,
+  receipt_id  text NOT NULL REFERENCES billing_receipts(id) ON DELETE RESTRICT,
+  amount_cents int NOT NULL CHECK (amount_cents > 0),
+  method      text NOT NULL CHECK (method IN ('cash','card','check','transfer','ath_movil','other')),
+  paid_on     date NOT NULL,
+  created_by  text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  voided_at   timestamptz,
+  voided_by   text,
+  void_reason text,
+  CONSTRAINT payment_void_complete CHECK ((voided_at IS NULL) = (void_reason IS NULL))
+);
+CREATE INDEX IF NOT EXISTS payments_by_charge ON payments(charge_id) WHERE voided_at IS NULL;
+CREATE INDEX IF NOT EXISTS payments_by_receipt ON payments(receipt_id);
+DROP TRIGGER IF EXISTS payments_guard ON payments;
+CREATE TRIGGER payments_guard BEFORE UPDATE OR DELETE ON payments
+  FOR EACH ROW EXECUTE FUNCTION void_only_guard();
+
+-- A charge can now sit on an invoice as well as on a superbill; the two are independent.
+ALTER TABLE charges ADD COLUMN IF NOT EXISTS invoice_id text REFERENCES billing_invoices(id) ON DELETE RESTRICT;
+CREATE INDEX IF NOT EXISTS charges_by_invoice ON charges(invoice_id) WHERE invoice_id IS NOT NULL;
+
+-- The charge guard, now aware of invoices. While a charge is on a live superbill or invoice its content is frozen
+-- (only the derived payment figures and the two links may change); each link can be attached once to a live document
+-- of the same client and practice, and released only when that document is voided.
+CREATE OR REPLACE FUNCTION charge_guard() RETURNS trigger AS $$
+DECLARE
+  old_sb  superbills%ROWTYPE;
+  new_sb  superbills%ROWTYPE;
+  old_inv billing_invoices%ROWTYPE;
+  new_inv billing_invoices%ROWTYPE;
+  frozen  boolean := false;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'charge_no_delete' USING ERRCODE = 'P0001';
+  END IF;
+  NEW.id := OLD.id; NEW.location_id := OLD.location_id; NEW.contact_id := OLD.contact_id;
+  NEW.created_at := OLD.created_at; NEW.created_by := OLD.created_by;
+  IF OLD.voided_at IS NOT NULL THEN
+    RAISE EXCEPTION 'charge_voided' USING ERRCODE = 'P0001';
+  END IF;
+
+  IF OLD.superbill_id IS NOT NULL THEN
+    SELECT * INTO old_sb FROM superbills WHERE id = OLD.superbill_id;
+    IF old_sb.voided_at IS NULL THEN frozen := true; END IF;
+  END IF;
+  IF OLD.invoice_id IS NOT NULL THEN
+    SELECT * INTO old_inv FROM billing_invoices WHERE id = OLD.invoice_id;
+    IF old_inv.voided_at IS NULL THEN frozen := true; END IF;
+  END IF;
+
+  IF frozen THEN
+    IF NEW.voided_at IS NOT NULL
+       OR (to_jsonb(NEW) - ARRAY['paid_cents','paid_at','payment_method','updated_at','superbill_id','invoice_id'])
+          <> (to_jsonb(OLD) - ARRAY['paid_cents','paid_at','payment_method','updated_at','superbill_id','invoice_id']) THEN
+      RAISE EXCEPTION 'charge_issued' USING ERRCODE = 'P0001';
+    END IF;
+  END IF;
+
+  IF NEW.superbill_id IS DISTINCT FROM OLD.superbill_id THEN
+    IF old_sb.id IS NOT NULL AND old_sb.voided_at IS NULL THEN
+      RAISE EXCEPTION 'charge_issued' USING ERRCODE = 'P0001';
+    END IF;
+    IF NEW.superbill_id IS NOT NULL THEN
+      SELECT * INTO new_sb FROM superbills WHERE id = NEW.superbill_id;
+      IF NOT FOUND OR new_sb.voided_at IS NOT NULL OR new_sb.contact_id <> NEW.contact_id OR new_sb.location_id <> NEW.location_id THEN
+        RAISE EXCEPTION 'charge_superbill_mismatch' USING ERRCODE = 'P0001';
+      END IF;
+    END IF;
+  END IF;
+
+  IF NEW.invoice_id IS DISTINCT FROM OLD.invoice_id THEN
+    IF old_inv.id IS NOT NULL AND old_inv.voided_at IS NULL THEN
+      RAISE EXCEPTION 'charge_issued' USING ERRCODE = 'P0001';
+    END IF;
+    IF NEW.invoice_id IS NOT NULL THEN
+      SELECT * INTO new_inv FROM billing_invoices WHERE id = NEW.invoice_id;
+      IF NOT FOUND OR new_inv.voided_at IS NOT NULL OR new_inv.contact_id <> NEW.contact_id OR new_inv.location_id <> NEW.location_id THEN
+        RAISE EXCEPTION 'charge_invoice_mismatch' USING ERRCODE = 'P0001';
+      END IF;
     END IF;
   END IF;
 

@@ -20,6 +20,11 @@ type Ctx = Pick<AuditEntry, 'actor' | 'ip' | 'userAgent'>
 
 export const TAX_ID_SEAL_LABEL = 'billing-tax-id'
 
+/** The name a document shows for a client: the full name if there is one, else first and last. */
+export function normalizeContactName(c: { name: string | null; first_name: string | null; last_name: string | null }): string {
+  return (c.name ?? `${c.first_name ?? ''} ${c.last_name ?? ''}`).trim()
+}
+
 // --- the billing profile ----------------------------------------------------------------------------------------
 
 export interface BillingProfile {
@@ -160,6 +165,7 @@ export interface Charge {
   paid_at: string | null
   payment_method: PaymentMethod | null
   superbill_id: string | null
+  invoice_id: string | null
   created_by: string
   created_at: string
   updated_at: string
@@ -167,10 +173,10 @@ export interface Charge {
   void_reason: string | null
 }
 
-export type ChargeWithClient = Charge & { contact_name: string | null; superbill_number: string | null }
+export type ChargeWithClient = Charge & { contact_name: string | null; superbill_number: string | null; invoice_number: string | null }
 
 const CHARGE_COLS = `ch.id, ch.location_id, ch.contact_id, ch.appointment_id, ch.session_note_id, ch.service_date::text AS service_date, ch.cpt_code,
-  ch.modifiers, ch.place_of_service, ch.units, ch.diagnosis_codes, ch.fee_cents, ch.paid_cents, ch.paid_at, ch.payment_method, ch.superbill_id,
+  ch.modifiers, ch.place_of_service, ch.units, ch.diagnosis_codes, ch.fee_cents, ch.paid_cents, ch.paid_at, ch.payment_method, ch.superbill_id, ch.invoice_id,
   ch.created_by, ch.created_at, ch.updated_at, ch.voided_at, ch.void_reason`
 
 export interface ChargeInput {
@@ -188,7 +194,7 @@ export interface ChargeInput {
 
 export type ChargePatch = Partial<Pick<ChargeInput, 'serviceDate' | 'cptCode' | 'modifiers' | 'placeOfService' | 'units' | 'diagnosisCodes' | 'feeCents'>>
 
-export type ChargeError = 'not_found' | 'voided' | 'issued' | 'overpaid' | 'unknown_contact' | 'unknown_note' | 'unknown_appointment' | 'note_already_charged' | 'nothing_to_change'
+export type ChargeError = 'not_found' | 'voided' | 'issued' | 'has_payments' | 'overpaid' | 'unknown_contact' | 'unknown_note' | 'unknown_appointment' | 'note_already_charged' | 'nothing_to_change'
 export type ChargeResult = { ok: true; charge: Charge } | { ok: false; error: ChargeError }
 
 /** What the therapist is offered for a signed note that has no charge yet: everything pre-filled, nothing fixed. */
@@ -216,24 +222,30 @@ export class ChargesRepo {
     if (!locationId) throw new Error('locationId is required (tenancy guard)')
   }
 
-  async list(opts: { contactId?: string; status?: 'unbilled' | 'billed' | 'void' | 'all' } = {}): Promise<ChargeWithClient[]> {
+  /**
+   * `active` (the default) = not voided; `unpaid` / `paid` = active with / without a balance left; `void`; `all`.
+   * Whether a charge is already on a superbill or an invoice is shown on each row rather than used to filter: it can be on both.
+   */
+  async list(opts: { contactId?: string; status?: 'active' | 'unpaid' | 'paid' | 'void' | 'all' } = {}): Promise<ChargeWithClient[]> {
     const where = ['ch.location_id = $1']
     const params: unknown[] = [this.locationId]
     if (opts.contactId) {
       params.push(opts.contactId)
       where.push(`ch.contact_id = $${params.length}`)
     }
-    switch (opts.status ?? 'all') {
-      case 'unbilled': where.push('ch.superbill_id IS NULL AND ch.voided_at IS NULL'); break
-      case 'billed': where.push('ch.superbill_id IS NOT NULL'); break
+    switch (opts.status ?? 'active') {
+      case 'active': where.push('ch.voided_at IS NULL'); break
+      case 'unpaid': where.push('ch.voided_at IS NULL AND ch.paid_cents < ch.fee_cents'); break
+      case 'paid': where.push('ch.voided_at IS NULL AND ch.paid_cents >= ch.fee_cents'); break
       case 'void': where.push('ch.voided_at IS NOT NULL'); break
       default: break
     }
     return this.db.query<ChargeWithClient>(
-      `SELECT ${CHARGE_COLS}, c.name AS contact_name, s.number AS superbill_number
+      `SELECT ${CHARGE_COLS}, c.name AS contact_name, s.number AS superbill_number, i.number AS invoice_number
          FROM charges ch
          LEFT JOIN contacts c ON c.id = ch.contact_id AND c.location_id = ch.location_id
          LEFT JOIN superbills s ON s.id = ch.superbill_id
+         LEFT JOIN billing_invoices i ON i.id = ch.invoice_id
         WHERE ${where.join(' AND ')}
         ORDER BY ch.service_date DESC, ch.created_at DESC
         LIMIT 500`,
@@ -325,7 +337,7 @@ export class ChargesRepo {
       const cur = (await tx.query<Charge>(`SELECT ${CHARGE_COLS} FROM charges ch WHERE ch.location_id = $1 AND ch.id = $2 FOR UPDATE`, [this.locationId, id]))[0]
       if (!cur) return { ok: false, error: 'not_found' }
       if (cur.voided_at) return { ok: false, error: 'voided' }
-      if (cur.superbill_id) return { ok: false, error: 'issued' }
+      if (cur.superbill_id || cur.invoice_id) return { ok: false, error: 'issued' }
       const cols: Record<keyof ChargePatch, string> = {
         serviceDate: 'service_date', cptCode: 'cpt_code', modifiers: 'modifiers', placeOfService: 'place_of_service',
         units: 'units', diagnosisCodes: 'diagnosis_codes', feeCents: 'fee_cents',
@@ -350,34 +362,21 @@ export class ChargesRepo {
     })
   }
 
-  /** Set the TOTAL paid so far (not "add"): safe to repeat and easy to correct. Zero clears it. */
-  async setPayment(id: string, paidCents: number, method: PaymentMethod | null, ctx: Ctx): Promise<ChargeResult> {
-    return this.db.transaction(async (tx): Promise<ChargeResult> => {
-      const cur = (await tx.query<Charge>(`SELECT ${CHARGE_COLS} FROM charges ch WHERE ch.location_id = $1 AND ch.id = $2 FOR UPDATE`, [this.locationId, id]))[0]
-      if (!cur) return { ok: false, error: 'not_found' }
-      if (cur.voided_at) return { ok: false, error: 'voided' }
-      if (paidCents > cur.fee_cents) return { ok: false, error: 'overpaid' }
-      const rows = await tx.query<Charge>(
-        `UPDATE charges SET paid_cents = $3, payment_method = $4, paid_at = ${paidCents > 0 ? 'now()' : 'NULL'}
-          WHERE location_id = $1 AND id = $2 RETURNING ${CHARGE_COLS.replace(/ch\./g, '')}`,
-        [this.locationId, id, paidCents, paidCents > 0 ? method : null],
-      )
-      await audit(tx, this.locationId, { action: 'charge.payment_recorded', entityType: 'charge', entityId: id, contactId: cur.contact_id, details: { from: cur.paid_cents, to: paidCents, method: paidCents > 0 ? method : null }, ...ctx })
-      return { ok: true, charge: rows[0]! }
-    })
-  }
+  // Payments are no longer set here: they are recorded (with their receipt) in payments-repo.ts, and `paid_cents` is
+  // derived from them.
 
   async void(id: string, reason: string, operatorId: string, ctx: Ctx): Promise<ChargeResult> {
     return this.db.transaction(async (tx): Promise<ChargeResult> => {
       const cur = (await tx.query<Charge>(`SELECT ${CHARGE_COLS} FROM charges ch WHERE ch.location_id = $1 AND ch.id = $2 FOR UPDATE`, [this.locationId, id]))[0]
       if (!cur) return { ok: false, error: 'not_found' }
       if (cur.voided_at) return { ok: false, error: 'voided' }
-      if (cur.superbill_id) return { ok: false, error: 'issued' } // void the superbill first
+      if (cur.superbill_id || cur.invoice_id) return { ok: false, error: 'issued' } // void the superbill / invoice first
+      if (cur.paid_cents > 0) return { ok: false, error: 'has_payments' } // void its receipt first
       const rows = await tx.query<Charge>(
         `UPDATE charges SET voided_at = now(), voided_by = $3, void_reason = $4 WHERE location_id = $1 AND id = $2 RETURNING ${CHARGE_COLS.replace(/ch\./g, '')}`,
         [this.locationId, id, operatorId, reason],
       )
-      await audit(tx, this.locationId, { action: 'charge.voided', entityType: 'charge', entityId: id, contactId: cur.contact_id, details: { reason }, ...ctx })
+      await audit(tx, this.locationId, { action: 'charge.voided', entityType: 'charge', entityId: id, contactId: cur.contact_id, ...ctx }) // the typed reason stays on the charge, not in the log
       return { ok: true, charge: rows[0]! }
     })
   }
@@ -541,7 +540,7 @@ export class SuperbillsRepo {
       }))
       const billed = lines.reduce((s, l) => s + l.feeCents, 0)
       const paid = lines.reduce((s, l) => s + l.paidCents, 0)
-      const clientName = (contact.name ?? `${contact.first_name ?? ''} ${contact.last_name ?? ''}`).trim()
+      const clientName = normalizeContactName(contact)
       const issuedAt = new Date().toISOString()
       const snapshot: SuperbillSnapshot = {
         number,
@@ -578,7 +577,7 @@ export class SuperbillsRepo {
       if (cur.voided_at) return { ok: false as const, error: 'voided' as const }
       await tx.query('UPDATE superbills SET voided_at = now(), voided_by = $3, void_reason = $4 WHERE location_id = $1 AND id = $2', [this.locationId, id, operatorId, reason])
       await tx.query('UPDATE charges SET superbill_id = NULL WHERE location_id = $1 AND superbill_id = $2', [this.locationId, id])
-      await audit(tx, this.locationId, { action: 'superbill.voided', entityType: 'superbill', entityId: id, contactId: cur.contact_id, details: { number: cur.number, reason }, ...ctx })
+      await audit(tx, this.locationId, { action: 'superbill.voided', entityType: 'superbill', entityId: id, contactId: cur.contact_id, details: { number: cur.number }, ...ctx }) // the typed reason stays on the superbill, not in the log
       return { ok: true as const }
     })
   }

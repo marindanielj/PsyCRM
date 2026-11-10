@@ -39,7 +39,7 @@ En `locations.settings.billing` (el nombre, la licencia, la dirección y el tel�
 - Dinero siempre en **centavos enteros**; nunca decimales.
 - Validación: CPT de 5 dígitos (o HCPCS: letra y 4 dígitos); ICD-10-CM con su formato (`F41.1`), en mayúsculas; modificadores de 2 caracteres; lugar de servicio de 2 dígitos.
 - Anular un cargo exige motivo y lo deja a la vista; no se borra.
-- Pagos: se anota cuánto y cómo se pagó (efectivo, tarjeta, cheque, transferencia, otro). Una superbill muestra lo pagado, que es lo que la aseguradora quiere ver.
+- Pagos: cada pago es un hecho con su fecha, monto y método (efectivo, tarjeta, cheque, transferencia, **ATH Móvil**, otro), y emite su recibo. Lo explica [`extra-billing-invoices-receipts.md`](extra-billing-invoices-receipts.md). Una superbill muestra lo pagado, que es lo que la aseguradora quiere ver; `paid_cents` del cargo es una cifra derivada de los pagos.
 
 ### Superbills (`superbills`): documento inmutable
 - Se emite para **un cliente** con **uno o más de sus cargos sin emitir**. Número correlativo por práctica y año: `SB-2026-0001`.
@@ -54,7 +54,7 @@ En `locations.settings.billing` (el nombre, la licencia, la dirección y el tel�
 
 - Contiene **PHI** (nombre, fecha de nacimiento, diagnósticos). Se genera y se muestra solo dentro de la aplicación, a quien tiene sesión. **No se envía por correo** (la política es no poner PHI en el cuerpo de un correo; entregar el documento es un paso manual, imprimir o guardar PDF).
 - La dirección del cliente y el afiliado van en la copia, no en el contacto.
-- Auditoría, sin texto clínico, nombres, diagnósticos, direcciones ni el ID fiscal en el detalle (una prueba lo verifica sobre todo el log): `charge.created`, `charge.updated`, `charge.payment_recorded`, `charge.voided`, `superbill.issued`, `superbill.viewed`, `superbill.printed`, `superbill.voided`, `billing.profile_updated` (qué campo cambió, nunca el ID fiscal). Los pagos registran el monto anterior y el nuevo, que es el rastro financiero; los cargos registran el código CPT y la fecha, no el diagnóstico.
+- Auditoría, sin texto clínico, nombres, diagnósticos, direcciones ni el ID fiscal en el detalle (una prueba lo verifica sobre todo el log): `charge.created`, `charge.updated`, `charge.voided`, `superbill.issued`, `superbill.viewed`, `superbill.printed`, `superbill.voided`, `billing.profile_updated` (qué campo cambió, nunca el ID fiscal). Los cargos registran el código CPT y la fecha, no el diagnóstico. **El motivo que se escribe al anular un cargo o una superbill se queda en el documento, no en el log** (puede contener un nombre). Los pagos, recibos y facturas tienen sus propias acciones: ver el otro spec.
 - El ID fiscal se cifra en reposo; la copia de una superbill lleva el valor **cifrado** y solo se abre al mostrarla.
 
 ## Fuera de alcance (y a dónde van)
@@ -81,6 +81,6 @@ Pruebas: `billing-vocab.test.ts` (NPI con su dígito de control, ICD-10, CPT, di
 ## Decisiones tomadas sin consultar
 
 - **Una superbill por cliente y por emisión**, con los cargos que ella elija. No hay emisión automática ni por rango de fechas.
-- **El pago se registra como el total pagado** (no como un abono), para poder repetirlo y corregirlo sin duplicar.
+- **Los pagos ya no se "fijan como un total"**: esa primera versión fue reemplazada por un libro de pagos con recibos (ver [`extra-billing-invoices-receipts.md`](extra-billing-invoices-receipts.md)), porque un recibo exige que cada pago sea un hecho con su fecha, monto y método.
 - **El ID fiscal es obligatorio para emitir.** Sin él, muchas aseguradoras rechazan el documento; si ella prefiere no imprimirlo, es un cambio de una línea.
 - **Se pide el diagnóstico en cada cargo**, aunque la nota ya lo tenga: se sugiere desde la nota y ella lo confirma. Una nota sin diagnóstico (como las de la demo) obliga a escribirlo aquí.
