@@ -89,6 +89,7 @@ export const AUDIT_ACTIONS = {
   'invite.completed': 'Client completed their registration',
   'invite.expired': 'Client invitation expired',
   'practice.branding_updated': 'Practice branding changed',
+  'practice.module_enabled': 'Module turned on for the practice',
   // calendar sync (.ics) — only time blocks cross, never client details
   'calendar.feed_created': 'Calendar feed address created',
   'calendar.feed_regenerated': 'Calendar feed address replaced (the old one stopped working)',

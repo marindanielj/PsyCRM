@@ -107,7 +107,19 @@ Para **apagarla** de nuevo basta con quitar el nombre y desplegar: no hace falta
 
 ## 5. Cómo se enciende un módulo para una práctica
 
-Hoy no existe una pantalla para esto (es un pendiente: Settings → Modules). Se hace con una sentencia SQL sobre la práctica, **una vez resueltos los pendientes de su fila en el §3**:
+Hoy no existe una pantalla para esto (es un pendiente: Settings → Modules). Se hace con un comando de una sola vez, **una vez resueltos los pendientes de su fila en el §3** (si el módulo depende de un tercero):
+
+```bash
+DATABASE_URL=… PRACTICE_SLUG=<slug-de-la-practica> MODULE=billing npm run enable-module
+```
+
+Es repetible (si el módulo ya estaba, no cambia nada), solo acepta nombres de módulo válidos (un error de tipeo no se guarda), no toca ningún otro ajuste de la práctica y **deja una línea en el log de auditoría** (`practice.module_enabled`). Imprime la lista de módulos que quedó. En producción se corre como tarea única de ECS: ver [`OPERACIONES.md`](OPERACIONES.md) §2.1.
+
+**Una práctica que ya existía** guarda su lista completa, así que un módulo nuevo (como `billing`, añadido con A4) **no le aparece solo**: hay que encenderlo con este comando. Las prácticas nuevas lo reciben por defecto. Un cambio se nota en unos 5 segundos (la API guarda el resultado en memoria ese tiempo) y en la web al recargar.
+
+Los nombres válidos están en `server/lib/modules.ts`. Si la práctica **no** tiene la clave `enabledModules`, recibe la lista por defecto del §1.
+
+<details><summary>Equivalente en SQL (solo si no se puede usar el comando)</summary>
 
 ```sql
 -- Ver lo que tiene hoy
@@ -116,13 +128,12 @@ SELECT settings->'enabledModules' FROM locations WHERE slug = '<slug-de-la-pract
 -- Fijar la lista completa (reemplaza la anterior; incluya los módulos que ya tenía)
 UPDATE locations
 SET settings = jsonb_set(settings, '{enabledModules}',
-  '["contacts","tags","opportunities","tasks","calendars","automations","reporting","documents","session_notes","audit","billing","marketing"]')
+  '["contacts","tags","opportunities","tasks","calendars","automations","reporting","documents","session_notes","audit","billing"]')
 WHERE slug = '<slug-de-la-practica>';
 ```
 
-**Una práctica que ya existía** guarda su lista completa, así que un módulo nuevo (como `billing`, añadido con A4) **no le aparece solo**: hay que añadirlo con esta sentencia. Las prácticas nuevas lo reciben por defecto.
-
-Los nombres válidos están en `server/lib/modules.ts`; uno que no exista se ignora. Si la práctica **no** tiene la clave `enabledModules`, recibe la lista por defecto del §1. Un cambio se nota en unos 5 segundos (la API guarda el resultado en memoria ese tiempo) y en la web al recargar.
+Esta vía **no** escribe en el log de auditoría.
+</details>
 
 ---
 

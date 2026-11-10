@@ -21,6 +21,21 @@ El servidor **no arranca** si falta o está mal alguna (`server/lib/config.ts`):
 4. **Revertir** = apuntar el servicio a la definición de tarea anterior. No hace falta deshacer la base de datos.
 5. Antes de un despliegue con cambios de esquema: **instantánea manual de RDS**.
 
+### 2.1 Tareas de una sola vez contra la base de producción
+La base está en una red privada, sin acceso directo: todo lo que hay que ejecutar contra ella se corre como tarea única de ECS con la definición `psycrm-migrate` (misma red, mismo secreto de conexión) y un `command` distinto. La imagen contiene `server/` y `db/` (no `scripts/`), así que lo que se ejecute así debe vivir en `db/` y tener su comando en `package.json`.
+
+Ejemplo, encender un módulo para una práctica (`npm run enable-module`):
+
+```bash
+aws ecs run-task --cluster psycrm --launch-type FARGATE --task-definition psycrm-migrate \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+  --overrides '{"containerOverrides":[{"name":"app","command":["npm","run","enable-module"],"environment":[
+      {"name":"PRACTICE_SLUG","value":"<slug de la práctica>"},
+      {"name":"MODULE","value":"billing"}]}]}'
+```
+
+El resultado (qué hizo y la lista de módulos que quedó) sale en los registros de CloudWatch de la tarea; **no** contiene datos de clientes. Una tarea que termina con código distinto de 0 no cambió nada.
+
 ## 3. Primer arranque de una práctica nueva
 1. `npm run migrate`, luego `npm run seed:practice` (crea la práctica, la dueña, el pipeline Onboarding, el calendario, los campos y **las 9 plantillas y 2 paquetes en borrador**, y **los 4 workflows de onboarding apagados**).
 2. Cambiar la contraseña de la dueña por una larga (`scripts/rotate-op-password.ts`, variables de entorno, nunca argumentos).
