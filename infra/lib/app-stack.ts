@@ -67,7 +67,7 @@ export class AppStack extends Construct {
       environment: {
         NODE_ENV: 'production',
         PORT: String(PORT),
-        ENABLED_INTEGRATIONS: '', // none: each one needs a signed BAA first (docs/psycrm/INTEGRACIONES.md)
+        ENABLED_INTEGRATIONS: 'calendar_sync', // only calendar_sync (no BAA needed: only time blocks cross, never client data); every other one needs a signed BAA first (docs/psycrm/INTEGRACIONES.md)
         AWS_REGION: settings.region,
         PGBOSS_CREATE_SCHEMA: 'false', // db/roles.sql created the schema; the app's role may not create schemas
         PUBLIC_BASE_URL: publicBaseUrl,

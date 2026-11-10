@@ -11,7 +11,7 @@ El servidor **no arranca** si falta o está mal alguna (`server/lib/config.ts`):
 | `DATABASE_URL` | con `sslmode=verify-full` y el certificado raíz de RDS (`/app/certs/rds-global-bundle.pem`) |
 | `PUBLIC_BASE_URL` | la dirección **https** de la aplicación. Se usa en los enlaces de los correos (firma e invitación); sin ella el servidor no arranca |
 | `SES_FROM_ADDRESS` / `SES_REGION` | El remitente verificado en SES y su región (ver [`CORREO_SES.md`](CORREO_SES.md)) |
-| `ENABLED_INTEGRATIONS` | **vacía**. El registro de arranque debe decir `integrations enabled: none` |
+| `ENABLED_INTEGRATIONS` | **solo `calendar_sync`** (encendida el 2026-11-10; no envía datos de clientes, solo bloques de tiempo). Cualquier otra integración exige BAA antes. El registro de arranque debe decir exactamente `integrations enabled: calendar_sync`; si lista algo más, es un error |
 | `STATIC_DIR` | `/app/dist` (ya fijada en la imagen) |
 
 ## 2. Despliegue
