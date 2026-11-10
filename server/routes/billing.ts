@@ -20,6 +20,7 @@ import {
   parseMoneyToCents,
 } from '../lib/billing-vocab'
 import { PracticeRepo } from '../repos/practice-repo'
+import { billingDocumentsRoute } from './billing-documents'
 import {
   BillingProfileRepo,
   type ChargeError,
@@ -65,10 +66,6 @@ const patchChargeSchema = z.object({
   feeCents: chargeFields.feeCents.optional(),
 })
 
-const paymentSchema = z
-  .object({ paidCents: z.number().int().min(0).max(MAX_MONEY_CENTS), method: z.enum(PAYMENT_METHODS).nullable().optional() })
-  .refine((v) => v.paidCents === 0 || Boolean(v.method), { message: 'method_required', path: ['method'] })
-
 const reason = z.object({ reason: z.string().trim().min(3).max(300) })
 
 const issueSchema = z.object({
@@ -91,6 +88,7 @@ const STATUS: Record<ChargeError, 400 | 404 | 409 | 422> = {
   not_found: 404,
   voided: 409,
   issued: 409,
+  has_payments: 409,
   overpaid: 422,
   unknown_contact: 422,
   unknown_note: 422,
@@ -138,13 +136,18 @@ export function billingRoute(deps: { db: Database; secret: string }): Hono<AppEn
   // --- charges -------------------------------------------------------------------------------------------------------
 
   // Signed notes without a charge, pre-filled for review.
-  app.get('/suggestions', async (c) => {
+  app.get('/suggestions', zValidator('query', z.object({ contactId: z.string().optional() })), async (c) => {
     const practice = await new PracticeRepo(deps.db, c.get('locationId')).get()
     const fallback = { session: parseMoneyToCents(practice.fees.session), intake: parseMoneyToCents(practice.fees.intake) }
-    return c.json({ suggestions: await charges(c).suggestions(await profile(c).get(), fallback) })
+    return c.json({ suggestions: await charges(c).suggestions(await profile(c).get(), fallback, c.req.valid('query').contactId) })
   })
 
-  app.get('/charges', zValidator('query', z.object({ contactId: z.string().optional(), status: z.enum(['unbilled', 'billed', 'void', 'all']).optional() })), async (c) => {
+  // One client's outstanding balance, for the header of their record: numbers only.
+  app.get('/balance', zValidator('query', z.object({ contactId: z.string().min(1) })), async (c) => {
+    return c.json(await charges(c).balanceFor(c.req.valid('query').contactId))
+  })
+
+  app.get('/charges', zValidator('query', z.object({ contactId: z.string().optional(), status: z.enum(['active', 'unpaid', 'paid', 'void', 'all']).optional() })), async (c) => {
     return c.json({ charges: await charges(c).list(c.req.valid('query')) })
   })
 
@@ -155,12 +158,6 @@ export function billingRoute(deps: { db: Database; secret: string }): Hono<AppEn
 
   app.patch('/charges/:id', zValidator('json', patchChargeSchema), async (c) => {
     const r = await charges(c).update(c.req.param('id'), c.req.valid('json'), ctx(c))
-    return r.ok ? c.json({ ok: true, charge: r.charge }) : c.json({ error: r.error }, STATUS[r.error])
-  })
-
-  app.put('/charges/:id/payment', zValidator('json', paymentSchema), async (c) => {
-    const b = c.req.valid('json')
-    const r = await charges(c).setPayment(c.req.param('id'), b.paidCents, b.method ?? null, ctx(c))
     return r.ok ? c.json({ ok: true, charge: r.charge }) : c.json({ error: r.error }, STATUS[r.error])
   })
 
@@ -198,6 +195,9 @@ export function billingRoute(deps: { db: Database; secret: string }): Hono<AppEn
     const r = await superbills(c).void(c.req.param('id'), c.req.valid('json').reason, c.get('operatorId'), ctx(c))
     return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, r.error === 'not_found' ? 404 : 409)
   })
+
+  // Payments (each with its receipt) and invoices.
+  app.route('/', billingDocumentsRoute({ db: deps.db }))
 
   return app
 }

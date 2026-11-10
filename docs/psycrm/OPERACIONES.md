@@ -11,12 +11,12 @@ El servidor **no arranca** si falta o está mal alguna (`server/lib/config.ts`):
 | `DATABASE_URL` | con `sslmode=verify-full` y el certificado raíz de RDS (`/app/certs/rds-global-bundle.pem`) |
 | `PUBLIC_BASE_URL` | la dirección **https** de la aplicación. Se usa en los enlaces de los correos (firma e invitación); sin ella el servidor no arranca |
 | `SES_FROM_ADDRESS` / `SES_REGION` | El remitente verificado en SES y su región (ver [`CORREO_SES.md`](CORREO_SES.md)) |
-| `ENABLED_INTEGRATIONS` | **vacía**. El registro de arranque debe decir `integrations enabled: none` |
+| `ENABLED_INTEGRATIONS` | **solo `calendar_sync`** (encendida el 2026-11-10; no envía datos de clientes, solo bloques de tiempo). Cualquier otra integración exige BAA antes. El registro de arranque debe decir exactamente `integrations enabled: calendar_sync`; si lista algo más, es un error |
 | `STATIC_DIR` | `/app/dist` (ya fijada en la imagen) |
 
 ## 2. Despliegue
 1. Construir la imagen (`docker buildx build --platform linux/arm64 -t psycrm-app .`) y subirla a ECR.
-2. **Migrar** como tarea única de ECS: `aws ecs run-task … --overrides '{"containerOverrides":[{"name":"app","command":["npm","run","migrate"]}]}'`. Esperar a que termine con código 0. El esquema es **aditivo e idempotente** (se aplicó dos veces contra un PostgreSQL 16 real en las pruebas del día 8): repetirla es seguro.
+2. **Migrar** como tarea única de ECS: `aws ecs run-task … --overrides '{"containerOverrides":[{"name":"migrate","command":["npm","run","migrate"]}]}'`. Esperar a que termine con código 0. El esquema es **aditivo e idempotente** (se aplicó dos veces contra un PostgreSQL 16 real en las pruebas del día 8): repetirla es seguro.
 3. `aws ecs update-service --force-new-deployment`. El *circuit breaker* del servicio debe estar activado (revierte si la tarea nueva no pasa `/health`).
 4. **Revertir** = apuntar el servicio a la definición de tarea anterior. No hace falta deshacer la base de datos.
 5. Antes de un despliegue con cambios de esquema: **instantánea manual de RDS**.
@@ -29,12 +29,12 @@ Ejemplo, encender un módulo para una práctica (`npm run enable-module`):
 ```bash
 aws ecs run-task --cluster psycrm --launch-type FARGATE --task-definition psycrm-migrate \
   --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
-  --overrides '{"containerOverrides":[{"name":"app","command":["npm","run","enable-module"],"environment":[
+  --overrides '{"containerOverrides":[{"name":"migrate","command":["npm","run","enable-module"],"environment":[
       {"name":"PRACTICE_SLUG","value":"<slug de la práctica>"},
       {"name":"MODULE","value":"billing"}]}]}'
 ```
 
-El resultado (qué hizo y la lista de módulos que quedó) sale en los registros de CloudWatch de la tarea; **no** contiene datos de clientes. Una tarea que termina con código distinto de 0 no cambió nada.
+El resultado (qué hizo y la lista de módulos que quedó) sale en el grupo de registros `/psycrm/app` de CloudWatch (flujo `migrate/migrate/<id de la tarea>`); **no** contiene datos de clientes. Una tarea que termina con código distinto de 0 no cambió nada.
 
 ## 3. Primer arranque de una práctica nueva
 1. `npm run migrate`, luego `npm run seed:practice` (crea la práctica, la dueña, el pipeline Onboarding, el calendario, los campos y **las 9 plantillas y 2 paquetes en borrador**, y **los 4 workflows de onboarding apagados**).

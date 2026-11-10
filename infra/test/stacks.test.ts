@@ -173,7 +173,7 @@ describe('public service (with a domain)', () => {
     const app = defs.find((d) => d.Properties.Family === 'psycrm-app')?.Properties.ContainerDefinitions[0]
     expect(app).toMatchObject({ ReadonlyRootFilesystem: true, User: 'node' })
     const env = Object.fromEntries((app?.Environment as { Name: string; Value: string }[]).map((e) => [e.Name, e.Value]))
-    expect(env).toMatchObject({ NODE_ENV: 'production', PGBOSS_CREATE_SCHEMA: 'false', ENABLED_INTEGRATIONS: '', PUBLIC_BASE_URL: 'https://app.example.com', SES_FROM_ADDRESS: 'no-reply@example.com' })
+    expect(env).toMatchObject({ NODE_ENV: 'production', PGBOSS_CREATE_SCHEMA: 'false', ENABLED_INTEGRATIONS: 'calendar_sync', PUBLIC_BASE_URL: 'https://app.example.com', SES_FROM_ADDRESS: 'no-reply@example.com' })
     const secretNames = (app?.Secrets as { Name: string }[]).map((s) => s.Name).sort()
     expect(secretNames).toEqual(['DATABASE_URL', 'SESSION_SECRET'])
   })

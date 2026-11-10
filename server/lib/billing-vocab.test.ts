@@ -1,4 +1,5 @@
 import {
+  PAYMENT_METHODS, PAYMENT_METHOD_LABEL_ES, formatInvoiceNumber, formatReceiptNumber, serviceDescription,
   COMMON_CPT, MAX_DIAGNOSES, diagnosisLetter, diagnosisPointers, formatCents, formatSuperbillNumber, formatTaxId, isValidCpt,
   isValidIcd10, isValidNpi, normalizeIcd10, normalizeTaxId, parseMoneyToCents, suggestCpt, suggestPlace,
 } from './billing-vocab'
@@ -91,4 +92,26 @@ test('superbill numbers and diagnosis pointers', () => {
   expect(diagnosisPointers(['F41.1', 'F32.A'], ['F32.A', 'F41.1', 'F43.10'])).toBe('AB')
   expect(diagnosisPointers(['F43.10'], ['F32.A', 'F41.1', 'F43.10'])).toBe('C')
   expect(diagnosisPointers(['Z00.0'], ['F41.1'])).toBe('')
+})
+
+test('ATH Móvil is a payment method, and every method has a Spanish label for the client documents', () => {
+  expect(PAYMENT_METHODS).toContain('ath_movil')
+  expect(PAYMENT_METHOD_LABEL_ES.ath_movil).toBe('ATH Móvil')
+  for (const m of PAYMENT_METHODS) expect(PAYMENT_METHOD_LABEL_ES[m], m).toBeTruthy()
+  expect(Object.keys(PAYMENT_METHOD_LABEL_ES).sort()).toEqual([...PAYMENT_METHODS].sort())
+})
+
+test('a service reads in Spanish and says nothing clinical: no code, no diagnosis, only the kind of service', () => {
+  expect(serviceDescription('90791')).toBe('Evaluación inicial')
+  expect(['90832', '90834', '90837'].map(serviceDescription)).toEqual(Array(3).fill('Sesión de terapia individual'))
+  expect(serviceDescription('90847')).toBe('Sesión de pareja o familia')
+  expect(serviceDescription('90839')).toBe('Sesión de crisis')
+  expect(serviceDescription('99999')).toBe('Servicio profesional')
+  for (const c of COMMON_CPT) expect(serviceDescription(c.code), c.code).not.toMatch(/\d{5}|F\d{2}/)
+})
+
+test('invoice and receipt numbers', () => {
+  expect(formatInvoiceNumber(2026, 7)).toBe('FAC-2026-0007')
+  expect(formatReceiptNumber(2026, 12)).toBe('REC-2026-0012')
+  expect(formatReceiptNumber(2026, 12345)).toBe('REC-2026-12345')
 })

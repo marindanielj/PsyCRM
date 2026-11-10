@@ -139,7 +139,7 @@ Esto es parte de la protección del log de auditoría (día 2): el rol de la app
 |---|---|---|
 | `NODE_ENV` | texto | `production` |
 | `PORT` | texto | `8790` |
-| `ENABLED_INTEGRATIONS` | texto | **Vacía** (ninguna integración con terceros). Cada nombre que se añada exige un BAA previo: ver [`INTEGRACIONES.md`](INTEGRACIONES.md) |
+| `ENABLED_INTEGRATIONS` | texto | **`calendar_sync`** y nada más: no envía datos de clientes a nadie (solo bloques de tiempo), por eso no necesita BAA. Cada otro nombre que se añada sí exige un BAA previo: ver [`INTEGRACIONES.md`](INTEGRACIONES.md) |
 | `DATABASE_URL` | **Secrets Manager** | `postgres://psycrm_app:…@<endpoint-rds>:5432/psycrm?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem` |
 | `SESSION_SECRET` | **Secrets Manager** | ≥ 32 caracteres aleatorios |
 | `CHATWOOT_WEBHOOK_SECRET` | *no se necesita* | Solo si algún día se habilita la integración `chatwoot` (entonces ≥ 32 caracteres) |

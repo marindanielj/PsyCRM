@@ -19,7 +19,6 @@ export const MISSING_MESSAGES: Record<string, string> = {
   practice_license: 'Add your license number in Settings → Practice.',
   practice_address: 'Add the practice address in Settings → Practice.',
   provider_npi: 'Add your NPI in Settings → Billing.',
-  provider_tax_id: 'Add your tax ID (EIN or SSN) in Settings → Billing.',
   client_date_of_birth: 'This client has no date of birth on file.',
   charge_no_diagnosis: 'A charge has no diagnosis code. Edit it and add one.',
   charge_zero_fee: 'A charge has no fee. Edit it and set the amount.',
@@ -45,7 +44,9 @@ export const BILLING_MESSAGES: Record<string, string> = {
   unknown_note: 'That session note cannot be billed (it must be this client’s signed note).',
   unknown_appointment: 'That appointment does not belong to this client.',
   note_already_charged: 'That session already has a charge.',
-  overpaid: 'The amount paid cannot be more than the fee.',
+  overpaid: 'That is more than what is still owed on a charge. Lower the amount.',
+  has_payments: 'This charge has a payment. Void its receipt first, then void the charge.',
+  paid_mismatch: 'A charge has a payment that was recorded in an older way and does not match its receipts. Please contact support before recording another.',
   issued: 'This charge is on a superbill. Void the superbill first to change it.',
   voided: 'This charge was voided and cannot be changed.',
   not_found: 'That was not found. It may have been removed.',
@@ -62,7 +63,36 @@ export const SESSION_TYPE_LABELS: Record<string, string> = {
   intake: 'Intake', individual: 'Individual', couple: 'Couple', family: 'Family', crisis: 'Crisis', collateral: 'Collateral',
 }
 export const MODALITY_LABELS: Record<string, string> = { in_person: 'In person', telehealth_video: 'Video', phone: 'Phone' }
-export const PAYMENT_LABELS: Record<string, string> = { cash: 'Cash', card: 'Card', check: 'Check', transfer: 'Transfer', other: 'Other' }
+export const PAYMENT_LABELS: Record<string, string> = { cash: 'Cash', card: 'Card', check: 'Check', transfer: 'Transfer', ath_movil: 'ATH Móvil', other: 'Other' }
+
+/** How a method reads on a document the client receives (invoices and receipts are in Spanish). */
+export const PAYMENT_LABELS_ES: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', check: 'Cheque', transfer: 'Transferencia', ath_movil: 'ATH Móvil', other: 'Otro' }
+
+const MONTHS_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+
+/** `2026-11-02` → `2 de noviembre de 2026`, read from the text so a time zone can never move the date. */
+export function formatDateEs(ymd: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd ?? '')
+  if (!m) return ymd ?? ''
+  return `${Number(m[3])} de ${MONTHS_ES[Number(m[2]) - 1] ?? m[2]} de ${m[1]}`
+}
+
+/** A generic service name for a code (English, for the therapist). The contact record shows this, never the CPT code itself. */
+export function serviceLabel(cpt: string): string {
+  if (cpt === '90791') return 'Initial evaluation'
+  if (cpt === '90832' || cpt === '90834' || cpt === '90837') return 'Individual session'
+  if (cpt === '90846' || cpt === '90847') return 'Couple or family session'
+  if (cpt === '90839' || cpt === '90840') return 'Crisis session'
+  return 'Professional service'
+}
+
+/** Where a charge stands on payment. */
+export function paymentState(feeCents: number, paidCents: number): 'paid' | 'partial' | 'unpaid' {
+  return paidCents >= feeCents ? 'paid' : paidCents > 0 ? 'partial' : 'unpaid'
+}
+
+/** What an invoice's state is called on the screen. */
+export const INVOICE_STATUS_LABELS: Record<string, string> = { open: 'Open', paid: 'Paid', void: 'Voided' }
 
 /** `2026-11-02` → `Nov 2, 2026`, read from the string so a time zone can never move the date. */
 export function formatServiceDate(ymd: string): string {

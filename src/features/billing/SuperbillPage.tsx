@@ -9,8 +9,9 @@ import { formatMoneyExact } from '../../lib/utils'
 import { useAuth } from '../../state/auth'
 import { useTenant } from '../../state/location'
 import '../session-notes/note-print.css'
-import './superbill-print.css'
+import './doc-print.css'
 import { ReasonDialog } from './BillingDialogs'
+import { PracticeLogo } from './PracticeLogo'
 
 const PLACE_LABELS: Record<string, string> = { '11': 'Office', '10': 'Telehealth (home)', '02': 'Telehealth' }
 
@@ -69,12 +70,15 @@ export function SuperbillPage() {
 
       <div className="px-4 py-6">
         {voided && <p className="ol-noprint mx-auto mb-4 max-w-[8.5in] rounded-lg bg-rose-50 px-4 py-2 text-sm text-rose-800">This superbill was voided{sb.void_reason ? `: ${sb.void_reason}` : ''}. Its charges are free to put on a new one.</p>}
-        <article className="superbill-doc mx-auto max-w-[8.5in] rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
+        <article className="billing-doc mx-auto max-w-[8.5in] rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
           <p className="text-center text-[10px] font-semibold uppercase tracking-widest text-slate-500">Confidential — Protected health information</p>
           <header className="mt-2 flex flex-wrap items-start justify-between gap-4 border-b border-slate-300 pb-3">
-            <div>
-              <h1 className="text-xl font-bold text-slate-900">Superbill</h1>
-              <p className="text-sm text-slate-600">Statement of services for out-of-network reimbursement</p>
+            <div className="flex items-start gap-4">
+              <PracticeLogo loc={loc} />
+              <div>
+                <h1 className="text-xl font-bold text-slate-900">Superbill</h1>
+                <p className="text-sm text-slate-600">Statement of services for out-of-network reimbursement</p>
+              </div>
             </div>
             <div className="text-right text-sm">
               <div className="font-mono font-semibold">{sb.number}</div>
@@ -93,7 +97,7 @@ export function SuperbillPage() {
               <dl className="mt-2 text-sm">
                 <div><dt className="inline text-slate-500">License: </dt><dd className="inline">{provider.license}</dd></div>
                 <div><dt className="inline text-slate-500">NPI: </dt><dd className="inline font-mono">{provider.npi}</dd></div>
-                <div><dt className="inline text-slate-500">{provider.taxIdType === 'ssn' ? 'SSN' : 'EIN'}: </dt><dd className="inline font-mono">{provider.taxId ?? `ending ${provider.taxIdLast4}`}</dd></div>
+                {(provider.taxId || provider.taxIdLast4) && <div><dt className="inline text-slate-500">{provider.taxIdType === 'ssn' ? 'SSN' : 'EIN'}: </dt><dd className="inline font-mono">{provider.taxId ?? `ending ${provider.taxIdLast4}`}</dd></div>}
                 {provider.taxonomy && <div><dt className="inline text-slate-500">Taxonomy: </dt><dd className="inline font-mono">{provider.taxonomy}</dd></div>}
               </dl>
             </section>
@@ -153,7 +157,7 @@ export function SuperbillPage() {
             <div><div className="border-b border-slate-500 pt-8" /><div className="mt-1 text-xs text-slate-600">Date</div></div>
           </div>
 
-          <footer className="sb-footer mt-6 text-center text-[10px] text-slate-500">
+          <footer className="doc-footer mt-6 text-center text-[10px] text-slate-500">
             {sb.number} · {client.name} · printed {new Date().toLocaleDateString('en-US')}{operator?.name ? ` by ${operator.name}` : ''} · Confidential
           </footer>
         </article>

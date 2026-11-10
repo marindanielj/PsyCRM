@@ -105,7 +105,7 @@ export function BillingSettingsPage() {
           </div>
 
           <div>
-            <Label htmlFor="b-taxid">Tax ID (EIN or SSN)</Label>
+            <Label htmlFor="b-taxid">Tax ID (EIN or SSN) <span className="font-normal text-slate-400">(optional)</span></Label>
             {profile.hasTaxId && !removeTaxId ? (
               <div className="mt-1 flex flex-wrap items-center gap-3">
                 <span className="rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-700">Saved · {profile.taxIdType === 'ssn' ? 'SSN' : 'EIN'} ending in {profile.taxIdLast4}</span>
@@ -122,7 +122,7 @@ export function BillingSettingsPage() {
                 A social security number is printed <strong>in full</strong> on every superbill you give a client or an insurer. If one is lost or forwarded, that number goes with it. An <strong>EIN</strong> does the same job for insurers and is free from the IRS (apply online at irs.gov, usually done in minutes), so it is the safer choice.
               </p>
             )}
-            <p className="mt-1 text-xs text-slate-500">It is stored encrypted and is never shown again here. It appears in full only on a superbill you open. {removeTaxId && !newTaxId.trim() ? 'Saving now will remove it.' : ''}</p>
+            <p className="mt-1 text-xs text-slate-500">Not needed to issue a superbill; without it, that line is simply left off. It is stored encrypted and is never shown again here. If saved, it appears in full only on a superbill you open. {removeTaxId && !newTaxId.trim() ? 'Saving now will remove it.' : ''}</p>
           </div>
 
           <div>

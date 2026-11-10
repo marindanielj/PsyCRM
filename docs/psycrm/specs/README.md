@@ -13,7 +13,7 @@ Cada spec se puede implementar por sí solo y en orden. Parte de [`../PLAN_MVP.m
 | 7 | [Automatización del pipeline de onboarding](day-07-onboarding-automation.md) · ✅ hecho | 2, 4, 6 |
 | 8 | [Prueba completa, endurecimiento y salida a producción](day-08-e2e-golive.md) · ✅ hecho (software); la salida a producción depende de la lista go/no-go | todos |
 
-Extras posteriores al día 7: [invitación al cliente](extra-client-invite.md) · [marca por práctica](extra-branding.md) · [sincronización de calendario `.ics`](extra-calendar-sync.md) · [cobros y superbills (A4)](extra-billing-superbills.md) · [página pública y solicitudes](../RESULTADOS_PAGINA_PUBLICA.md).
+Extras posteriores al día 7: [invitación al cliente](extra-client-invite.md) · [marca por práctica](extra-branding.md) · [sincronización de calendario `.ics`](extra-calendar-sync.md) · [cobros y superbills (A4)](extra-billing-superbills.md) · [facturas y recibos (A4)](extra-billing-invoices-receipts.md) · [página pública y solicitudes](../RESULTADOS_PAGINA_PUBLICA.md).
 
 Ideas futuras con spec: [constructor de páginas por bloques (A12)](future-page-builder.md) · [nota de primera sesión (B11)](future-intake-notes.md).
 

@@ -1,12 +1,12 @@
-/* Printing a superbill: only the document, as a clean letter-size page. The app frame is released by the shared
-   `.ol-print-reset` / `.ol-noprint` rules in session-notes/note-print.css. */
+/* Printing a billing document (superbill, invoice, receipt): only the document, as a clean letter-size page.
+   The app frame is released by the shared `.ol-print-reset` / `.ol-noprint` rules in session-notes/note-print.css. */
 
-.superbill-doc {
+.billing-doc {
   font-family: Georgia, 'Times New Roman', serif;
 }
 
 @media print {
-  .superbill-doc {
+  .billing-doc {
     box-shadow: none !important;
     border: 0 !important;
     margin: 0 !important;
@@ -16,14 +16,14 @@
     line-height: 1.35;
     color: #000;
   }
-  .superbill-doc section,
-  .superbill-doc tr {
+  .billing-doc section,
+  .billing-doc tr {
     break-inside: avoid;
   }
-  .superbill-doc thead {
+  .billing-doc thead {
     display: table-header-group;
   }
-  .superbill-doc .sb-footer {
+  .billing-doc .doc-footer {
     position: fixed;
     bottom: 0;
     left: 0;

@@ -37,7 +37,7 @@ export const PLACES_OF_SERVICE: readonly { code: string; label: string }[] = [
   { code: '02', label: 'Telehealth, client elsewhere' },
 ]
 
-export const PAYMENT_METHODS = ['cash', 'card', 'check', 'transfer', 'other'] as const
+export const PAYMENT_METHODS = ['cash', 'card', 'check', 'transfer', 'ath_movil', 'other'] as const
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]
 
 export const TELEHEALTH_POS = ['10', '02'] as const
@@ -165,3 +165,44 @@ export function diagnosisPointers(lineCodes: readonly string[], superbillCodes: 
     .map(diagnosisLetter)
     .join('')
 }
+
+// --- documents for the client (invoice, receipt): Spanish, and nothing clinical -------------------------------------
+
+/** How a payment method reads on a document the client receives. */
+export const PAYMENT_METHOD_LABEL_ES: Record<PaymentMethod, string> = {
+  cash: 'Efectivo',
+  card: 'Tarjeta',
+  check: 'Cheque',
+  transfer: 'Transferencia',
+  ath_movil: 'ATH Móvil',
+  other: 'Otro',
+}
+
+/**
+ * What a service is called on an invoice or receipt. Deliberately generic: these documents get shown to employers, family
+ * and banks, so they never carry a diagnosis or a CPT code, only the kind of service.
+ */
+export function serviceDescription(cpt: string): string {
+  switch (cpt) {
+    case '90791':
+      return 'Evaluación inicial'
+    case '90832':
+    case '90834':
+    case '90837':
+      return 'Sesión de terapia individual'
+    case '90846':
+    case '90847':
+      return 'Sesión de pareja o familia'
+    case '90839':
+    case '90840':
+      return 'Sesión de crisis'
+    default:
+      return 'Servicio profesional'
+  }
+}
+
+const pad4 = (n: number) => String(n).padStart(4, '0')
+/** `FAC-2026-0007` */
+export const formatInvoiceNumber = (year: number, n: number) => `FAC-${year}-${pad4(n)}`
+/** `REC-2026-0007` */
+export const formatReceiptNumber = (year: number, n: number) => `REC-${year}-${pad4(n)}`
