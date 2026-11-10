@@ -9,12 +9,15 @@ import { enableModule } from '../server/lib/enable-module'
  *
  * It prints the practice's module list afterwards (module names only, never client data).
  */
+/** A mistake in how the command was run: its message is a fixed sentence, so it is safe to print. */
+class UsageError extends Error {}
+
 async function main() {
   const url = process.env.DATABASE_URL
   const slug = process.env.PRACTICE_SLUG
   const module = process.env.MODULE
-  if (!url) throw new Error('DATABASE_URL required')
-  if (!slug || !module) throw new Error('PRACTICE_SLUG and MODULE required')
+  if (!url) throw new UsageError('DATABASE_URL required')
+  if (!slug || !module) throw new UsageError('PRACTICE_SLUG and MODULE required')
 
   const pool = new Pool({ connectionString: url })
   try {
@@ -32,6 +35,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('enable-module failed:', (err as { code?: string }).code ?? 'unknown error')
+  // A database error can carry the values it choked on, so only its code is printed; our own usage errors are fixed text.
+  console.error('enable-module failed:', err instanceof UsageError ? err.message : ((err as { code?: string }).code ?? 'unknown error'))
   process.exit(1)
 })
