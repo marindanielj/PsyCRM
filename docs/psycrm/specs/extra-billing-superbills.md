@@ -70,7 +70,7 @@ Módulo nuevo `billing`. Una práctica que ya existe tiene su lista `enabledModu
 - **Confirmado (2026-11-10):** ya tiene NPI.
 - **Los códigos CPT sugeridos se usan tal cual por ahora** (90837 para 53 minutos o más, etc.). Ella los revisará con su práctica real y se corrigen después; no hay que cambiar nada para empezar, porque cada cargo se revisa antes de guardarse y las sugerencias están en un solo lugar (`suggestCpt` en `server/lib/billing-vocab.ts`).
 - **Confirmado (2026-11-10):** cobra **dos precios**, la evaluación inicial y la sesión de seguimiento, y ya están en Settings → Practice (`intake` y `session`). La sugerencia los usa tal cual (90791 → `intake`; los demás códigos → `session`), así que no hace falta cargar tarifas por código en Settings → Billing. Los montos deben estar escritos como cifra (`$100`); un texto como "según el caso" deja el cargo sin precio.
-- Falta saber si usa EIN o SSN.
+- **Confirmado (2026-11-10):** usa **seguro social (SSN)**. Se soporta (cifrado, solo escritura), pero **el número completo se imprime en cada superbill** que sale de la práctica. Se recomendó sacar un **EIN** (gratis en el IRS, en línea) y Settings → Billing muestra un aviso cuando el ID es un SSN. Si pasa a EIN basta con reemplazar el ID fiscal; las superbills ya emitidas conservan el que tenían.
 
 ## Archivos y pruebas
 

@@ -53,6 +53,9 @@ export function BillingSettingsPage() {
 
   if (!loc || !profile || !meta) return loadError ? <p role="alert" className="p-6 text-sm text-rose-700">Could not load billing settings.</p> : <PageSpinner />
 
+  // A social security number is printed in full on every superbill that leaves the practice.
+  const usingSsn = removeTaxId || newTaxId.trim() !== '' ? /^\d{3}-?\d{2}-?\d{4}$/.test(newTaxId.trim()) : profile.taxIdType === 'ssn'
+
   const badFee = Object.values(fees).some((v) => v.trim() !== '' && dollarsToCents(v) === null)
 
   async function save() {
@@ -113,6 +116,11 @@ export function BillingSettingsPage() {
                 <Input id="b-taxid" type="password" autoComplete="off" className="max-w-xs" value={newTaxId} placeholder="12-3456789 or 123-45-6789" onChange={(e) => setNewTaxId(e.target.value)} />
                 {removeTaxId && <Button type="button" variant="ghost" size="sm" onClick={() => { setRemoveTaxId(false); setNewTaxId('') }}>Keep the saved one</Button>}
               </div>
+            )}
+            {usingSsn && (
+              <p role="note" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                A social security number is printed <strong>in full</strong> on every superbill you give a client or an insurer. If one is lost or forwarded, that number goes with it. An <strong>EIN</strong> does the same job for insurers and is free from the IRS (apply online at irs.gov, usually done in minutes), so it is the safer choice.
+              </p>
             )}
             <p className="mt-1 text-xs text-slate-500">It is stored encrypted and is never shown again here. It appears in full only on a superbill you open. {removeTaxId && !newTaxId.trim() ? 'Saving now will remove it.' : ''}</p>
           </div>
