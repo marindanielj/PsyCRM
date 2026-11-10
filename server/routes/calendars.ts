@@ -8,6 +8,7 @@ import { CalendarsRepo } from '../repos/calendars-repo'
 import type { Database } from '../db/database'
 import type { WorkflowDispatch } from '../jobs/workflow-dispatcher'
 import { audit, auditContext } from '../lib/audit'
+import { CalendarSyncRepo } from '../repos/calendar-sync-repo'
 import { TimelineRepo } from '../repos/timeline-repo'
 
 const APPOINTMENT_STATUS = ['scheduled', 'confirmed', 'checked_in', 'completed', 'cancelled', 'no_show'] as const
@@ -95,8 +96,16 @@ export function calendarsRoute(deps: {
   db: Database
   /** Fired after a check-in so live workflows can react (day 7). */
   dispatch?: WorkflowDispatch
+  /** Calendar sync is on: warn when something is scheduled over time blocked in her personal calendar. */
+  externalBusy?: boolean
 }): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
+
+  /** Advice, never a refusal: she may knowingly book over her own personal calendar. */
+  const warningsFor = async (loc: string, startsAt: string, endsAt: string): Promise<string[]> =>
+    deps.externalBusy && (await new CalendarSyncRepo(deps.db, loc).overlaps(new Date(startsAt), new Date(endsAt)))
+      ? ['overlaps_personal_calendar']
+      : []
 
   app.get('/', async (c) => {
     const loc = c.get('locationId')
@@ -165,7 +174,7 @@ export function calendarsRoute(deps: {
       if (appointment.contact_id) {
         await deps.dispatch?.({ locationId: loc, triggerType: 'appointment_booked', contactId: appointment.contact_id, payload: { appointmentId: appointment.id, calendarId: input.calendarId, source: 'operator' }, depth: 0 })
       }
-      return c.json({ ok: true, appointment }, 201)
+      return c.json({ ok: true, appointment, warnings: await warningsFor(loc, appointment.starts_at, appointment.ends_at) }, 201)
     } catch (err) {
       // The no-double-book index refused this calendar+instant. An honest 409,
       // not a 500 — the operator must pick another time.
@@ -221,7 +230,9 @@ export function calendarsRoute(deps: {
       return c.json({ error: 'startsAt+endsAt or status required' }, 400)
     }
     if (!appointment) return c.json({ error: 'not found' }, 404)
-    return c.json({ ok: true, appointment })
+    // A move is the only change that can land on top of her own calendar.
+    const warnings = body.startsAt !== undefined && body.endsAt !== undefined ? await warningsFor(loc, appointment.starts_at, appointment.ends_at) : []
+    return c.json({ ok: true, appointment, warnings })
   })
 
   // Front-desk check-in. One tap: scheduled/confirmed -> checked_in, with the time. The

@@ -89,6 +89,16 @@ export const AUDIT_ACTIONS = {
   'invite.completed': 'Client completed their registration',
   'invite.expired': 'Client invitation expired',
   'practice.branding_updated': 'Practice branding changed',
+  // calendar sync (.ics) — only time blocks cross, never client details
+  'calendar.feed_created': 'Calendar feed address created',
+  'calendar.feed_regenerated': 'Calendar feed address replaced (the old one stopped working)',
+  'calendar.feed_revoked': 'Calendar feed turned off',
+  'calendar.feed_title_changed': 'Calendar feed title changed',
+  'calendar.feed_fetched': 'Calendar feed read by a subscribed calendar',
+  'calendar.external_connected': 'Personal calendar connected',
+  'calendar.external_removed': 'Personal calendar disconnected',
+  'calendar.external_toggled': 'Personal calendar paused or resumed',
+  'calendar.external_sync_failed': 'Personal calendar could not be read',
   'document.viewed': 'Document opened by client',
   'document.signed': 'Document signed',
   'document.downloaded': 'Signed documents downloaded',
@@ -110,6 +120,7 @@ export const AUDIT_CATEGORIES = [
   { key: 'workflows', label: 'Automations', prefixes: ['workflow.'] },
   { key: 'tasks', label: 'Tasks', prefixes: ['task.'] },
   { key: 'settings', label: 'Settings', prefixes: ['practice.', 'publicpage.'] },
+  { key: 'calendar', label: 'Calendar sync', prefixes: ['calendar.'] },
   { key: 'audit', label: 'Audit log', prefixes: ['audit.'] },
 ] as const
 

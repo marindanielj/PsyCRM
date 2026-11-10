@@ -6,6 +6,7 @@ import { DocumentsPage } from './features/documents/DocumentsPage'
 import { PacketEditorPage } from './features/documents/PacketEditorPage'
 import { TemplateEditorPage } from './features/documents/TemplateEditorPage'
 import { BrandingSettingsPage } from './features/settings/BrandingSettingsPage'
+import { CalendarSyncSettingsPage } from './features/settings/CalendarSyncSettingsPage'
 import { AuditLogPage } from './features/audit/AuditLogPage'
 import { NoteReportPage } from './features/session-notes/NoteReportPage'
 import { NoteWizardPage } from './features/session-notes/NoteWizard'
@@ -110,6 +111,7 @@ export default function App() {
             <Route path="account" element={<AccountSettingsPage />} />
             <Route path="practice" element={<PracticeSettingsPage />} />
             <Route path="branding" element={<BrandingSettingsPage />} />
+            <Route path="calendar-sync" element={<RequireModule module="calendars"><CalendarSyncSettingsPage /></RequireModule>} />
             <Route path="public-page" element={<PublicPageSettingsPage />} />
             <Route path="audit" element={<RequireModule module="audit"><AuditLogPage /></RequireModule>} />
             <Route path="pipelines" element={<PipelinesSettingsPage />} />

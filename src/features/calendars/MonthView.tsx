@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { useState } from 'react'
-import { type Appointment, type AppointmentStatus, type Calendar } from '../../lib/api'
+import { useEffect, useState } from 'react'
+import { type Appointment, type AppointmentStatus, type BusyBlock, type Calendar } from '../../lib/api'
+import { busyChipsForDay } from '../../lib/calendar-sync'
 import { cn, formatTime } from '../../lib/utils'
 
 interface MonthViewProps {
@@ -8,10 +9,13 @@ interface MonthViewProps {
   calendars: Record<string, Calendar>
   onStatus: (id: string, next: AppointmentStatus) => void
   contactName: (a: Appointment) => string | undefined
+  /** Time blocked in her personal calendar (calendar sync) for a date range. Absent when sync is off. */
+  loadBusy?: (from: string, to: string) => Promise<BusyBlock[]>
 }
 
-export function MonthView({ appts, calendars, onStatus, contactName }: MonthViewProps) {
+export function MonthView({ appts, calendars, onStatus, contactName, loadBusy }: MonthViewProps) {
   const [currentDate, setCurrentDate] = useState(() => new Date())
+  const [busy, setBusy] = useState<BusyBlock[]>([])
   
   const year = currentDate.getFullYear()
   const month = currentDate.getMonth()
@@ -33,6 +37,21 @@ export function MonthView({ appts, calendars, onStatus, contactName }: MonthView
   for (let i = 1; i <= nextDays; i++) {
     days.push({ date: new Date(year, month + 1, i), isCurrentMonth: false })
   }
+
+  // The 6-week grid shown (42 days, well inside the server's 62-day limit).
+  const gridFrom = days[0]!.date.getTime()
+  useEffect(() => {
+    if (!loadBusy) return
+    let live = true
+    const from = new Date(gridFrom)
+    const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 42)
+    loadBusy(from.toISOString(), to.toISOString())
+      .then((b) => live && setBusy(b))
+      .catch(() => live && setBusy([])) // sync off or unreachable: show the agenda without grey blocks
+    return () => {
+      live = false
+    }
+  }, [loadBusy, gridFrom])
 
   const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1))
   const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1))
@@ -89,6 +108,11 @@ export function MonthView({ appts, calendars, onStatus, contactName }: MonthView
                   </span>
                 </div>
                 <div className="space-y-1">
+                  {busyChipsForDay(busy, d.date).map((t, k) => (
+                    <div key={`busy-${k}`} className="truncate rounded border border-slate-200 bg-slate-100 px-1.5 py-1 text-[11px] text-slate-500" title="Busy in your personal calendar">
+                      <span className="font-semibold">Busy</span> {t}
+                    </div>
+                  ))}
                   {dayAppts.map(a => {
                     return (
                       <div key={a.id} className={cn("text-[11px] px-1.5 py-1 rounded border truncate cursor-pointer hover:bg-slate-200 transition-colors", a.status === 'cancelled' || a.status === 'no_show' ? 'opacity-50 border-slate-200 bg-slate-50' : 'border-brand-200 bg-brand-50')} title={`${formatTime(a.starts_at)} - ${a.title}`}>

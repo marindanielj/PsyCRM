@@ -27,6 +27,7 @@ Valor: nombres separados por comas, por ejemplo `ENABLED_INTEGRATIONS=voice,paym
 | Nombre | Qué monta | Proveedor que recibe datos | Variables / secretos que además necesita |
 |---|---|---|---|
 | `chatwoot` | `POST /api/webhooks/chatwoot` (mensajes entrantes) y el disparador "mensaje recibido" de las automatizaciones | El servidor de Chatwoot y los canales detrás de él (SMS, WhatsApp, email…) | `CHATWOOT_WEBHOOK_SECRET` (≥ 32 caracteres; en producción deja de aceptar el valor de desarrollo) |
+| `calendar_sync` | `GET /cal/<token>.ics` (el feed de la práctica), `/api/loc/:loc/calendar-sync` y el trabajo que lee sus calendarios personales cada 5 minutos | El servidor del calendario cuya dirección ella pega (Google, Apple…). **Solo cruzan bloques de tiempo, nunca datos de clientes** | Ninguno: usa `SESSION_SECRET` para cifrar la dirección que ella pega. Ver §3.1 |
 | `ai` | Cliente de IA (Claude), el worker de respuestas del agente, las rutas del asistente y el canal de texto con aprobación | Anthropic (y el *gateway* de texto) | Clave de Anthropic por práctica; `GATEWAY_TEXT_URL`, `INTERNAL_PUSH_SECRET` |
 | `public_pages` | Páginas públicas de marketing: embudos, formularios, reseñas, cursos, blog, comunidades, encuestas, propuestas, enlaces de seguimiento y afiliados | Ninguno directamente, pero los visitantes envían datos personales a páginas sin sesión | — |
 | `payments` | `/api/public/pay` (avisos de Stripe o Square) | Stripe o Square | Claves del proveedor por práctica |
@@ -56,10 +57,12 @@ Estos módulos están **apagados por defecto** (no están en la lista de arriba 
 | `social` | Facebook, Instagram, LinkedIn, X | — | No debe llevar datos de clientes; revisar el contenido que se publica |
 | `reputation` | Google y Facebook (reseñas) | — | Las reseñas son públicas; no responder con datos clínicos |
 | `sites`, `forms`, `surveys`, `proposals`, `blog`, `communities`, `memberships`, `trigger_links`, `affiliates` | Páginas públicas sin sesión | `public_pages` | Revisar qué datos personales recogen y añadir el texto de privacidad; las páginas públicas llevan un script en línea, por lo que hoy salen **sin** política CSP |
-| `calendar_sync` (semana 2, **por construir**) | Calendarios del teléfono de la terapeuta (Google o iCloud) por URL `.ics`, **sin OAuth** | `calendar_sync` | Sin BAA: solo cruzan bloques de tiempo, nunca datos de clientes (ver §3.1) |
+| `calendar_sync` (**construido**; apagado hasta encenderlo en `ENABLED_INTEGRATIONS`) | Calendarios del teléfono de la terapeuta (Google o iCloud) por URL `.ics`, **sin OAuth** | `calendar_sync` | Sin BAA: solo cruzan bloques de tiempo, nunca datos de clientes (ver §3.1) |
 | `documents` (día 5-6) y la invitación al cliente | Correo de Amazon SES para enviar los enlaces y los códigos (adaptador **ya escrito**; ver [`CORREO_SES.md`](CORREO_SES.md)) | — | Cubierto por el BAA de AWS **si** SES figura en la lista de servicios elegibles (tarea 1.4 de `INFRA_AWS.md`). Falta la cuenta de AWS, la identidad verificada y salir del *sandbox* |
 
-### 3.1 Sincronización de calendario por `.ics` (semana 2)
+### 3.1 Sincronización de calendario por `.ics` (construida)
+
+> **Estado:** construida y probada (spec: [`specs/extra-calendar-sync.md`](specs/extra-calendar-sync.md)). Para usarla hay que añadir `calendar_sync` a `ENABLED_INTEGRATIONS` y seguir el §4. Pantalla: **Settings → Calendar sync**.
 
 **Por qué:** la terapeuta no tiene horario fijo; su calendario de referencia es el del teléfono y las citas se acomodan alrededor de su vida personal. Se necesita ver todo en un solo calendario, sin enviar datos de clientes a Google o Apple.
 

@@ -1,4 +1,4 @@
-import { Bot, Braces, Globe, KeyRound, Palette, CreditCard, GitBranch, History, type LucideIcon, Phone, Send, Share2, SlidersHorizontal, Stethoscope } from 'lucide-react'
+import { Bot, Braces, CalendarCheck2, Globe, KeyRound, Palette, CreditCard, GitBranch, History, type LucideIcon, Phone, Send, Share2, SlidersHorizontal, Stethoscope } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { type ModuleKey, moduleEnabled } from '../../lib/modules'
 import { cn } from '../../lib/utils'
@@ -41,6 +41,13 @@ const SETTINGS_NAV: SettingsNavItem[] = [
     label: 'Branding',
     icon: Palette,
     description: 'Name, colour and logo',
+  },
+  {
+    to: '/settings/calendar-sync',
+    module: 'calendars',
+    label: 'Calendar sync',
+    icon: CalendarCheck2,
+    description: 'See appointments on your phone',
   },
   {
     to: '/settings/audit',

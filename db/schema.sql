@@ -1663,3 +1663,47 @@ CREATE TABLE IF NOT EXISTS inquiries (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS inquiries_by_location ON inquiries(location_id, status, created_at DESC);
+
+-- Calendar sync by .ics (INTEGRACIONES.md §3.1). Only TIME BLOCKS cross in either direction: never a client name,
+-- title, reason or note.
+--
+-- Outbound: one secret feed URL per practice, which the therapist subscribes to from her phone. Only the SHA-256 of the
+-- token is stored, so a database copy cannot reveal a working URL; regenerating replaces the hash and revoking deletes the row.
+CREATE TABLE IF NOT EXISTS calendar_feeds (
+  location_id     text PRIMARY KEY REFERENCES locations(id) ON DELETE CASCADE,
+  token_hash      text NOT NULL UNIQUE,
+  title           text NOT NULL DEFAULT 'Cita' CHECK (title IN ('Cita','Ocupado')),
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  rotated_at      timestamptz,
+  last_fetched_at timestamptz,
+  fetch_count     bigint NOT NULL DEFAULT 0
+);
+
+-- Inbound: the secret .ics address of the therapist's personal calendar. The address IS the credential (anyone holding it can
+-- read that calendar), so it is stored sealed (AES-256-GCM, key derived from SESSION_SECRET) and never returned by the API.
+CREATE TABLE IF NOT EXISTS external_calendars (
+  id             text PRIMARY KEY,
+  location_id    text NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  label          text NOT NULL DEFAULT 'My calendar' CHECK (char_length(label) BETWEEN 1 AND 60),
+  url_sealed     text NOT NULL,
+  host           text NOT NULL,                       -- shown to the person ("calendar.google.com"); the path is the secret
+  enabled        boolean NOT NULL DEFAULT true,
+  last_synced_at timestamptz,
+  last_attempt_at timestamptz,
+  last_status    text CHECK (last_status IN ('ok','error')),
+  last_error     text CHECK (last_error IN ('blocked_address','not_https','unreachable','timeout','http_error','too_large','not_calendar','too_many_redirects','secret_unreadable')),
+  block_count    int NOT NULL DEFAULT 0,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS external_calendars_by_location ON external_calendars(location_id);
+
+-- The busy blocks read from those calendars: START AND END ONLY. Each sync replaces a calendar's whole set.
+CREATE TABLE IF NOT EXISTS external_busy (
+  id                   bigserial PRIMARY KEY,
+  location_id          text NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  external_calendar_id text NOT NULL REFERENCES external_calendars(id) ON DELETE CASCADE,
+  starts_at            timestamptz NOT NULL,
+  ends_at              timestamptz NOT NULL CHECK (ends_at > starts_at)
+);
+CREATE INDEX IF NOT EXISTS external_busy_by_time ON external_busy(location_id, starts_at);
+CREATE INDEX IF NOT EXISTS external_busy_by_calendar ON external_busy(external_calendar_id);

@@ -87,6 +87,7 @@ test('check_availability returns the open times for a given date, location-scope
   const { db, tools } = makeTools({ allowWrites: false })
   db.enqueue([cal]) // CalendarsRepo.list()
   db.enqueue([]) // listByCalendarRange -> no busy spans
+  db.enqueue([]) // blocks read from her personal calendar (calendar sync)
   const r = await tools.dispatch({ id: 't1', name: 'check_availability', input: { date: '2026-06-08' } })
 
   expect(r.isError).toBeFalsy()
@@ -102,6 +103,7 @@ test('check_availability with no date offers the soonest open day', async () => 
   const { db, tools } = makeTools({ allowWrites: false })
   db.enqueue([cal])
   db.enqueue([]) // busy for the soonest day
+  db.enqueue([]) // blocks read from her personal calendar (calendar sync)
   const r = await tools.dispatch({ id: 't2', name: 'check_availability', input: {} })
   expect(r.isError).toBeFalsy()
   expect(r.content).toContain('2026-06-08') // today (Mon) is the soonest open day
@@ -143,6 +145,7 @@ test('book_appointment books the conversation contact, writes the timeline, and 
   const { db, events, tools } = makeTools({ allowWrites: true })
   db.enqueue([cal]) // calendars list
   db.enqueue([]) // busy
+  db.enqueue([]) // blocks read from her personal calendar (calendar sync)
   db.enqueue([{ id: 'c1', location_id: 'locA', name: 'Jane Doe' }]) // contact get (for the title)
   db.enqueue([{ id: 'appt1', location_id: 'locA' }]) // appointment INSERT RETURNING
   db.enqueue([{ id: 'tl1', location_id: 'locA' }]) // timeline INSERT RETURNING
@@ -169,6 +172,7 @@ test('book_appointment refuses a time that is not actually open', async () => {
   const { db, events, tools } = makeTools({ allowWrites: true })
   db.enqueue([cal])
   db.enqueue([]) // busy
+  db.enqueue([]) // blocks read from her personal calendar (calendar sync)
   const r = await tools.dispatch({
     id: 't6',
     name: 'book_appointment',
@@ -185,6 +189,7 @@ test('book_appointment turns a lost write race into an honest "just taken"', asy
   const { db, tools } = makeTools({ allowWrites: true })
   db.enqueue([cal])
   db.enqueue([]) // busy
+  db.enqueue([]) // blocks read from her personal calendar (calendar sync)
   db.enqueue([{ id: 'c1', location_id: 'locA', name: 'Jane Doe' }]) // contact get
   db.enqueueError({ code: '23505' }) // appointment INSERT loses the unique race
   const r = await tools.dispatch({

@@ -2191,6 +2191,47 @@ export interface Branding {
   logoUrl: string | null
 }
 
+// --- Calendar sync (.ics): only time blocks cross, never client details -------------------------------------
+
+export type FeedTitle = 'Cita' | 'Ocupado'
+
+export interface CalendarFeedInfo {
+  title: FeedTitle
+  created_at: string
+  rotated_at: string | null
+  last_fetched_at: string | null
+  fetch_count: number
+}
+
+export interface ExternalCalendar {
+  id: string
+  label: string
+  /** Only the host is ever shown; the rest of the address is a secret the server never returns. */
+  host: string
+  enabled: boolean
+  last_synced_at: string | null
+  last_attempt_at: string | null
+  last_status: 'ok' | 'error' | null
+  last_error: string | null
+  block_count: number
+  created_at: string
+}
+
+export interface CalendarSyncState {
+  feed: CalendarFeedInfo | null
+  calendars: ExternalCalendar[]
+  limits: { maxCalendars: number }
+  titles: FeedTitle[]
+}
+
+export type SyncReport = { ok: true; blocks: number; unsupportedRules: number; truncated: boolean } | { ok: false; error: string }
+
+/** Time blocked in her personal calendar: start and end only. */
+export interface BusyBlock {
+  start: string
+  end: string
+}
+
 export const api = {
   login: (email: string, password: string) =>
     req<{ ok: true; operator: Operator; passwordChangedAt: number | null }>('/auth/login', {
@@ -2214,6 +2255,23 @@ export const api = {
   /** A same-origin URL the browser can navigate to (it carries the session cookie). */
   auditExportUrl: (loc: string, filters: AuditFilters = {}) => `/api/loc/${loc}/audit/export.csv${qs(filters)}`,
 
+  calendarSync: {
+    get: (loc: string) => req<CalendarSyncState>(`/loc/${loc}/calendar-sync`),
+    /** The address is in THIS response only; it is never stored in readable form. */
+    createFeed: (loc: string, replace = false) =>
+      req<{ ok: true; rotated: boolean; url: string; feed: CalendarFeedInfo }>(`/loc/${loc}/calendar-sync/feed${replace ? '?replace=1' : ''}`, { method: 'POST' }),
+    setFeedTitle: (loc: string, title: FeedTitle) =>
+      req<{ ok: true; feed: CalendarFeedInfo }>(`/loc/${loc}/calendar-sync/feed`, { method: 'PUT', body: JSON.stringify({ title }) }),
+    revokeFeed: (loc: string) => req<{ ok: true }>(`/loc/${loc}/calendar-sync/feed`, { method: 'DELETE' }),
+    addCalendar: (loc: string, input: { label: string; url: string }) =>
+      req<{ ok: true; calendar: ExternalCalendar; sync: SyncReport }>(`/loc/${loc}/calendar-sync/calendars`, { method: 'POST', body: JSON.stringify(input) }),
+    syncCalendar: (loc: string, id: string) =>
+      req<{ ok: boolean; calendar: ExternalCalendar; blocks?: number; error?: string }>(`/loc/${loc}/calendar-sync/calendars/${id}/sync`, { method: 'POST' }),
+    updateCalendar: (loc: string, id: string, patch: { enabled?: boolean; label?: string }) =>
+      req<{ ok: true; calendar: ExternalCalendar }>(`/loc/${loc}/calendar-sync/calendars/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    removeCalendar: (loc: string, id: string) => req<{ ok: true }>(`/loc/${loc}/calendar-sync/calendars/${id}`, { method: 'DELETE' }),
+    busy: (loc: string, from: string, to: string) => req<{ blocks: BusyBlock[] }>(`/loc/${loc}/calendar-sync/busy${qs({ from, to })}`),
+  },
   branding: {
     get: (loc: string) => req<{ branding: Branding }>(`/loc/${loc}/branding`),
     save: (loc: string, input: { name?: string | null; color?: string | null }) =>
@@ -2675,7 +2733,7 @@ export const api = {
     )
   },
   createAppointment: (loc: string, input: NewAppointment) =>
-    req<{ ok: true; appointment: Appointment }>(`/loc/${loc}/calendars/appointments`, {
+    req<{ ok: true; appointment: Appointment; /** e.g. 'overlaps_personal_calendar' */ warnings?: string[] }>(`/loc/${loc}/calendars/appointments`, {
       method: 'POST',
       body: JSON.stringify(input),
     }),

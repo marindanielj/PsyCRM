@@ -44,6 +44,11 @@ export const INTEGRATIONS = {
     mounts: '/federation/*',
     vendor: 'the hub gateway',
   },
+  calendar_sync: {
+    label: 'Calendar sync (.ics)',
+    mounts: 'GET /cal/<token>.ics (the practice feed) and /api/loc/:loc/calendar-sync, plus the worker that reads her personal calendars',
+    vendor: 'the host of the personal calendar address she pastes in (Google, Apple...); only start and end times cross, never client details',
+  },
   push: {
     label: 'Mobile push tokens',
     mounts: '/api/push-tokens',

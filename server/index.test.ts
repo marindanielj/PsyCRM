@@ -119,6 +119,7 @@ const MOUNTS: Record<Integration, string[]> = {
   payments: ['/api/public/pay'],
   voice: ['/api/public/voice'],
   federation: ['/federation'],
+  calendar_sync: ['/cal', '/api/loc/:loc/calendar-sync'],
   push: ['/api/push-tokens'],
 }
 const mounted = (integrations: Integration[]) => {
