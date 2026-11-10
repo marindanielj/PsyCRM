@@ -23,11 +23,15 @@ async function main() {
   try {
     const r = await enableModule(new PgDatabase(pool), slug, module)
     if (!r.ok) {
-      console.error(r.error === 'unknown_module' ? `enable-module: "${module}" is not a module name` : `enable-module: no practice with slug "${slug}"`)
+      // Fixed sentences only: the server's logging rule (server/security.test.ts) is that nothing typed in is echoed back.
+      if (r.error === 'unknown_module') console.error('enable-module: unknown module name')
+      else console.error('enable-module: no practice with that slug')
       process.exitCode = 1
       return
     }
-    console.log(`enable-module: ${r.changed ? `"${module}" is now ON` : `"${module}" was already on (nothing changed)`} for "${slug}"`)
+    if (r.changed) console.log('enable-module: module turned on')
+    else console.log('enable-module: already on, nothing changed')
+    // Module names come from the closed list in server/lib/modules.ts, never from client data.
     console.log(`enable-module: modules now: ${r.modules.join(', ')}`)
   } finally {
     await pool.end()
