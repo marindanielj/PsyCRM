@@ -2480,7 +2480,8 @@ export const api = {
     profile: (loc: string) => req<{ profile: BillingProfile }>(`/loc/${loc}/billing/profile`),
     saveProfile: (loc: string, input: BillingProfileInput) =>
       req<{ ok: true; profile: BillingProfile }>(`/loc/${loc}/billing/profile`, { method: 'PUT', body: JSON.stringify(input) }),
-    suggestions: (loc: string) => req<{ suggestions: ChargeSuggestion[] }>(`/loc/${loc}/billing/suggestions`),
+    suggestions: (loc: string, contactId?: string) => req<{ suggestions: ChargeSuggestion[] }>(`/loc/${loc}/billing/suggestions${contactId ? `?contactId=${encodeURIComponent(contactId)}` : ''}`),
+    balance: (loc: string, contactId: string) => req<{ balanceCents: number; openCharges: number }>(`/loc/${loc}/billing/balance?contactId=${encodeURIComponent(contactId)}`),
     charges: (loc: string, filter: { contactId?: string; status?: 'active' | 'unpaid' | 'paid' | 'void' | 'all' } = {}) =>
       req<{ charges: ChargeRow[] }>(`/loc/${loc}/billing/charges${qs(filter)}`),
     createCharge: (loc: string, input: ChargeInput) =>

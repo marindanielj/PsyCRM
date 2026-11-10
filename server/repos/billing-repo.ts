@@ -253,6 +253,17 @@ export class ChargesRepo {
     )
   }
 
+  /** What one client still owes: fee minus paid over their live charges (never negative per charge). Numbers only. */
+  async balanceFor(contactId: string): Promise<{ balanceCents: number; openCharges: number }> {
+    const rows = await this.db.query<{ balance: string | number | null; open: string | number }>(
+      `SELECT COALESCE(sum(GREATEST(fee_cents - paid_cents, 0)), 0) AS balance,
+              count(*) FILTER (WHERE fee_cents > paid_cents) AS open
+         FROM charges WHERE location_id = $1 AND contact_id = $2 AND voided_at IS NULL`,
+      [this.locationId, contactId],
+    )
+    return { balanceCents: Number(rows[0]?.balance ?? 0), openCharges: Number(rows[0]?.open ?? 0) }
+  }
+
   async get(id: string): Promise<Charge | undefined> {
     return (await this.db.query<Charge>(`SELECT ${CHARGE_COLS} FROM charges ch WHERE ch.location_id = $1 AND ch.id = $2`, [this.locationId, id]))[0]
   }
@@ -261,7 +272,7 @@ export class ChargesRepo {
    * Signed, undeleted notes that have no live charge, with the charge pre-filled from the session. The fee is the usual fee
    * for that code from Settings → Billing, else the Practice honorarium (intake or session) when it reads as money.
    */
-  async suggestions(profile: BillingProfile, practiceFeeCents: { session: number | null; intake: number | null } = { session: null, intake: null }): Promise<ChargeSuggestion[]> {
+  async suggestions(profile: BillingProfile, practiceFeeCents: { session: number | null; intake: number | null } = { session: null, intake: null }, contactId?: string): Promise<ChargeSuggestion[]> {
     const rows = await this.db.query<{
       note_id: string; contact_id: string; contact_name: string | null; appointment_id: string | null; service_date: string
       session_type: string; modality: string; duration_min: number | null; diagnosis_codes: string[] | null; appt_minutes: number | null
@@ -274,9 +285,10 @@ export class ChargesRepo {
          LEFT JOIN appointments a ON a.id = n.appointment_id AND a.location_id = n.location_id
         WHERE n.location_id = $1 AND n.status = 'signed' AND n.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM charges ch WHERE ch.session_note_id = n.id AND ch.voided_at IS NULL)
+          AND ($2::text IS NULL OR n.contact_id = $2)
         ORDER BY n.session_date DESC, n.created_at DESC
         LIMIT 200`,
-      [this.locationId],
+      [this.locationId, contactId ?? null],
     )
     return rows.map((r) => {
       const minutes = r.duration_min ?? r.appt_minutes

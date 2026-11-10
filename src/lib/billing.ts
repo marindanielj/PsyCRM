@@ -77,6 +77,20 @@ export function formatDateEs(ymd: string | null | undefined): string {
   return `${Number(m[3])} de ${MONTHS_ES[Number(m[2]) - 1] ?? m[2]} de ${m[1]}`
 }
 
+/** A generic service name for a code (English, for the therapist). The contact record shows this, never the CPT code itself. */
+export function serviceLabel(cpt: string): string {
+  if (cpt === '90791') return 'Initial evaluation'
+  if (cpt === '90832' || cpt === '90834' || cpt === '90837') return 'Individual session'
+  if (cpt === '90846' || cpt === '90847') return 'Couple or family session'
+  if (cpt === '90839' || cpt === '90840') return 'Crisis session'
+  return 'Professional service'
+}
+
+/** Where a charge stands on payment. */
+export function paymentState(feeCents: number, paidCents: number): 'paid' | 'partial' | 'unpaid' {
+  return paidCents >= feeCents ? 'paid' : paidCents > 0 ? 'partial' : 'unpaid'
+}
+
 /** What an invoice's state is called on the screen. */
 export const INVOICE_STATUS_LABELS: Record<string, string> = { open: 'Open', paid: 'Paid', void: 'Voided' }
 

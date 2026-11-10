@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { PAYMENT_METHODS, PAYMENT_METHOD_LABEL_ES, formatCents, parseMoneyToCents } from './billing-vocab'
-import { BILLING_MESSAGES, MISSING_MESSAGES, PAYMENT_LABELS, PAYMENT_LABELS_ES, billingMessage, centsToInput, describeMissing, dollarsToCents, formatDateEs, formatServiceDate } from '../../src/lib/billing'
+import { BILLING_MESSAGES, MISSING_MESSAGES, PAYMENT_LABELS, PAYMENT_LABELS_ES, billingMessage, centsToInput, describeMissing, dollarsToCents, formatDateEs, formatServiceDate, paymentState, serviceLabel } from '../../src/lib/billing'
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
 // the superbill/charge routes and repos, plus the payments/receipts/invoices ones
@@ -72,4 +72,21 @@ test('a service date is read from its text, so no time zone can move it', () => 
   expect(formatServiceDate('2026-12-31')).toBe('Dec 31, 2026')
   expect(formatServiceDate('2026-01-05T00:00:00Z')).toBe('Jan 5, 2026')
   expect(formatServiceDate('garbage')).toBe('garbage')
+})
+
+test('the contact record names a service generically: never a code, always something readable', () => {
+  for (const code of ['90791', '90832', '90834', '90837', '90846', '90847', '90839', '90840', '99999', '']) {
+    const label = serviceLabel(code)
+    expect(label).not.toMatch(/\d/)
+    expect(label.length).toBeGreaterThan(5)
+  }
+  expect(serviceLabel('90791')).toBe('Initial evaluation')
+  expect(serviceLabel('90834')).toBe('Individual session')
+})
+
+test('payment state: unpaid, partial or paid', () => {
+  expect(paymentState(10000, 0)).toBe('unpaid')
+  expect(paymentState(10000, 4000)).toBe('partial')
+  expect(paymentState(10000, 10000)).toBe('paid')
+  expect(paymentState(0, 0)).toBe('paid')
 })

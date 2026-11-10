@@ -11,6 +11,8 @@ import { ClientRiskBadge } from '../session-notes/RiskBadge'
 import { NotesTab } from '../session-notes/NotesTab'
 import { ContactAudit } from '../audit/ContactAudit'
 import { ContactDocuments } from '../documents/ContactDocuments'
+import { ClientBalanceBadge } from '../billing/ClientBalanceBadge'
+import { ContactBilling } from '../billing/ContactBilling'
 import { ConfirmDeleteContactDialog } from './ConfirmDeleteContactDialog'
 import { ContactCustomFields } from './ContactCustomFields'
 import { ContactState } from './ContactState'
@@ -41,6 +43,8 @@ export function ContactDetail({
   const { current } = useTenant()
   const clinicalNotes = moduleEnabled(current, 'session_notes')
   const documentsOn = moduleEnabled(current, 'documents')
+  const billingOn = moduleEnabled(current, 'billing')
+  const [billingTick, setBillingTick] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -82,6 +86,7 @@ export function ContactDetail({
             <p className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
               <span>{contact.source ? `via ${contact.source}` : 'Contact'}</span>
               <ClientRiskBadge contactId={contactId} />
+              <ClientBalanceBadge contactId={contactId} refreshKey={billingTick} />
             </p>
           </div>
           {onArchived && (
@@ -147,6 +152,12 @@ export function ContactDetail({
         {documentsOn && (
           <div className="mt-8">
             <ContactDocuments locationId={locationId} contactId={contactId} contactName={name} contactEmail={contact.emails[0] ?? null} customFields={contact.custom_fields} />
+          </div>
+        )}
+
+        {billingOn && (
+          <div className="mt-8">
+            <ContactBilling locationId={locationId} contactId={contactId} contactName={name} onChanged={() => setBillingTick((n) => n + 1)} />
           </div>
         )}
 

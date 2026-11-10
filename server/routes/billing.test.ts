@@ -107,6 +107,33 @@ test('signed notes without a charge are offered pre-filled; drafts and other pra
   expect((await s.call(s.B, 'GET', '/suggestions')).body.suggestions.map((x: any) => x.note_id)).toEqual(['nb'])
 })
 
+test('suggestions can be limited to one client', async () => {
+  const s = await setup()
+  const all = (await s.call(s.A, 'GET', '/suggestions')).body.suggestions
+  expect(all.length).toBeGreaterThan(0)
+  const one = (await s.call(s.A, 'GET', '/suggestions?contactId=c1')).body.suggestions
+  expect(one.every((x: any) => x.contact_id === 'c1')).toBe(true)
+  expect((await s.call(s.A, 'GET', '/suggestions?contactId=nobody')).body.suggestions).toEqual([])
+})
+
+test('a client balance sums what is still owed on live charges, per client and per practice', async () => {
+  const s = await setup()
+  expect((await s.call(s.A, 'GET', '/balance?contactId=c1')).body).toEqual({ balanceCents: 0, openCharges: 0 })
+  const a = (await s.call(s.A, 'POST', '/charges', s.charge({ feeCents: 10000 }))).body.charge.id
+  const b = (await s.call(s.A, 'POST', '/charges', s.charge({ feeCents: 8000, serviceDate: '2026-11-03' }))).body.charge.id
+  const gone = (await s.call(s.A, 'POST', '/charges', s.charge({ feeCents: 5000, serviceDate: '2026-11-04' }))).body.charge.id
+  await s.call(s.A, 'POST', `/charges/${gone}/void`, { reason: 'entered by mistake' })
+  await s.pay(a, 4000)
+  expect((await s.call(s.A, 'GET', '/balance?contactId=c1')).body).toEqual({ balanceCents: 14000, openCharges: 2 })
+  await s.pay(b, 8000)
+  const full = (await s.call(s.A, 'GET', '/balance?contactId=c1')).body
+  expect(full).toEqual({ balanceCents: 6000, openCharges: 1 })
+  expect(Object.keys(full).sort()).toEqual(['balanceCents', 'openCharges']) // numbers only: no names, no diagnoses
+  expect((await s.call(s.A, 'GET', '/balance?contactId=c2')).body.balanceCents).toBe(0)
+  expect((await s.call(s.B, 'GET', '/balance?contactId=c1')).body.balanceCents).toBe(0)
+  expect((await s.call(s.A, 'GET', '/balance')).status).toBe(400)
+})
+
 test('with no usual fee set for a code, the suggestion falls back to the Practice honorarium (intake or session)', async () => {
   const s = await setup()
   const byNote = async () => Object.fromEntries((await s.call(s.A, 'GET', '/suggestions')).body.suggestions.map((x: any) => [x.note_id, x]))

@@ -136,10 +136,15 @@ export function billingRoute(deps: { db: Database; secret: string }): Hono<AppEn
   // --- charges -------------------------------------------------------------------------------------------------------
 
   // Signed notes without a charge, pre-filled for review.
-  app.get('/suggestions', async (c) => {
+  app.get('/suggestions', zValidator('query', z.object({ contactId: z.string().optional() })), async (c) => {
     const practice = await new PracticeRepo(deps.db, c.get('locationId')).get()
     const fallback = { session: parseMoneyToCents(practice.fees.session), intake: parseMoneyToCents(practice.fees.intake) }
-    return c.json({ suggestions: await charges(c).suggestions(await profile(c).get(), fallback) })
+    return c.json({ suggestions: await charges(c).suggestions(await profile(c).get(), fallback, c.req.valid('query').contactId) })
+  })
+
+  // One client's outstanding balance, for the header of their record: numbers only.
+  app.get('/balance', zValidator('query', z.object({ contactId: z.string().min(1) })), async (c) => {
+    return c.json(await charges(c).balanceFor(c.req.valid('query').contactId))
   })
 
   app.get('/charges', zValidator('query', z.object({ contactId: z.string().optional(), status: z.enum(['active', 'unpaid', 'paid', 'void', 'all']).optional() })), async (c) => {

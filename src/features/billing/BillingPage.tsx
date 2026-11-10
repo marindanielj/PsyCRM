@@ -1,6 +1,6 @@
 import { FilePlus2, FileText, HandCoins, Plus, Receipt } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
 import { PageSpinner } from '../../components/ui/spinner'
 import { type BillingMeta, type BillingProfile, type ChargeRow, type ChargeSuggestion, type InvoiceSummary, type ReceiptSummary, type SuperbillSummary, api } from '../../lib/api'
@@ -40,7 +40,9 @@ export function BillingPage() {
 
   const [tab, setTab] = useState<Tab>('charges')
   const [status, setStatus] = useState<Status>('active')
-  const [clientFilter, setClientFilter] = useState('')
+  // `?client=<id>` opens the page already filtered to one client (the link from their record).
+  const [searchParams] = useSearchParams()
+  const [clientFilter, setClientFilter] = useState(searchParams.get('client') ?? '')
   const [meta, setMeta] = useState<BillingMeta | null>(null)
   const [profile, setProfile] = useState<BillingProfile | null>(null)
   const [contacts, setContacts] = useState<{ id: string; name: string }[]>([])
