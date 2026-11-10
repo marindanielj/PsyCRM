@@ -12,7 +12,7 @@
 |---|---|---|
 | **Qué controla** | Qué partes del producto ve y puede usar una práctica (menú, páginas, rutas de la API) | Si el servidor **monta** código que envía o recibe datos de un proveedor externo |
 | **Dónde se configura** | Por práctica, en la base de datos: `locations.settings.enabledModules` | Por despliegue, en una variable de entorno: `ENABLED_INTEGRATIONS` |
-| **Valor por defecto** | Contactos, etiquetas, oportunidades, tareas, calendarios, automatizaciones, dashboard, documentos, notas de sesión y auditoría | **Ninguna** |
+| **Valor por defecto** | Contactos, etiquetas, oportunidades, tareas, calendarios, automatizaciones, dashboard, documentos, notas de sesión, auditoría y cobros (`billing`: cargos y superbills, que no envían nada a terceros) | **Ninguna** |
 | **Si está apagado** | El menú no lo muestra, la página redirige al inicio y la API responde 404 | Las rutas **no existen** (404) y no se crea ningún cliente del proveedor |
 | **Código** | `server/lib/modules.ts`, `server/middleware/module-gate.ts` | `server/lib/integrations.ts`, `server/index.ts` |
 
@@ -116,9 +116,11 @@ SELECT settings->'enabledModules' FROM locations WHERE slug = '<slug-de-la-pract
 -- Fijar la lista completa (reemplaza la anterior; incluya los módulos que ya tenía)
 UPDATE locations
 SET settings = jsonb_set(settings, '{enabledModules}',
-  '["contacts","tags","opportunities","tasks","calendars","automations","reporting","documents","session_notes","audit","marketing"]')
+  '["contacts","tags","opportunities","tasks","calendars","automations","reporting","documents","session_notes","audit","billing","marketing"]')
 WHERE slug = '<slug-de-la-practica>';
 ```
+
+**Una práctica que ya existía** guarda su lista completa, así que un módulo nuevo (como `billing`, añadido con A4) **no le aparece solo**: hay que añadirlo con esta sentencia. Las prácticas nuevas lo reciben por defecto.
 
 Los nombres válidos están en `server/lib/modules.ts`; uno que no exista se ignora. Si la práctica **no** tiene la clave `enabledModules`, recibe la lista por defecto del §1. Un cambio se nota en unos 5 segundos (la API guarda el resultado en memoria ese tiempo) y en la web al recargar.
 

@@ -35,6 +35,7 @@ export const ALL_MODULES = [
   'documents',
   'session_notes',
   'audit',
+  'billing',
 ] as const
 
 export type Module = (typeof ALL_MODULES)[number]
@@ -51,6 +52,7 @@ export const PSYCRM_DEFAULT_MODULES: readonly Module[] = [
   'documents',
   'session_notes',
   'audit',
+  'billing',
 ]
 
 const KNOWN = new Set<string>(ALL_MODULES)

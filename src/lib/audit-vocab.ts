@@ -86,6 +86,16 @@ export const AUDIT_LABELS: Record<string, string> = {
   'calendar.external_removed': 'Personal calendar disconnected',
   'calendar.external_toggled': 'Personal calendar paused or resumed',
   'calendar.external_sync_failed': 'Personal calendar could not be read',
+  // billing (A4): charges and superbills. Details carry ids, codes and states, never clinical text.
+  'billing.profile_updated': 'Billing details changed',
+  'charge.created': 'Charge added',
+  'charge.updated': 'Charge edited',
+  'charge.payment_recorded': 'Payment recorded on a charge',
+  'charge.voided': 'Charge voided',
+  'superbill.issued': 'Superbill issued',
+  'superbill.viewed': 'Superbill opened',
+  'superbill.printed': 'Superbill printed',
+  'superbill.voided': 'Superbill voided',
   'document.viewed': 'Document opened by client',
   'document.signed': 'Document signed',
   'document.downloaded': 'Signed documents downloaded',
@@ -105,6 +115,7 @@ export const AUDIT_CATEGORIES: { key: string; label: string; prefixes: string[] 
   { key: 'tasks', label: 'Tasks', prefixes: ['task.'] },
   { key: 'settings', label: 'Settings', prefixes: ['practice.', 'publicpage.'] },
   { key: 'calendar', label: 'Calendar sync', prefixes: ['calendar.'] },
+  { key: 'billing', label: 'Billing', prefixes: ['billing.', 'charge.', 'superbill.'] },
   { key: 'audit', label: 'Audit log', prefixes: ['audit.'] },
 ]
 

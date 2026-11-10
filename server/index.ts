@@ -47,6 +47,7 @@ import { authRoute } from './routes/auth'
 import { publicPageRoute } from './routes/public-page'
 import { inquiriesRoute, publicPageAdminRoute } from './routes/public-page-admin'
 import { blogRoute } from './routes/blog'
+import { billingRoute } from './routes/billing'
 import { calendarsRoute } from './routes/calendars'
 import { calendarFeedRoute, calendarSyncRoute } from './routes/calendar-sync'
 import { callsRoute } from './routes/calls'
@@ -164,6 +165,7 @@ const ROUTE_MODULE: Record<string, Module> = {
   'trigger-links': 'trigger_links',
   affiliates: 'affiliates',
   'calendar-sync': 'calendars',
+  billing: 'billing',
   tasks: 'tasks',
   templates: 'templates',
   tags: 'tags',
@@ -346,6 +348,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     // Settings -> Calendar sync: her feed address and the personal calendars PsyCRM reads for busy time.
     app.route('/api/loc/:loc/calendar-sync', calendarSyncRoute({ db: deps.db, secret: deps.sessionSecret, publicBaseUrl: deps.publicBaseUrl }))
   }
+  // Charges and superbills (A4). Bookkeeping only: nothing here moves money or leaves the system.
+  app.route('/api/loc/:loc/billing', billingRoute({ db: deps.db, secret: deps.sessionSecret }))
   app.route('/api/loc/:loc/campaigns', campaignsRoute({ db: deps.db }))
   app.route('/api/loc/:loc/workflows', workflowsRoute({ db: deps.db }))
   app.route('/api/loc/:loc/reporting', reportingRoute({ db: deps.db }))

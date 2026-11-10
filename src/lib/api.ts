@@ -2232,6 +2232,130 @@ export interface BusyBlock {
   end: string
 }
 
+// --- Billing: charges and superbills (A4). Bookkeeping only: nothing here moves money. ------------------------
+
+export interface BillingProfile {
+  npi: string
+  taxonomy: string
+  telehealthPos: '10' | '02'
+  /** The tax id is write-only: the server says whether one is saved, its kind and its last four digits, never the number. */
+  hasTaxId: boolean
+  taxIdType: 'ein' | 'ssn' | null
+  taxIdLast4: string | null
+  /** Default fee per CPT code, in cents. */
+  fees: Record<string, number>
+}
+
+export interface BillingProfileInput {
+  npi?: string
+  taxonomy?: string
+  telehealthPos?: '10' | '02'
+  taxId?: string | null
+  fees?: Record<string, number>
+}
+
+export interface BillingMeta {
+  cpt: { code: string; label: string }[]
+  modifiers: { code: string; label: string }[]
+  placesOfService: { code: string; label: string }[]
+  paymentMethods: PaymentMethod[]
+  maxDiagnoses: number
+}
+
+export type PaymentMethod = 'cash' | 'card' | 'check' | 'transfer' | 'other'
+
+export interface ChargeRow {
+  id: string
+  contact_id: string
+  contact_name: string | null
+  appointment_id: string | null
+  session_note_id: string | null
+  service_date: string
+  cpt_code: string
+  modifiers: string[]
+  place_of_service: string
+  units: number
+  diagnosis_codes: string[]
+  fee_cents: number
+  paid_cents: number
+  paid_at: string | null
+  payment_method: PaymentMethod | null
+  superbill_id: string | null
+  superbill_number: string | null
+  voided_at: string | null
+  void_reason: string | null
+}
+
+export interface ChargeInput {
+  contactId: string
+  serviceDate: string
+  cptCode: string
+  modifiers: string[]
+  placeOfService: string
+  units: number
+  diagnosisCodes: string[]
+  feeCents: number
+  appointmentId?: string | null
+  sessionNoteId?: string | null
+}
+
+/** A signed note with no charge yet, pre-filled for review. Nothing in it is decided for the therapist. */
+export interface ChargeSuggestion {
+  note_id: string
+  contact_id: string
+  contact_name: string | null
+  appointment_id: string | null
+  service_date: string
+  session_type: string
+  modality: string
+  duration_min: number | null
+  cpt_code: string | null
+  modifiers: string[]
+  place_of_service: string
+  diagnosis_codes: string[]
+  fee_cents: number | null
+}
+
+export interface SuperbillSummary {
+  id: string
+  contact_id: string
+  contact_name: string | null
+  number: string
+  period_from: string
+  period_to: string
+  issued_at: string
+  voided_at: string | null
+  void_reason: string | null
+  total_cents: number
+  paid_cents: number
+  line_count: number
+}
+
+export interface SuperbillDetail {
+  id: string
+  contact_id: string
+  number: string
+  period_from: string
+  period_to: string
+  issued_at: string
+  voided_at: string | null
+  void_reason: string | null
+  snapshot: {
+    number: string
+    issuedAt: string
+    provider: { name: string; practiceName: string; license: string; npi: string; taxonomy: string; address: string; phone: string; email: string; taxIdType: 'ein' | 'ssn'; taxIdLast4: string; taxId: string | null }
+    client: { name: string; dateOfBirth: string; address: string; memberId: string }
+    diagnoses: { letter: string; code: string }[]
+    lines: { chargeId: string; date: string; cpt: string; label: string | null; modifiers: string[]; placeOfService: string; dxPointers: string; units: number; feeCents: number; paidCents: number }[]
+    totals: { billedCents: number; paidCents: number; balanceCents: number }
+  }
+}
+
+export interface MissingItem {
+  code: string
+  chargeId?: string
+}
+
 export const api = {
   login: (email: string, password: string) =>
     req<{ ok: true; operator: Operator; passwordChangedAt: number | null }>('/auth/login', {
@@ -2255,6 +2379,31 @@ export const api = {
   /** A same-origin URL the browser can navigate to (it carries the session cookie). */
   auditExportUrl: (loc: string, filters: AuditFilters = {}) => `/api/loc/${loc}/audit/export.csv${qs(filters)}`,
 
+  billing: {
+    meta: (loc: string) => req<BillingMeta>(`/loc/${loc}/billing/meta`),
+    profile: (loc: string) => req<{ profile: BillingProfile }>(`/loc/${loc}/billing/profile`),
+    saveProfile: (loc: string, input: BillingProfileInput) =>
+      req<{ ok: true; profile: BillingProfile }>(`/loc/${loc}/billing/profile`, { method: 'PUT', body: JSON.stringify(input) }),
+    suggestions: (loc: string) => req<{ suggestions: ChargeSuggestion[] }>(`/loc/${loc}/billing/suggestions`),
+    charges: (loc: string, filter: { contactId?: string; status?: 'unbilled' | 'billed' | 'void' | 'all' } = {}) =>
+      req<{ charges: ChargeRow[] }>(`/loc/${loc}/billing/charges${qs(filter)}`),
+    createCharge: (loc: string, input: ChargeInput) =>
+      req<{ ok: true; charge: ChargeRow }>(`/loc/${loc}/billing/charges`, { method: 'POST', body: JSON.stringify(input) }),
+    updateCharge: (loc: string, id: string, patch: Partial<Omit<ChargeInput, 'contactId' | 'appointmentId' | 'sessionNoteId'>>) =>
+      req<{ ok: true; charge: ChargeRow }>(`/loc/${loc}/billing/charges/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    /** Sets the TOTAL paid so far (not an increment): safe to repeat, easy to correct. Zero clears it. */
+    setPayment: (loc: string, id: string, paidCents: number, method: PaymentMethod | null) =>
+      req<{ ok: true; charge: ChargeRow }>(`/loc/${loc}/billing/charges/${id}/payment`, { method: 'PUT', body: JSON.stringify({ paidCents, method }) }),
+    voidCharge: (loc: string, id: string, reason: string) =>
+      req<{ ok: true; charge: ChargeRow }>(`/loc/${loc}/billing/charges/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    superbills: (loc: string, contactId?: string) => req<{ superbills: SuperbillSummary[] }>(`/loc/${loc}/billing/superbills${qs({ contactId })}`),
+    issueSuperbill: (loc: string, input: { contactId: string; chargeIds: string[]; clientAddress?: string; memberId?: string }) =>
+      req<{ ok: true; superbill: SuperbillDetail }>(`/loc/${loc}/billing/superbills`, { method: 'POST', body: JSON.stringify(input) }),
+    superbill: (loc: string, id: string) => req<{ superbill: SuperbillDetail }>(`/loc/${loc}/billing/superbills/${id}`),
+    superbillPrinted: (loc: string, id: string) => req<{ ok: true }>(`/loc/${loc}/billing/superbills/${id}/printed`, { method: 'POST' }),
+    voidSuperbill: (loc: string, id: string, reason: string) =>
+      req<{ ok: true }>(`/loc/${loc}/billing/superbills/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  },
   calendarSync: {
     get: (loc: string) => req<CalendarSyncState>(`/loc/${loc}/calendar-sync`),
     /** The address is in THIS response only; it is never stored in readable form. */

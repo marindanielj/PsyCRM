@@ -7,6 +7,9 @@ import { PacketEditorPage } from './features/documents/PacketEditorPage'
 import { TemplateEditorPage } from './features/documents/TemplateEditorPage'
 import { BrandingSettingsPage } from './features/settings/BrandingSettingsPage'
 import { CalendarSyncSettingsPage } from './features/settings/CalendarSyncSettingsPage'
+import { BillingSettingsPage } from './features/settings/BillingSettingsPage'
+import { BillingPage } from './features/billing/BillingPage'
+import { SuperbillPage } from './features/billing/SuperbillPage'
 import { AuditLogPage } from './features/audit/AuditLogPage'
 import { NoteReportPage } from './features/session-notes/NoteReportPage'
 import { NoteWizardPage } from './features/session-notes/NoteWizard'
@@ -105,12 +108,15 @@ export default function App() {
           <Route path="documents/packets" element={<RequireModule module="documents"><DocumentsPage tab="packets" /></RequireModule>} />
           <Route path="documents/templates/:id" element={<RequireModule module="documents"><TemplateEditorPage /></RequireModule>} />
           <Route path="documents/packets/:id" element={<RequireModule module="documents"><PacketEditorPage /></RequireModule>} />
+          <Route path="billing" element={<RequireModule module="billing"><BillingPage /></RequireModule>} />
+          <Route path="billing/superbills/:id" element={<RequireModule module="billing"><SuperbillPage /></RequireModule>} />
           <Route path="tags" element={<RequireModule module="tags"><TagsPage /></RequireModule>} />
           <Route path="settings" element={<SettingsLayout />}>
             <Route index element={<Navigate to="/settings/practice" replace />} />
             <Route path="account" element={<AccountSettingsPage />} />
             <Route path="practice" element={<PracticeSettingsPage />} />
             <Route path="branding" element={<BrandingSettingsPage />} />
+            <Route path="billing" element={<RequireModule module="billing"><BillingSettingsPage /></RequireModule>} />
             <Route path="calendar-sync" element={<RequireModule module="calendars"><CalendarSyncSettingsPage /></RequireModule>} />
             <Route path="public-page" element={<PublicPageSettingsPage />} />
             <Route path="audit" element={<RequireModule module="audit"><AuditLogPage /></RequireModule>} />
