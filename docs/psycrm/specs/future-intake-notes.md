@@ -39,7 +39,7 @@ Reemplaza la versión anterior de esta spec, que era un modelo genérico de 7 pa
 | 2 | **Queja / problema que presenta** | Texto. Ayuda: "Estresores actuales" |
 | 3 | **Historial del problema** | Texto. Ayuda: "Factores precipitantes y/o exacerbantes · Síntomas: duración, severidad, frecuencia" |
 | 4 | **Funcionamiento actual (por áreas)** | 8 renglones con casilla ("afectada") y texto: Ocupacional, Familiar, Social, Sueño, Energía, Apetito, Hobbies / recreacional, Salud física |
-| 5 | **Historial de salud mental** | 5 renglones con casilla y texto: Psiquiátrico, Psicológico, Hospitalizaciones, Medicamentos (pasados / actuales), Diagnósticos |
+| 5 | **Historial de salud mental** | 5 renglones con casilla y texto: Psiquiátrico, Psicológico, Hospitalizaciones, Medicamentos (pasados / actuales), Diagnósticos. **Es la sección que ella más llena** y en el papel no le cabe: aquí **cada renglón es un área de texto completa**, a lo ancho, que crece mientras escribe, en vez del renglón de una línea de la hoja. Al marcar la casilla, el área se abre |
 | 6 | **Historial familiar de salud mental** | Texto. Ayuda: "Diagnóstico · Tratamiento · Sustancias" |
 | 7 | **Historial de salud física** | Dos textos: Personal y Familiar |
 | 8 | **Historial personal** | 7 renglones con casilla y texto: Relaciones con la familia de origen, Eventos / problemas en la niñez, Problemas académicos o conductuales en la escuela, Espiritualidad / fe, Historial de relaciones románticas, Historial de relaciones sociales, Historial de uso de sustancias |
@@ -50,6 +50,8 @@ Reemplaza la versión anterior de esta spec, que era un modelo genérico de 7 pa
 | 13 | **Expectativas, temores o preguntas acerca del proceso** | Texto |
 | 14 | **Impresión diagnóstica** | Códigos ICD-10-CM, opcional |
 | 15 | **Revisar y firmar** | Vista previa igual al reporte impreso; firma con la firma de notas de siempre |
+
+**El espacio no lo limita la hoja.** En la app ningún campo tiene el tamaño de la casilla del papel: todo texto crece con lo que se escribe (hasta 20.000 caracteres por campo, como las notas de sesión). En el reporte impreso cada texto ocupa lo que necesita y la sección sigue en la página siguiente si hace falta. Los renglones con casilla (secciones 4, 5 y 8) muestran el texto debajo de la etiqueta, a todo lo ancho, y no al lado como en la hoja.
 
 En pantalla, las secciones se agrupan en pasos del asistente (por ejemplo: sesión y problema · funcionamiento · historiales · estado mental · riesgo y factores protectivos · metas y diagnóstico · revisar y firmar). El orden de las secciones no cambia.
 
