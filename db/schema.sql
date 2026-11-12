@@ -2011,3 +2011,15 @@ CREATE TABLE IF NOT EXISTS billing_shares (
   expires_at     timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS billing_shares_by_document ON billing_shares(location_id, kind, document_id, created_at DESC);
+
+-- B11: the first-session intake note, in the therapist's own form. The form lives in one jsonb column so the note keeps
+-- the 72 h lock, the revisions and the addenda unchanged. A note USES the form when `intake` has a `version`: older
+-- "intake" notes written as DAP keep '{}' and are untouched by these rules (the production table already has rows).
+ALTER TABLE session_notes ADD COLUMN IF NOT EXISTS intake jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE session_notes DROP CONSTRAINT IF EXISTS session_notes_intake_required;
+ALTER TABLE session_notes ADD CONSTRAINT session_notes_intake_required CHECK (
+  status = 'draft' OR session_type <> 'intake' OR NOT (intake ? 'version')
+  OR coalesce(length(trim(intake->'texts'->>'presenting_problem')), 0) > 0);
+-- One live intake-form note per client.
+CREATE UNIQUE INDEX IF NOT EXISTS session_notes_one_intake
+  ON session_notes(location_id, contact_id) WHERE session_type = 'intake' AND deleted_at IS NULL AND intake ? 'version';

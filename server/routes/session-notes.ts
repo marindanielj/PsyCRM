@@ -39,6 +39,13 @@ function refuse(c: Context<AppEnv>, r: NoteError) {
       return c.json({ error: 'unknown appointment' }, 400)
     case 'appointment_mismatch':
       return c.json({ error: 'appointment belongs to another client' }, 400)
+    case 'intake_exists':
+      // A client has one live intake note; a second one is refused.
+      return c.json({ error: 'intake_exists' }, 409)
+    case 'not_intake':
+      return c.json({ error: 'not_intake' }, 422)
+    case 'intake_incomplete':
+      return c.json({ error: 'intake_incomplete', missing: r.missing }, 422)
   }
 }
 
@@ -51,6 +58,8 @@ function databaseRefusal(c: Context<AppEnv>, err: unknown) {
   if (/session_note_locked/.test(message)) return c.json({ error: 'note_locked' }, 409)
   if (/session_note_deleted/.test(message)) return c.json({ error: 'note_deleted' }, 409)
   if (/session_note_unsign/.test(message)) return c.json({ error: 'note_cannot_be_unsigned' }, 409)
+  if (/violates check constraint "session_notes_intake_required"/.test(message)) return c.json({ error: 'intake_incomplete', missing: ['presenting_problem'] }, 422)
+  if (/session_notes_one_intake/.test(message)) return c.json({ error: 'intake_exists' }, 409)
   if (/violates check constraint "session_notes_(risk|actions|signed)/.test(message)) return c.json({ error: 'risk_incomplete' }, 422)
   throw err
 }
@@ -94,6 +103,15 @@ export function sessionNotesRoute(deps: {
   // Sessions that happened recently and still have no note.
   app.get('/without-note', zValidator('query', missingQuery), async (c) => {
     return c.json({ sessions: await repo(c).sessionsWithoutNote(c.req.valid('query').days ?? 3) })
+  })
+
+  // The intake for one client: where it stands (no clinical text) and, when asked, the answers of their admission
+  // questionnaire that help write it (an audited access to that signed document).
+  app.get('/intake', zValidator('query', z.object({ contactId: z.string().min(1).max(64), withAnswers: z.enum(['true', 'false']).optional() })), async (c) => {
+    const { contactId, withAnswers } = c.req.valid('query')
+    const status = await repo(c).intakeStatus(contactId)
+    const clientAnswers = withAnswers === 'true' ? await repo(c).clientAnswers(contactId, actor(c)) : undefined
+    return c.json({ intake: status, ...(clientAnswers !== undefined ? { clientAnswers } : {}) })
   })
 
   app.get('/locking-soon', zValidator('query', lockingQuery), async (c) => {
