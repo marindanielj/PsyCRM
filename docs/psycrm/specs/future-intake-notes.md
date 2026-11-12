@@ -106,6 +106,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS session_notes_one_intake
 - **Web:** que las etiquetas de las secciones coinciden con su formulario y que las opciones del estado mental tienen traducción completa.
 - **Navegador:** crear la nota desde la primera cita, usar las respuestas del cliente, firmar e imprimir (comparar con su PDF).
 
+## Bueno tener (después): de la hoja a mano a la nota en la app
+
+Idea de la terapeuta: pasar a la app lo que ya escribió a mano. No es parte de la primera versión.
+
+1. **Leer la hoja.** Ella fotografía o escanea su hoja llenada. **Amazon Textract** lee la letra a mano y, como su formulario siempre tiene las mismas casillas, cada texto se coloca en su sección de la nota. Textract es de AWS y quedaría bajo el **BAA de AWS que ya está aceptado** (confirmar que aparece en la lista de servicios elegibles para HIPAA).
+2. **Redactar en narrativa (opcional).** Un modelo de lenguaje convierte sus apuntes breves en párrafos, **sin añadir datos** que no estén en la hoja. Se haría con **Claude en Amazon Bedrock**, también bajo el BAA de AWS, en lugar de la integración directa con Anthropic, que necesita su propio BAA.
+
+Reglas: el resultado es siempre un **borrador** que ella revisa sección por sección, con la hoja al lado; nunca se firma solo. La auditoría registra que se usó, sin el contenido. Falta decidir si la foto de la hoja se guarda como anexo de la nota o se descarta después de leerla. Sirve también para las notas de sesión y para pasar expedientes viejos en papel.
+
 ## Preguntas abiertas
 
 1. **Menores:** pendiente de decidir (TBD). Mientras tanto, la nota de un menor usa el mismo formulario.
