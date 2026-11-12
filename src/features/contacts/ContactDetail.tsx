@@ -7,6 +7,7 @@ import { type Contact, type TimelineEvent, api } from '../../lib/api'
 import { moduleEnabled } from '../../lib/modules'
 import { formatPhone } from '../../lib/utils'
 import { useTenant } from '../../state/location'
+import { IntakeBadge } from '../session-notes/IntakeBadge'
 import { ClientRiskBadge } from '../session-notes/RiskBadge'
 import { NotesTab } from '../session-notes/NotesTab'
 import { ContactAudit } from '../audit/ContactAudit'
@@ -86,6 +87,7 @@ export function ContactDetail({
             <p className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
               <span>{contact.source ? `via ${contact.source}` : 'Contact'}</span>
               <ClientRiskBadge contactId={contactId} />
+              <IntakeBadge contactId={contactId} />
               <ClientBalanceBadge contactId={contactId} refreshKey={billingTick} />
             </p>
           </div>

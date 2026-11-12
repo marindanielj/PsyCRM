@@ -202,3 +202,18 @@ async function signedDoc(s: Awaited<ReturnType<typeof setup>>, family: string, k
     VALUES ('${id}','${s.loc}','c1','r1','sg1_${id}','client','t_${id}','T',1,'es','${JSON.stringify(values).replace(/'/g, "''")}','<p></p>','x','Ana',true,'1.1.1.1','UA','email_otp');
     SET session_replication_role = DEFAULT;`)
 }
+
+test('the schema applies again over a database that already has notes (as in production): data kept, rules in force', async () => {
+  const s = await setup()
+  await s.pg.exec(`SET psycrm.actor = 'op1'; INSERT INTO session_notes (id, location_id, contact_id, session_date, session_type, data_subjective, risk_suicidal, risk_self_harm, risk_harm_others, risk_level, created_by) VALUES ('old1','${s.loc}','c1','2026-10-01','intake','dap text','denied','denied','denied','low','op1')`)
+  await s.call('POST', '/old1/sign')
+  const form = await s.intake('c1', { intake: FORM })
+  const { readFileSync } = await import('node:fs')
+  const schema = readFileSync(new URL('../../db/schema.sql', import.meta.url), 'utf8')
+  await s.pg.exec(schema)
+  await s.pg.exec(schema)
+  const rows = await s.db.query<{ id: string; intake: Record<string, unknown> }>('SELECT id, intake FROM session_notes ORDER BY id')
+  expect(rows.find((r) => r.id === 'old1')?.intake).toEqual({})
+  expect(rows.find((r) => r.id === form.id)?.intake).toMatchObject({ version: 1 })
+  expect((await s.call('POST', '/', { contactId: 'c1', sessionDate: TODAY, sessionType: 'intake' })).status).toBe(409)
+})

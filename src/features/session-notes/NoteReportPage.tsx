@@ -9,7 +9,10 @@ import { useTenant } from '../../state/location'
 import { LockBadge } from './LockBadge'
 import { AddendumDialog, DeleteNoteDialog } from './NoteDialogs'
 import { NoteHistory } from './NoteHistory'
+import { IntakeReport } from './IntakeReport'
+import { intakeDataFromNote } from './intake-report-model'
 import { NoteReport } from './NoteReport'
+import { isIntakeForm } from '../../lib/intake-form'
 import { RiskPill } from './RiskBadge'
 import { addendaForReport, buildReport, fieldsFromNote, lastAmendment } from './report-model'
 
@@ -69,7 +72,7 @@ export function NoteReportPage() {
   const dob = typeof contact.custom_fields?.date_of_birth === 'string' ? (contact.custom_fields.date_of_birth as string) : null
   const locked = note.lock.locked
 
-  const model = buildReport(fieldsFromNote(note), {
+  const reportCtx = {
     practice,
     client: { id: contactId, name, dateOfBirth: dob },
     noteId: note.id,
@@ -79,7 +82,10 @@ export function NoteReportPage() {
       : null,
     amended: note.status === 'signed' ? lastAmendment(revisions) : null,
     addenda: addendaForReport(addenda),
-  })
+  }
+  // The intake note (B11) prints as her own form, in Spanish; every other note as the DAP report.
+  const intake = isIntakeForm(note)
+  const model = buildReport(fieldsFromNote(note), reportCtx)
 
   function print() {
     // Record the print (fire and forget: it must never block the dialog), then open it.
@@ -127,7 +133,11 @@ export function NoteReportPage() {
             This note is a <b>draft</b>: it has not been signed. {locked ? 'The editing window has closed.' : 'Use Edit to finish and sign it.'}
           </p>
         ) : null}
-        <NoteReport model={model} printedBy={operator?.name ?? operator?.email} />
+        {intake ? (
+          <IntakeReport data={intakeDataFromNote(note, { ...reportCtx, loc })} printedBy={operator?.name ?? operator?.email} />
+        ) : (
+          <NoteReport model={model} printedBy={operator?.name ?? operator?.email} />
+        )}
       </div>
 
       {dialog === 'addendum' ? (

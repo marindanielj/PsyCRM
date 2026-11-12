@@ -4,21 +4,32 @@ import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-r
 import { Button } from '../../components/ui/button'
 import { PageSpinner } from '../../components/ui/spinner'
 import {
-  type Appointment, ApiError, type Contact, type NoteLock, type PracticeProfile, type SessionNote, type SessionNoteInput, api,
+  type Appointment, ApiError, type Contact, type IntakeClientAnswers, type IntakeStatus, type NoteLock, type PracticeProfile, type SessionNote, type SessionNoteInput, api,
 } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { useAuth } from '../../state/auth'
 import { useTenant } from '../../state/location'
 import { LockBadge } from './LockBadge'
-import { type NoteForm, changedInput, emptyForm, formFromNote, formToInput, formatLockRemaining, reviewChecklist, riskStatus, todayInPractice } from './note-utils'
+import { intakeDataFromForm } from './intake-report-model'
+import { type NoteForm, changedInput, emptyForm, formFromNote, formToInput, formatLockRemaining, reviewChecklist, riskStatus, todayInPractice, usesIntakeForm } from './note-utils'
 import { buildReport, fieldsFromForm } from './report-model'
 import { ContextStep } from './steps/ContextStep'
 import { DapStep } from './steps/DapStep'
+import { IntakeDangerStep, IntakeFunctioningStep, IntakeGoalsStep, IntakeHistoryStep, IntakeProblemStep, IntakeReviewStep, intakeChecklist } from './steps/IntakeSteps'
 import { MseStep } from './steps/MseStep'
 import { ReviewStep } from './steps/ReviewStep'
 import { RiskStep } from './steps/RiskStep'
 
 const STEPS = ['Context', 'Mental status', 'Risk', 'DAP', 'Review & sign'] as const
+/** The intake note (B11): the sections of her printed form, in Spanish. */
+const INTAKE_STEPS = ['Sesión', 'Problema', 'Funcionamiento', 'Historiales', 'Estado mental', 'Peligrosidad', 'Metas', 'Revisar y firmar'] as const
+const RISK_STEP = { regular: 2, intake: 5 }
+
+/** The editor's own words, in English for session notes and in Spanish for the intake. */
+const UI = {
+  en: { newTitle: 'New session note', editTitle: 'Edit session note', signed: 'Signed', draft: 'Draft', windowHint: 'The 72-hour edit window starts when you first save.', back: 'Back', next: 'Next', sign: 'Sign note', saveChanges: 'Save changes', saving: 'Saving…', signing: 'Signing…', cancel: 'Cancel', confirmTitle: 'Sign this note?', signingAs: 'You are signing as', signHint: 'Complete the risk assessment to sign' },
+  es: { newTitle: 'Nota de entrevista inicial', editTitle: 'Nota de entrevista inicial', signed: 'Firmada', draft: 'Borrador', windowHint: 'Las 72 horas de edición empiezan al guardar por primera vez.', back: 'Atrás', next: 'Siguiente', sign: 'Firmar nota', saveChanges: 'Guardar cambios', saving: 'Guardando…', signing: 'Firmando…', cancel: 'Cancelar', confirmTitle: '¿Firmar esta nota?', signingAs: 'Firma como', signHint: 'Falta la queja / problema o la evaluación de riesgo' },
+}
 const AUTOSAVE_DEBOUNCE_MS = 2_000
 const AUTOSAVE_MIN_GAP_MS = 10_000
 
@@ -30,6 +41,8 @@ interface Loaded {
   appointments: Appointment[]
   previousRisk: { level: string; date: string } | null
   note: SessionNote | null
+  /** Where this client stands on the intake (decides whether a new note starts as one). */
+  intake: IntakeStatus | null
 }
 
 const prTime = (iso: string) => new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Puerto_Rico', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso))
@@ -55,8 +68,9 @@ export function NoteWizardPage({ mode }: { mode: 'new' | 'edit' }) {
       api.appointments(loc, from, to),
       api.sessionNotes.latestRisk(loc, contactId),
       mode === 'edit' && routeNoteId ? api.sessionNotes.get(loc, routeNoteId) : Promise.resolve(null),
+      api.sessionNotes.intake(loc, contactId).catch(() => null),
     ])
-      .then(([c, p, a, r, n]) => {
+      .then(([c, p, a, r, n, i]) => {
         if (!active) return
         setLoaded({
           contact: c.contact,
@@ -64,6 +78,7 @@ export function NoteWizardPage({ mode }: { mode: 'new' | 'edit' }) {
           appointments: a.appointments.filter((x) => x.contact_id === contactId && x.status !== 'cancelled' && x.status !== 'no_show'),
           previousRisk: r.risk ? { level: r.risk.risk_level, date: r.risk.session_date } : null,
           note: n ? n.note : null,
+          intake: i ? i.intake : null,
         })
       })
       .catch(() => active && setLoadError(true))
@@ -78,13 +93,13 @@ export function NoteWizardPage({ mode }: { mode: 'new' | 'edit' }) {
   if (mode === 'edit' && (!loaded.note || loaded.note.lock.locked)) {
     return <Navigate to={`/contacts/${contactId}/notes/${routeNoteId}`} replace state={{ notice: 'This note is locked and can no longer be edited. You can add an addendum.' }} />
   }
-  return <Wizard loc={loc} contactId={contactId} loaded={loaded} initialAppointmentId={search.get('appointmentId')} />
+  return <Wizard loc={loc} contactId={contactId} loaded={loaded} initialAppointmentId={search.get('appointmentId')} requestedType={search.get('type')} />
 }
 
-function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string; contactId: string; loaded: Loaded; initialAppointmentId: string | null }) {
+function Wizard({ loc, contactId, loaded, initialAppointmentId, requestedType }: { loc: string; contactId: string; loaded: Loaded; initialAppointmentId: string | null; requestedType: string | null }) {
   const navigate = useNavigate()
   const { operator } = useAuth()
-  const { contact, practice, appointments, previousRisk, note: existing } = loaded
+  const { contact, practice, appointments, previousRisk, note: existing, intake: intakeStatus } = loaded
   const clientName = contact.name ?? contact.emails[0] ?? 'Client'
   const dob = typeof contact.custom_fields?.date_of_birth === 'string' ? (contact.custom_fields.date_of_birth as string) : null
 
@@ -92,11 +107,14 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
   const initialForm = useMemo<NoteForm>(() => {
     if (existing) return formFromNote(existing)
     const appt = appointments.find((a) => a.id === initialAppointmentId)
-    const base = emptyForm(todayInPractice())
+    // A new client's first note starts as the intake (she can change the type); so does a note asked for as one.
+    const firstNote = intakeStatus !== null && intakeStatus.status === 'none' && intakeStatus.otherSignedNotes === 0
+    const startsAsIntake = requestedType === 'intake' ? intakeStatus?.status !== 'signed' && intakeStatus?.status !== 'draft' : requestedType === null && firstNote
+    const base = emptyForm(todayInPractice(), startsAsIntake ? { sessionType: 'intake' } : {})
     if (!appt) return base
     const minutes = Math.round((new Date(appt.ends_at).getTime() - new Date(appt.starts_at).getTime()) / 60_000)
     return { ...base, appointmentId: appt.id, sessionDate: prDate(appt.starts_at), startTime: prTime(appt.starts_at), durationMin: String(minutes || 50) }
-  }, [existing, appointments, initialAppointmentId])
+  }, [existing, appointments, initialAppointmentId, intakeStatus, requestedType])
 
   const [form, setForm] = useState<NoteForm>(initialForm)
   const [step, setStep] = useState(0)
@@ -125,6 +143,25 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
   const readOnly = saveState === 'locked'
 
   const patch = useCallback((p: Partial<NoteForm>) => setForm((f) => ({ ...f, ...p })), [])
+
+  // The intake note uses her form (in Spanish); every other note the DAP steps (in English).
+  const intakeMode = usesIntakeForm(form)
+  const steps: readonly string[] = intakeMode ? INTAKE_STEPS : STEPS
+  const riskStep = intakeMode ? RISK_STEP.intake : RISK_STEP.regular
+  const t = UI[intakeMode ? 'es' : 'en']
+  useEffect(() => setStep((s) => Math.min(s, steps.length - 1)), [steps.length])
+
+  // The client's questionnaire answers, read (an audited access) only when the intake form is in use.
+  const [answers, setAnswers] = useState<IntakeClientAnswers | null>(null)
+  const [answersLoaded, setAnswersLoaded] = useState(false)
+  useEffect(() => {
+    if (!intakeMode || answersLoaded) return
+    setAnswersLoaded(true)
+    api.sessionNotes
+      .intake(loc, contactId, true)
+      .then((r) => setAnswers(r.clientAnswers ?? null))
+      .catch(() => setAnswers(null))
+  }, [intakeMode, answersLoaded, loc, contactId])
 
   const onPickAppointment = (id: string | null) => {
     const appt = appointments.find((a) => a.id === id)
@@ -162,7 +199,10 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
         setProblem(null)
         return true
       } catch (e) {
-        if (e instanceof ApiError && e.message === 'note_locked') {
+        if (e instanceof ApiError && e.message === 'intake_exists') {
+          setSaveState('error')
+          setProblem('Este cliente ya tiene una nota de entrevista inicial. Ábrala desde su expediente, o cambie el tipo de sesión de esta nota.')
+        } else if (e instanceof ApiError && e.message === 'note_locked') {
           setSaveState('locked')
           setProblem('The 72-hour editing window has closed: this note is now locked. Your last saved version is kept; you can add an addendum from the report.')
         } else {
@@ -206,14 +246,14 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
 
   // ---- moving around -----------------------------------------------------------------
   const goTo = async (next: number) => {
-    if (next > 2) setShowErrors(true)
+    if (next > riskStep) setShowErrors(true)
     if (dirty && !signed && saveState !== 'locked') await save({ autosave: false })
-    setStep(Math.max(0, Math.min(STEPS.length - 1, next)))
+    setStep(Math.max(0, Math.min(steps.length - 1, next)))
     window.scrollTo?.({ top: 0 })
   }
 
   // ---- signing / saving a signed note ----------------------------------------------------
-  const blockers = reviewChecklist(form).filter((i) => i.level === 'blocker')
+  const blockers = (intakeMode ? intakeChecklist(form, { informedConsentSigned: intakeStatus?.informedConsentSigned ?? null }) : reviewChecklist(form)).filter((i) => i.level === 'blocker')
 
   async function finish() {
     setProblem(null)
@@ -229,9 +269,13 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
       navigate(`/contacts/${contactId}/notes/${noteIdRef.current}`, { replace: true })
     } catch (e) {
       const missing = e instanceof ApiError && e.body && typeof e.body === 'object' ? (e.body as { missing?: string[] }).missing : undefined
-      if (e instanceof ApiError && e.message === 'risk_incomplete') {
+      if (e instanceof ApiError && e.message === 'intake_incomplete') {
         setShowErrors(true)
-        setStep(2)
+        setStep(1)
+        setProblem('Falta la queja / problema que presenta.')
+      } else if (e instanceof ApiError && e.message === 'risk_incomplete') {
+        setShowErrors(true)
+        setStep(riskStep)
         setProblem(missing?.length ? 'The risk assessment is still incomplete.' : 'The risk assessment is incomplete.')
       } else {
         setProblem(e instanceof ApiError && e.message ? `Could not sign: ${e.message}` : 'Could not sign the note.')
@@ -257,9 +301,20 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
     [form, practice, contactId, clientName, dob, status],
   )
 
+  const intakeData = useMemo(
+    () =>
+      intakeDataFromForm(form, {
+        loc, practice, client: { id: contactId, name: clientName, dateOfBirth: dob }, noteId: noteIdRef.current, status,
+        signature: null, amended: null, addenda: [], preview: true,
+      }),
+    [form, loc, practice, contactId, clientName, dob, status],
+  )
+
   const risk = riskStatus(form)
-  const saveLabel =
-    saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : saveState === 'locked' ? 'Locked' : signed && dirty ? 'Unsaved changes' : dirty ? 'Unsaved changes' : savedAt ? `Saved ${Math.max(0, Math.round((Date.now() - savedAt) / 1000))}s ago` : noteIdRef.current ? 'Saved' : 'Not started'
+  const secs = savedAt ? Math.max(0, Math.round((Date.now() - savedAt) / 1000)) : 0
+  const saveLabel = intakeMode
+    ? saveState === 'saving' ? 'Guardando…' : saveState === 'error' ? 'Sin guardar' : saveState === 'locked' ? 'Bloqueada' : dirty ? 'Cambios sin guardar' : savedAt ? `Guardado hace ${secs} s` : noteIdRef.current ? 'Guardado' : 'Sin empezar'
+    : saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : saveState === 'locked' ? 'Locked' : dirty ? 'Unsaved changes' : savedAt ? `Saved ${secs}s ago` : noteIdRef.current ? 'Saved' : 'Not started'
 
   return (
     <div className="ol-scroll h-full overflow-y-auto bg-slate-50">
@@ -268,15 +323,15 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
           <Link to={`/contacts/${contactId}`} className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800">
             <ArrowLeft className="h-4 w-4" /> {clientName}
           </Link>
-          <h1 className="text-lg font-semibold text-slate-900">{existing ? 'Edit session note' : 'New session note'}</h1>
-          {signed ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Signed</span> : <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">Draft</span>}
-          {liveLock ? <LockBadge lock={liveLock} /> : <span className="text-xs text-slate-500">The 72-hour edit window starts when you first save.</span>}
+          <h1 className="text-lg font-semibold text-slate-900">{existing ? t.editTitle : t.newTitle}</h1>
+          {signed ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{t.signed}</span> : <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">{t.draft}</span>}
+          {liveLock ? <LockBadge lock={liveLock} /> : <span className="text-xs text-slate-500">{t.windowHint}</span>}
         </header>
 
         {/* Stepper */}
         <nav aria-label="Steps" className="mb-5 flex flex-wrap gap-1.5">
-          {STEPS.map((name, i) => {
-            const riskWarn = i === 2 && !risk.complete
+          {steps.map((name, i) => {
+            const riskWarn = i === riskStep && !risk.complete
             return (
               <button
                 key={name}
@@ -314,11 +369,36 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
         ) : null}
 
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          {step === 0 && <ContextStep form={form} patch={patch} readOnly={readOnly} appointments={appointments} onPickAppointment={onPickAppointment} />}
-          {step === 1 && <MseStep form={form} patch={patch} readOnly={readOnly} />}
-          {step === 2 && <RiskStep form={form} patch={patch} readOnly={readOnly} showErrors={showErrors} previous={previousRisk} />}
-          {step === 3 && <DapStep form={form} patch={patch} readOnly={readOnly} />}
-          {step === 4 && <ReviewStep form={form} model={reportModel} signed={signed} changeReason={changeReason} onChangeReason={setChangeReason} showReasonError={showReasonError} />}
+          {intakeMode ? (
+            <>
+              {step === 0 && <ContextStep form={form} patch={patch} readOnly={readOnly} appointments={appointments} onPickAppointment={onPickAppointment} lang="es" />}
+              {step === 1 && <IntakeProblemStep form={form} patch={patch} readOnly={readOnly} showErrors={showErrors} answers={answers} />}
+              {step === 2 && <IntakeFunctioningStep form={form} patch={patch} readOnly={readOnly} answers={answers} />}
+              {step === 3 && <IntakeHistoryStep form={form} patch={patch} readOnly={readOnly} answers={answers} />}
+              {step === 4 && <MseStep form={form} patch={patch} readOnly={readOnly} lang="es" />}
+              {step === 5 && <IntakeDangerStep form={form} patch={patch} readOnly={readOnly} showErrors={showErrors} answers={answers} previous={previousRisk} />}
+              {step === 6 && <IntakeGoalsStep form={form} patch={patch} readOnly={readOnly} answers={answers} />}
+              {step === 7 && (
+                <IntakeReviewStep
+                  form={form}
+                  data={intakeData}
+                  signed={signed}
+                  changeReason={changeReason}
+                  onChangeReason={setChangeReason}
+                  showReasonError={showReasonError}
+                  informedConsentSigned={intakeStatus?.informedConsentSigned ?? null}
+                />
+              )}
+            </>
+          ) : (
+            <>
+              {step === 0 && <ContextStep form={form} patch={patch} readOnly={readOnly} appointments={appointments} onPickAppointment={onPickAppointment} />}
+              {step === 1 && <MseStep form={form} patch={patch} readOnly={readOnly} />}
+              {step === 2 && <RiskStep form={form} patch={patch} readOnly={readOnly} showErrors={showErrors} previous={previousRisk} />}
+              {step === 3 && <DapStep form={form} patch={patch} readOnly={readOnly} />}
+              {step === 4 && <ReviewStep form={form} model={reportModel} signed={signed} changeReason={changeReason} onChangeReason={setChangeReason} showReasonError={showReasonError} />}
+            </>
+          )}
         </div>
       </div>
 
@@ -331,20 +411,20 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
           </span>
           <div className="ml-auto flex items-center gap-2">
             <Button type="button" variant="outline" disabled={step === 0} onClick={() => void goTo(step - 1)}>
-              <ChevronLeft className="h-4 w-4" /> Back
+              <ChevronLeft className="h-4 w-4" /> {t.back}
             </Button>
-            {step < STEPS.length - 1 ? (
+            {step < steps.length - 1 ? (
               <Button type="button" onClick={() => void goTo(step + 1)}>
-                Next <ChevronRight className="h-4 w-4" />
+                {t.next} <ChevronRight className="h-4 w-4" />
               </Button>
             ) : (
               <Button
                 type="button"
                 disabled={blockers.length > 0 || signing || readOnly || (signed && !dirty)}
-                title={blockers.length > 0 ? 'Complete the risk assessment to sign' : undefined}
+                title={blockers.length > 0 ? t.signHint : undefined}
                 onClick={() => (signed ? void finish() : setConfirmOpen(true))}
               >
-                {signing ? 'Saving…' : signed ? 'Save changes' : 'Sign note'}
+                {signing ? t.saving : signed ? t.saveChanges : t.sign}
               </Button>
             )}
           </div>
@@ -355,11 +435,13 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" role="dialog" aria-modal="true" aria-labelledby="sign-title">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
             <h2 id="sign-title" className="text-base font-semibold text-slate-900">
-              Sign this note?
+              {t.confirmTitle}
             </h2>
             <p className="mt-2 text-sm text-slate-600">
-              You are signing as <b>{operator?.name ?? operator?.email ?? 'you'}</b>.
-              {liveLock && !liveLock.locked ? (
+              {t.signingAs} <b>{operator?.name ?? operator?.email ?? 'you'}</b>.
+              {intakeMode ? (
+                <> Podrá enmendarla durante las 72 horas desde que se creó; después queda bloqueada y solo admite anexos.</>
+              ) : liveLock && !liveLock.locked ? (
                 <>
                   {' '}
                   You can still amend it for <b>{formatLockRemaining(liveLock.msRemaining).replace(' left', '')}</b>; after that the note locks permanently and can only receive addenda.
@@ -370,10 +452,10 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId }: { loc: string;
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={signing}>
-                Cancel
+                {t.cancel}
               </Button>
               <Button onClick={() => void finish()} disabled={signing}>
-                {signing ? 'Signing…' : 'Sign note'}
+                {signing ? t.signing : t.sign}
               </Button>
             </div>
           </div>

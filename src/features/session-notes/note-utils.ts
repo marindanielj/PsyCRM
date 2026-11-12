@@ -3,6 +3,7 @@ import {
   MSE_DOMAIN_KEYS, MSE_DOMAIN_LABELS, type MseDomain, type RiskIssue, label, validateRiskForSign,
 } from '../../lib/clinical-vocab'
 import { PRACTICE_TZ, todayInPractice } from '../../lib/age'
+import type { IntakeForm } from '../../lib/intake-form'
 
 /** Everything in this file is pure (no React, no network): the rules the wizard and the report share. */
 
@@ -96,6 +97,10 @@ export interface NoteForm {
   plan: string
   interventions: string[]
   diagnosisCodes: string
+  /** The intake form (B11), used when the session type is intake. */
+  intake: IntakeForm
+  /** False only for an older intake note written as DAP, which keeps the DAP editor. */
+  intakeForm: boolean
 }
 
 /** A new note: nothing assessed. The risk answers are NEVER pre-filled, not even from the last session. */
@@ -106,6 +111,7 @@ export function emptyForm(sessionDate: string, defaults: Partial<NoteForm> = {})
     riskSuicidal: null, riskSelfHarm: null, riskHarmOthers: null, riskLevel: null,
     riskFactors: [], protectiveFactors: [], riskActions: [], riskNotes: '',
     dataSubjective: '', dataObjective: '', assessment: '', plan: '', interventions: [], diagnosisCodes: '',
+    intake: {}, intakeForm: true,
     ...defaults,
   }
 }
@@ -124,7 +130,26 @@ export function formFromNote(n: SessionNote): NoteForm {
     riskFactors: n.risk_factors, protectiveFactors: n.protective_factors, riskActions: n.risk_actions, riskNotes: n.risk_notes ?? '',
     dataSubjective: n.data_subjective ?? '', dataObjective: n.data_objective ?? '', assessment: n.assessment ?? '', plan: n.plan ?? '',
     interventions: n.interventions, diagnosisCodes: n.diagnosis_codes.join(', '),
+    intake: n.intake ?? {},
+    intakeForm: !(n.session_type === 'intake' && typeof n.intake?.version !== 'number'),
   }
+}
+
+/** True when the editor shows the intake form instead of DAP. */
+export const usesIntakeForm = (f: Pick<NoteForm, 'sessionType' | 'intakeForm'>) => f.sessionType === 'intake' && f.intakeForm
+
+/** The intake form as the API takes it: no version (the server owns it), no empty rows or texts. */
+export function intakeToInput(form: IntakeForm): IntakeForm {
+  const out: IntakeForm = {}
+  const texts = Object.fromEntries(Object.entries(form.texts ?? {}).filter(([, v]) => typeof v === 'string' && v.trim() !== ''))
+  if (Object.keys(texts).length) out.texts = texts
+  for (const group of ['functioning', 'mh_history', 'personal_history'] as const) {
+    const rows = Object.fromEntries(Object.entries(form[group] ?? {}).filter(([, r]) => r && (r.marked || r.text.trim() !== '')))
+    if (Object.keys(rows).length) (out as Record<string, unknown>)[group] = rows
+  }
+  const t = form.telehealth
+  if (t && (t.location.trim() || t.in_pr !== null || t.private_setting !== null)) out.telehealth = t
+  return out
 }
 
 const blankToNull = (v: string) => (v.trim() === '' ? null : v)
@@ -146,6 +171,7 @@ export function formToInput(f: NoteForm): SessionNoteInput {
     dataSubjective: blankToNull(f.dataSubjective), dataObjective: blankToNull(f.dataObjective), assessment: blankToNull(f.assessment), plan: blankToNull(f.plan),
     interventions: f.interventions,
     diagnosisCodes: f.diagnosisCodes.split(/[,\s]+/).map((c) => c.trim()).filter(Boolean),
+    ...(usesIntakeForm(f) ? { intake: intakeToInput(f.intake) } : {}),
   }
 }
 

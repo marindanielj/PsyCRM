@@ -8,6 +8,8 @@ export interface StepProps {
   readOnly?: boolean
   /** Mark unanswered required fields in red (after the clinician tried to move on). */
   showErrors?: boolean
+  /** The intake note is written in Spanish (her form); every other note in English. */
+  lang?: 'en' | 'es'
 }
 
 export interface ContextStepProps extends StepProps {

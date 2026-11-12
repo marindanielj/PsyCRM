@@ -1,6 +1,8 @@
 // Typed client for the OpenLevel Hono API. All calls are same-origin under /api
 // (Vite proxies to the backend in dev) and send the session cookie.
 
+import type { ClientAnswerKey, IntakeForm } from './intake-form'
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -143,6 +145,8 @@ export interface SessionNote {
   risk_notes: string | null
   interventions: string[]
   diagnosis_codes: string[]
+  /** The intake form (B11); `{}` on every other note. A note uses the form when it has a `version`. */
+  intake: IntakeForm
   status: 'draft' | 'signed'
   signed_at: string | null
   signed_by: string | null
@@ -220,6 +224,19 @@ export interface SessionNoteInput {
   riskNotes?: string | null
   interventions?: string[]
   diagnosisCodes?: string[]
+  intake?: IntakeForm
+}
+
+/** Where a client stands on the intake (no clinical text). */
+export interface IntakeStatus {
+  status: 'none' | 'draft' | 'signed'
+  noteId: string | null
+  otherSignedNotes: number
+  informedConsentSigned: boolean
+}
+export interface IntakeClientAnswers {
+  signedAt: string
+  answers: Partial<Record<ClientAnswerKey, string>>
 }
 
 export interface SessionWithoutNote {
@@ -2638,6 +2655,9 @@ export const api = {
       req<{ sessions: SessionWithoutNote[] }>(`/loc/${loc}/session-notes/without-note${qs({ days })}`),
     elevatedRisk: (loc: string) => req<{ elevated: ElevatedRiskClient[] }>(`/loc/${loc}/session-notes/risk/summary`),
     lockingSoon: (loc: string, hours = 24) => req<{ notes: SessionNoteSummary[] }>(`/loc/${loc}/session-notes/locking-soon${qs({ hours })}`),
+    /** The client's intake status; with `withAnswers`, also their admission questionnaire answers (an audited access). */
+    intake: (loc: string, contactId: string, withAnswers = false) =>
+      req<{ intake: IntakeStatus; clientAnswers?: IntakeClientAnswers | null }>(`/loc/${loc}/session-notes/intake${qs({ contactId, withAnswers: withAnswers ? 'true' : undefined })}`),
   },
 
   practice: (loc: string) => req<{ practice: PracticeProfile }>(`/loc/${loc}/practice`),

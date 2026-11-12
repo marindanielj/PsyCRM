@@ -1,6 +1,6 @@
 # Futuro (B11): nota de entrevista inicial (intake)
 
-**Estado:** spec revisada con la terapeuta el 12 de noviembre de 2026, **no construida**. Post-MVP.
+**Estado:** spec revisada con la terapeuta el 12 de noviembre de 2026 y **construida** (typecheck y build limpios, pruebas sobre Postgres, recorrido completo en el navegador con impresión a PDF). Menores: pendiente (usan el mismo formulario). La versión en inglés queda para la fase C.
 
 ## Visión
 
@@ -39,7 +39,7 @@ Reemplaza la versión anterior de esta spec, que era un modelo genérico de 7 pa
 | 2 | **Queja / problema que presenta** | Texto. Ayuda: "Estresores actuales" |
 | 3 | **Historial del problema** | Texto. Ayuda: "Factores precipitantes y/o exacerbantes · Síntomas: duración, severidad, frecuencia" |
 | 4 | **Funcionamiento actual (por áreas)** | 8 renglones con casilla ("afectada") y texto: Ocupacional, Familiar, Social, Sueño, Energía, Apetito, Hobbies / recreacional, Salud física |
-| 5 | **Historial de salud mental** | 5 renglones con casilla y texto: Psiquiátrico, Psicológico, Hospitalizaciones, Medicamentos (pasados / actuales), Diagnósticos. **Es la sección que ella más llena** y en el papel no le cabe: aquí **cada renglón es un área de texto completa**, a lo ancho, que crece mientras escribe, en vez del renglón de una línea de la hoja. Al marcar la casilla, el área se abre |
+| 5 | **Historial de salud mental** | 5 renglones con casilla y texto: Psiquiátrico, Psicológico, Hospitalizaciones, Medicamentos (pasados / actuales), Diagnósticos. **Es la sección que ella más llena** y en el papel no le cabe: aquí **cada renglón es un área de texto completa**, a lo ancho, que crece mientras escribe, en vez del renglón de una línea de la hoja. Cada renglón muestra siempre su área de texto (también se puede escribir el dato sin marcar la casilla) |
 | 6 | **Historial familiar de salud mental** | Texto. Ayuda: "Diagnóstico · Tratamiento · Sustancias" |
 | 7 | **Historial de salud física** | Dos textos: Personal y Familiar |
 | 8 | **Historial personal** | 7 renglones con casilla y texto: Relaciones con la familia de origen, Eventos / problemas en la niñez, Problemas académicos o conductuales en la escuela, Espiritualidad / fe, Historial de relaciones románticas, Historial de relaciones sociales, Historial de uso de sustancias |
@@ -105,6 +105,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS session_notes_one_intake
 - **Zod:** claves cerradas y límites de texto.
 - **Web:** que las etiquetas de las secciones coinciden con su formulario y que las opciones del estado mental tienen traducción completa.
 - **Navegador:** crear la nota desde la primera cita, usar las respuestas del cliente, firmar e imprimir (comparar con su PDF).
+
+## Cómo quedó construido
+
+- **Asistente en 8 pasos, en español:** Sesión · Problema · Funcionamiento · Historiales · Estado mental · Peligrosidad · Metas · Revisar y firmar. La casilla dice **"Afectada"** en Funcionamiento y **"Aplica"** en los historiales.
+- **Una nota nueva de un cliente sin notas firmadas empieza como entrevista inicial.** El chip **"Intake pendiente"** de la ficha abre una nota nueva ya en ese tipo; **"Intake en borrador"** abre el borrador. Al firmarla, el chip desaparece.
+- **Notas "intake" anteriores** (escritas como DAP antes de este formulario) siguen igual: no usan el formulario, no cuentan para "un intake por cliente" y no muestran el chip. La base de datos distingue el formulario porque `intake` tiene `version`.
+- **Cambiar el tipo de sesión** de un borrador a entrevista inicial activa el formulario; cambiarlo a otro tipo lo aparta (se conserva sin `version`).
+- **Respuestas del cliente:** se leen solo cuando se abre una nota de intake y su lectura queda en la auditoría (`document.viewed_by_operator`). Probado con pruebas; no se probó en el navegador porque requiere un cuestionario firmado por el flujo público.
+- **API:** `GET /session-notes/intake?contactId=` (estado, sin texto clínico; con `withAnswers=true`, también las respuestas). Errores nuevos: `intake_exists` (409), `intake_incomplete` (422, con `missing`), `not_intake` (422).
+- **Archivos:** `server/lib/intake-form.ts` (copia web en `src/lib/intake-form.ts`, con prueba espejo), `session-note-schema.ts`, `session-notes-repo.ts`, `routes/session-notes.ts`, `src/features/session-notes/steps/IntakeSteps.tsx`, `IntakeReport.tsx`, `IntakeBadge.tsx`, `intake-report-model.ts`; `MseStep`, `RiskStep` y `ContextStep` aceptan `lang="es"`.
+- **Pruebas:** `routes/session-notes-intake.test.ts` (12, sobre Postgres: un intake por cliente también en la base, claves cerradas, regla de firma también en la base, auditoría sin texto, cambio de tipo, notas DAP anteriores, estado, consentimiento, respuestas del cliente y el esquema aplicado dos veces sobre datos existentes), `lib/intake-form-mirror.test.ts` (copia web y traducción completa del estado mental y del riesgo) y `lib/intake-ui.test.ts`.
 
 ## Bueno tener (después): de la hoja a mano a la nota en la app
 

@@ -1,6 +1,9 @@
 import { X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { type NoteRevisionMeta, type PracticeProfile, type SessionNote, api } from '../../lib/api'
+import { isIntakeForm } from '../../lib/intake-form'
+import { IntakeReport } from './IntakeReport'
+import { intakeDataFromNote } from './intake-report-model'
 import { NoteReport } from './NoteReport'
 import { formatStamp } from './note-utils'
 import { buildReport, fieldsFromNote } from './report-model'
@@ -68,11 +71,15 @@ export function NoteHistory({
                 {KIND_LABEL[open.meta.kind]} by <b>{open.meta.changed_by_name ?? 'Staff'}</b> on {formatStamp(open.meta.changed_at)}
                 {open.meta.change_reason ? ` — reason: ${open.meta.change_reason}` : ''}. This is a read-only copy of that version.
               </p>
-              <NoteReport
-                model={buildReport(fieldsFromNote(open.snapshot), {
-                  practice, client, noteId, status: open.snapshot.status, signature: null, amended: null, addenda: [], preview: true,
-                })}
-              />
+              {isIntakeForm(open.snapshot) ? (
+                <IntakeReport data={intakeDataFromNote(open.snapshot, { loc, practice, client, noteId, status: open.snapshot.status, signature: null, amended: null, addenda: [], preview: true })} />
+              ) : (
+                <NoteReport
+                  model={buildReport(fieldsFromNote(open.snapshot), {
+                    practice, client, noteId, status: open.snapshot.status, signature: null, amended: null, addenda: [], preview: true,
+                  })}
+                />
+              )}
             </>
           ) : (
             <ol className="space-y-2">
