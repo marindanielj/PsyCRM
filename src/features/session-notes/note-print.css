@@ -59,6 +59,11 @@
   .note-report h2 {
     break-after: avoid;
   }
+  /* The intake note (B11) has long free-text sections (a full mental health history): they flow onto the next page instead
+     of jumping whole and leaving a blank half page. Short blocks (the header, the risk box, the signature) stay together. */
+  .note-report.intake-report section {
+    break-inside: auto;
+  }
   .note-report .note-footer {
     position: fixed;
     bottom: 0;

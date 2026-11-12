@@ -36,7 +36,7 @@ export const sendOtpEmail = (s: EmailSender | null, why: string | undefined, o: 
     to: o.to,
     toName: o.name,
     subject: `${o.practice}: código de verificación`,
-    text: `Hola ${first(o.name)}:\n\nSu código de verificación es ${o.code}. Vence en 10 minutos.\n\nSi usted no lo solicitó, ignore este mensaje.`,
+    text: `Hola${first(o.name) ? ` ${first(o.name)}` : ''}:\n\nSu código de verificación es ${o.code}. Vence en 10 minutos.\n\nSi usted no lo solicitó, ignore este mensaje.`,
   })
 
 export const sendCopyEmail = (s: EmailSender | null, why: string | undefined, o: { practice: string; to: string; name: string; link: string }) =>
@@ -53,4 +53,13 @@ export const sendInviteEmail = (s: EmailSender | null, why: string | undefined, 
     toName: o.name,
     subject: `${o.practice}: complete su registro`,
     text: `Hola ${first(o.name)}:\n\n${o.practice} le invita a completar sus datos de registro. Use este enlace seguro (válido por ${o.days} días):\n\n${o.link}\n\nSi no esperaba este mensaje, ignórelo.`,
+  })
+
+/** An invoice or receipt for the client: a link only. No number, amount or service in the email. */
+export const sendBillingLinkEmail = (s: EmailSender | null, why: string | undefined, o: { practice: string; to: string; name: string; kind: 'invoice' | 'receipt'; link: string; days: number }) =>
+  send(s, why, {
+    to: o.to,
+    toName: o.name,
+    subject: `${o.practice}: su ${o.kind === 'invoice' ? 'factura' : 'recibo'}`,
+    text: `Hola ${first(o.name)}:\n\n${o.practice} le envió su ${o.kind === 'invoice' ? 'factura' : 'recibo'}. Ábrala con este enlace seguro (válido por ${o.days} días):\n\n${o.link}\n\nPara abrirla tendrá que verificar su identidad con un código que le llegará a este mismo correo.\n\nSi no esperaba este mensaje, ignórelo.`,
   })

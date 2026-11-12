@@ -148,7 +148,7 @@ test('every kind of response carries the security headers; the app is strict, th
     expect(res.headers.get('content-security-policy'), path).toContain("script-src 'self'")
     expect(res.headers.get('x-content-type-options'), path).toBe('nosniff')
   }
-  for (const prefix of ['/d', '/i']) {
+  for (const prefix of ['/d', '/b', '/i']) {
     const res = await app.request(`${prefix}/${'A'.repeat(43)}`)
     expect(res.headers.get('content-security-policy'), prefix).toMatch(/script-src 'nonce-[^']+'/)
     expect(res.headers.get('cache-control'), prefix).toBe('no-store')

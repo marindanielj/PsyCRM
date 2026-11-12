@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { isValidIsoDate } from './age'
+import { FUNCTIONING_ROWS, INTAKE_LOCATION_MAX, INTAKE_TEXT_KEYS, INTAKE_TEXT_MAX, MH_HISTORY_ROWS, PERSONAL_HISTORY_ROWS } from './intake-form'
 import {
   INTERVENTIONS, MODALITIES, PROTECTIVE_FACTORS, RISK_ACTIONS, RISK_FACTORS, RISK_HARM_OTHERS, RISK_LEVELS,
   RISK_SELF_HARM, RISK_SUICIDAL, SESSION_TYPES, mseIssues,
@@ -29,6 +30,7 @@ export const NOTE_COLUMNS = {
   riskNotes: { column: 'risk_notes', type: 'text' },
   interventions: { column: 'interventions', type: 'text[]' },
   diagnosisCodes: { column: 'diagnosis_codes', type: 'text[]' },
+  intake: { column: 'intake', type: 'jsonb' },
 } as const
 
 export type NoteField = keyof typeof NOTE_COLUMNS
@@ -44,6 +46,24 @@ const text = (max: number) =>
 const choice = <T extends readonly [string, ...string[]]>(values: T) => z.enum(values).nullable()
 const list = <T extends readonly [string, ...string[]]>(values: T) =>
   z.array(z.enum(values)).max(values.length).transform((a) => [...new Set(a)])
+
+/** A row of her form: the checkbox and its text. */
+const intakeRow = z.object({ marked: z.boolean(), text: z.string().max(INTAKE_TEXT_MAX) }).strict()
+const rowsOf = (rows: readonly (readonly [string, string])[]) =>
+  z.object(Object.fromEntries(rows.map(([k]) => [k, intakeRow.optional()]))).strict()
+/**
+ * The intake form (B11). Closed keys only. The client never sets `version`: the server does, when the note is an intake.
+ * Sent whole by the editor; it replaces the stored form.
+ */
+export const intakeSchema = z
+  .object({
+    telehealth: z.object({ location: z.string().max(INTAKE_LOCATION_MAX), in_pr: z.boolean().nullable(), private_setting: z.boolean().nullable() }).strict().optional(),
+    functioning: rowsOf(FUNCTIONING_ROWS).optional(),
+    mh_history: rowsOf(MH_HISTORY_ROWS).optional(),
+    personal_history: rowsOf(PERSONAL_HISTORY_ROWS).optional(),
+    texts: z.object(Object.fromEntries(INTAKE_TEXT_KEYS.map((k) => [k, z.string().max(INTAKE_TEXT_MAX).optional()]))).strict().optional(),
+  })
+  .strict()
 
 const fields = {
   appointmentId: z.string().min(1).max(64).nullable(),
@@ -68,6 +88,7 @@ const fields = {
   riskNotes: text(5_000),
   interventions: list(INTERVENTIONS),
   diagnosisCodes: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.\-]{0,19}$/, 'invalid diagnosis code')).max(12).transform((a) => [...new Set(a)]),
+  intake: intakeSchema,
 }
 
 const { sessionDate, ...optionalOnCreate } = fields

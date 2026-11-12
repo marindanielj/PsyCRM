@@ -3,6 +3,7 @@ import type { Database } from '../db/database'
 import type { WorkflowDispatch } from '../jobs/workflow-dispatcher'
 import { type AuditEntry, audit } from '../lib/audit'
 import { ELEVATED_LEVELS, type RiskIssue, validateRiskForSign } from '../lib/clinical-vocab'
+import { CLIENT_ANSWER_TARGETS, CLIENT_ANSWER_VALUES, INTAKE_FORM_VERSION, type IntakeForm, intakeChangedFields, intakeFieldNames, intakeMissingForSign, isIntakeForm } from '../lib/intake-form'
 import { NOTE_COLUMNS, type CreateNoteInput, type NoteField, type PatchNoteInput } from '../lib/session-note-schema'
 import { ContactsRepo } from './contacts-repo'
 import { TimelineRepo } from './timeline-repo'
@@ -36,6 +37,8 @@ export interface SessionNote {
   risk_notes: string | null
   interventions: string[]
   diagnosis_codes: string[]
+  /** The intake form (B11); '{}' on every other note. */
+  intake: IntakeForm
   status: 'draft' | 'signed'
   signed_at: string | null
   signed_by: string | null
@@ -107,13 +110,16 @@ export type NoteError =
   | { ok: false; error: 'unknown_contact' }
   | { ok: false; error: 'unknown_appointment' }
   | { ok: false; error: 'appointment_mismatch' }
+  | { ok: false; error: 'intake_exists' }
+  | { ok: false; error: 'not_intake' }
+  | { ok: false; error: 'intake_incomplete'; missing: string[] }
 export type NoteResult<T> = ({ ok: true } & T) | NoteError
 
 /** Every note column, with the DATE/TIME ones as text: node-postgres turns `date` into a JS Date at local midnight, which shifts the day. */
 const NOTE_COLS = `id, location_id, contact_id, appointment_id, session_date::text AS session_date, start_time::text AS start_time,
   duration_min, modality, session_type, data_subjective, data_objective, assessment, plan, mse, mood_rating,
   risk_suicidal, risk_self_harm, risk_harm_others, risk_level, risk_factors, protective_factors, risk_actions, risk_notes,
-  interventions, diagnosis_codes, status, signed_at, signed_by, signed_late, created_by, created_at, updated_at, locks_at,
+  interventions, diagnosis_codes, intake, status, signed_at, signed_by, signed_late, created_by, created_at, updated_at, locks_at,
   deleted_at, deleted_by, delete_reason`
 
 const LOCK_SQL = `(now() >= locks_at) AS lock_locked,
@@ -310,6 +316,12 @@ export class SessionNotesRepo {
     }
 
     const { contactId, ...rest } = input
+    // An intake note uses the intake form, and a client has one live intake note.
+    if (rest.intake !== undefined && rest.sessionType !== 'intake') return { ok: false, error: 'not_intake' }
+    if (rest.sessionType === 'intake') {
+      if (await this.liveIntakeId(this.db, contactId)) return { ok: false, error: 'intake_exists' }
+      rest.intake = { ...(rest.intake ?? {}), version: INTAKE_FORM_VERSION } as typeof rest.intake
+    }
     const cols = ['id', 'location_id', 'contact_id', 'created_by']
     const vals: unknown[] = [nanoid(), this.locationId, contactId, actor.operatorId]
     const casts = ['', '', '', '']
@@ -332,7 +344,7 @@ export class SessionNotesRepo {
         entityType: 'session_note',
         entityId: created.id,
         contactId,
-        details: { fields: Object.keys(rest).filter((k) => (rest as Record<string, unknown>)[k] !== undefined) },
+        details: { fields: Object.keys(rest).filter((k) => k !== 'intake' && (rest as Record<string, unknown>)[k] !== undefined).concat(intakeFieldNames(rest.intake as IntakeForm | undefined).map((f) => `intake.${f}`)) },
         ...this.auditCtx(actor),
       })
       return created
@@ -352,6 +364,22 @@ export class SessionNotesRepo {
         if (autosave && before.status === 'signed') return { ok: false, error: 'autosave_on_signed' }
         if (before.status === 'signed' && !changeReason) return { ok: false, error: 'change_reason_required' }
 
+        // The intake form follows the session type: it can only be written on an intake note, it is switched on when a
+        // draft becomes an intake (one live intake per client), and set aside (kept, without its version) when it stops being one.
+        const nextType = fields.sessionType ?? before.session_type
+        const wasForm = isIntakeForm(before)
+        if (fields.intake !== undefined && nextType !== 'intake') return { ok: false, error: 'not_intake' }
+        if (fields.intake !== undefined && before.session_type === 'intake' && !wasForm) return { ok: false, error: 'not_intake' }
+        if (nextType === 'intake' && before.session_type !== 'intake') {
+          if (await this.liveIntakeId(tx, before.contact_id, id)) return { ok: false, error: 'intake_exists' }
+          fields.intake = { ...((fields.intake ?? before.intake) as object), version: INTAKE_FORM_VERSION } as typeof fields.intake
+        } else if (wasForm && nextType !== 'intake') {
+          const { version: _v, ...kept } = before.intake
+          fields.intake = kept as typeof fields.intake
+        } else if (fields.intake !== undefined && wasForm) {
+          fields.intake = { ...(fields.intake as object), version: before.intake.version } as typeof fields.intake
+        }
+
         const entries = Object.entries(fields).filter(([, v]) => v !== undefined) as [NoteField, unknown][]
         if (entries.length === 0) return { ok: true, note: withLock(before) as SessionNoteWithLock, changed: [] }
 
@@ -361,6 +389,10 @@ export class SessionNotesRepo {
           for (const [key, value] of entries) merged[NOTE_COLUMNS[key].column] = value
           const check = validateRiskForSign(merged as never)
           if (!check.ok) return { ok: false, error: 'risk_incomplete', missing: check.missing }
+          if (isIntakeForm(merged as never)) {
+            const missing = intakeMissingForSign(merged.intake as IntakeForm)
+            if (missing.length > 0) return { ok: false, error: 'intake_incomplete', missing }
+          }
         }
 
         const sets: string[] = []
@@ -384,6 +416,8 @@ export class SessionNotesRepo {
         const changed = entries
           .map(([key]) => NOTE_COLUMNS[key].column)
           .filter((col) => JSON.stringify((before as unknown as Record<string, unknown>)[col]) !== JSON.stringify((after as unknown as Record<string, unknown>)[col]))
+          // The form is logged by the names of the parts that changed, never their text.
+          .flatMap((col) => (col === 'intake' ? intakeChangedFields(before.intake, after.intake).map((f) => `intake.${f}`) : [col]))
 
         // The database keeps one autosave revision per author per 5 minutes; the audit
         // log mirrors that: an autosave is logged only when it actually produced a revision.
@@ -423,6 +457,10 @@ export class SessionNotesRepo {
 
       const check = validateRiskForSign(before as never)
       if (!check.ok) return { ok: false, error: 'risk_incomplete', missing: check.missing }
+      if (isIntakeForm(before)) {
+        const missing = intakeMissingForSign(before.intake)
+        if (missing.length > 0) return { ok: false, error: 'intake_incomplete', missing }
+      }
 
       // The risk level of the previous signed note, to report a change.
       const [prior] = await tx.query<{ id: string; risk_level: string }>(
@@ -563,7 +601,71 @@ export class SessionNotesRepo {
     return true
   }
 
+  // ---- the intake (B11) -----------------------------------------------------------
+
+  /**
+   * Where a client stands on the intake: their live intake-form note (draft or signed), whether they have any other signed
+   * note (an existing client needs no "intake pending" flag), and whether the informed consent is signed. No clinical text.
+   */
+  async intakeStatus(contactId: string): Promise<{ status: 'none' | 'draft' | 'signed'; noteId: string | null; otherSignedNotes: number; informedConsentSigned: boolean }> {
+    const [intake] = await this.db.query<{ id: string; status: 'draft' | 'signed' }>(
+      `SELECT id, status FROM session_notes
+        WHERE location_id = $1 AND contact_id = $2 AND session_type = 'intake' AND deleted_at IS NULL AND intake ? 'version' LIMIT 1`,
+      [this.locationId, contactId],
+    )
+    const [others] = await this.db.query<{ n: string | number }>(
+      `SELECT count(*) AS n FROM session_notes
+        WHERE location_id = $1 AND contact_id = $2 AND status = 'signed' AND deleted_at IS NULL AND id <> coalesce($3, '')`,
+      [this.locationId, contactId, intake?.id ?? null],
+    )
+    const consent = await this.db.query<{ one: number }>(
+      `SELECT 1 AS one FROM signed_documents sd JOIN document_templates t ON t.id = sd.template_id
+        WHERE sd.location_id = $1 AND sd.contact_id = $2 AND t.family_id = 'seed_informed_consent' LIMIT 1`,
+      [this.locationId, contactId],
+    )
+    return { status: intake?.status ?? 'none', noteId: intake?.id ?? null, otherSignedNotes: Number(others?.n ?? 0), informedConsentSigned: consent.length > 0 }
+  }
+
+  /**
+   * The answers of the client's latest signed admission questionnaire that help the intake note: only the known keys, as
+   * plain text. Opening them is an access to the signed document, so it is logged (names only). Null when there is none.
+   */
+  async clientAnswers(contactId: string, actor: NoteActor): Promise<{ signedAt: string; answers: Partial<Record<keyof typeof CLIENT_ANSWER_TARGETS, string>> } | null> {
+    const [doc] = await this.db.query<{ id: string; field_values: Record<string, unknown>; signed_at: string | Date }>(
+      `SELECT sd.id, sd.field_values, sd.signed_at FROM signed_documents sd JOIN document_templates t ON t.id = sd.template_id
+        WHERE sd.location_id = $1 AND sd.contact_id = $2 AND t.kind = 'intake_form' ORDER BY sd.signed_at DESC LIMIT 1`,
+      [this.locationId, contactId],
+    )
+    if (!doc) return null
+    const answers: Partial<Record<keyof typeof CLIENT_ANSWER_TARGETS, string>> = {}
+    for (const key of Object.keys(CLIENT_ANSWER_TARGETS) as (keyof typeof CLIENT_ANSWER_TARGETS)[]) {
+      const v = doc.field_values?.[key]
+      if (typeof v !== 'string' || v.trim() === '') continue
+      answers[key] = (CLIENT_ANSWER_VALUES[v] ?? v).slice(0, 5_000)
+    }
+    await audit(this.db, this.locationId, {
+      action: 'document.viewed_by_operator',
+      entityType: 'signed_document',
+      entityId: doc.id,
+      contactId,
+      details: { for: 'intake_note' },
+      ...this.auditCtx(actor),
+    })
+    return { signedAt: iso(doc.signed_at), answers }
+  }
+
   // ---- internals -----------------------------------------------------------------
+
+  /** The client's live intake-form note, other than `exceptId`. */
+  private async liveIntakeId(db: Database, contactId: string, exceptId?: string): Promise<string | null> {
+    const [row] = await db.query<{ id: string }>(
+      `SELECT id FROM session_notes
+        WHERE location_id = $1 AND contact_id = $2 AND session_type = 'intake' AND deleted_at IS NULL AND intake ? 'version'
+          AND id <> coalesce($3, '') LIMIT 1`,
+      [this.locationId, contactId, exceptId ?? null],
+    )
+    return row?.id ?? null
+  }
 
   /** The note row, locked for the rest of the transaction (concurrent edits queue up). */
   private async lockRow(tx: Database, id: string): Promise<(SessionNote & LockCols) | undefined> {

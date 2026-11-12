@@ -307,13 +307,13 @@ Los specs de cada día están en [`specs/`](specs/README.md). La infraestructura
 | B2 | **Plan de seguridad (Stanley-Brown)** como documento estructurado, versionado y compartible con el cliente, enlazado desde la evaluación de riesgo de la nota. Opcional: escalas validadas (C-SSRS) dentro del paso de riesgo. La bandera y la evaluación obligatoria ya entran en el MVP | Gestión del riesgo suicida |
 | B3 | **Autorizaciones de divulgación (ROI)** con vigencia y revocación + **registro de divulgaciones** (HIPAA §164.528) | Cumplimiento al compartir información con médicos, escuelas o tribunales |
 | B4 | **Portal seguro del cliente** (documentos, citas, pagos, mensajes). Según D-46, como producto **separado** de OpenLevel | Autoservicio y menos carga administrativa |
-| B5 | **Telesalud** con integración de video con BAA (Zoom for Healthcare, Doxy.me) y link automático en la cita | Sesiones remotas |
+| B5 | **Telesalud**. Fase 1: sala fija de una plataforma con BAA (Doxy.me, Zoom for Healthcare) y enlace en la cita. Fase 2: **video integrado con Amazon Chime SDK**, bajo el BAA de AWS ya aceptado, con un enlace por cita como SimplePractice. Ver [`specs/future-telehealth.md`](specs/future-telehealth.md) | Sesiones remotas |
 | B6 | **Reclamaciones a seguros** (837P vía clearinghouse como Office Ally o Claim.MD) + verificación de elegibilidad | Si decide aceptar seguros |
 | B7 | **Resumen de alta / cierre de episodio** y reapertura | Ciclo de vida clínico completo |
 | B8 | **Exportación del expediente completo** (PDF firmado) para solicitudes del cliente o de un tribunal | Derecho de acceso (HIPAA §164.524) |
 | B9 | **Multiusuario con roles** (terapeuta, asistente administrativo sin acceso a notas, supervisor con co-firma de internos) | Crecimiento de la práctica |
 | B10 | **Cifrado a nivel de campo** de notas y MSE (claves en KMS) + MFA obligatorio + alertas de acceso inusual | Defensa en profundidad para PHI |
-| B11 | **Nota de primera sesión (intake)**: variante de la nota de sesión con consentimientos verificados desde los documentos firmados, historia clínica, formulación, impresión diagnóstica y metas iniciales. Reutiliza el riesgo, el MSE y el bloqueo de 72 h. Ver [`specs/future-intake-notes.md`](specs/future-intake-notes.md) | Alimenta el plan de tratamiento (B1) y la bandera de riesgo; es el primer paso del expediente clínico |
+| B11 | **Nota de entrevista inicial (intake)**: su formulario impreso de 5 páginas pasado a la app, en español y en su mismo orden, más el estado mental (opcional), el riesgo estructurado y el diagnóstico ICD-10 (opcional). Usa las respuestas del cuestionario de admisión del cliente. Reutiliza la firma y el bloqueo de 72 h. Ver [`specs/future-intake-notes.md`](specs/future-intake-notes.md) | Alimenta el plan de tratamiento (B1) y la bandera de riesgo; es el primer paso del expediente clínico |
 
 ### C. Expansión futura: todo bilingüe (español / inglés)
 

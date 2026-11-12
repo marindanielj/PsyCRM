@@ -10,6 +10,7 @@ export function ChipGroup({
   exclusive,
   invalid,
   ariaLabel,
+  labelOf = label,
 }: {
   options: readonly string[]
   value: readonly string[]
@@ -19,6 +20,8 @@ export function ChipGroup({
   exclusive?: readonly string[]
   invalid?: boolean
   ariaLabel?: string
+  /** How an option is named (defaults to the English clinical labels). */
+  labelOf?: (option: string) => string
 }) {
   function toggle(opt: string) {
     if (disabled) return
@@ -42,7 +45,7 @@ export function ChipGroup({
               on ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
             )}
           >
-            {label(opt)}
+            {labelOf(opt)}
           </button>
         )
       })}
@@ -59,6 +62,7 @@ export function ChoiceGroup({
   invalid,
   ariaLabel,
   tone,
+  labelOf = label,
 }: {
   options: readonly string[]
   value: string | null
@@ -68,6 +72,7 @@ export function ChoiceGroup({
   ariaLabel: string
   /** Optional per-option colour classes for the selected state (the risk level). */
   tone?: (option: string) => string
+  labelOf?: (option: string) => string
 }) {
   return (
     <div role="radiogroup" aria-label={ariaLabel} className={cn('flex flex-wrap gap-1.5', invalid && 'rounded-lg ring-2 ring-rose-300 ring-offset-2')}>
@@ -86,7 +91,7 @@ export function ChoiceGroup({
               on ? (tone?.(opt) ?? 'border-brand-600 bg-brand-600 text-white') : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
             )}
           >
-            {label(opt)}
+            {labelOf(opt)}
           </button>
         )
       })}

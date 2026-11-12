@@ -19,6 +19,7 @@ import {
   normalizeTaxId,
   parseMoneyToCents,
 } from '../lib/billing-vocab'
+import type { ResolvedEmailSender } from '../lib/sending/resolve'
 import { PracticeRepo } from '../repos/practice-repo'
 import { billingDocumentsRoute } from './billing-documents'
 import {
@@ -101,9 +102,14 @@ const STATUS: Record<ChargeError, 400 | 404 | 409 | 422> = {
  * Charges and superbills, at /api/loc/:loc/billing behind operatorAuth + locationAccess + the `billing` module.
  *
  * This only WRITES DOWN what already happened: it never charges a card or moves money, and nothing here leaves the
- * system. A superbill carries health information, so it is shown inside the app and is never sent by email.
+ * system. A superbill carries health information, so it is shown inside the app and is never sent by email (an invoice or receipt can be: see billing-documents).
  */
-export function billingRoute(deps: { db: Database; secret: string }): Hono<AppEnv> {
+export function billingRoute(deps: {
+  db: Database
+  secret: string
+  resolveEmail?: (db: Database, locationId: string) => Promise<ResolvedEmailSender>
+  publicBaseUrl?: string
+}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
   const profile = (c: Context<AppEnv>) => new BillingProfileRepo(deps.db, c.get('locationId'))
   const charges = (c: Context<AppEnv>) => new ChargesRepo(deps.db, c.get('locationId'))
@@ -197,7 +203,7 @@ export function billingRoute(deps: { db: Database; secret: string }): Hono<AppEn
   })
 
   // Payments (each with its receipt) and invoices.
-  app.route('/', billingDocumentsRoute({ db: deps.db }))
+  app.route('/', billingDocumentsRoute({ db: deps.db, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
 
   return app
 }

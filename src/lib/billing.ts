@@ -55,6 +55,9 @@ export const BILLING_MESSAGES: Record<string, string> = {
   too_many_diagnoses: 'A superbill lists at most 12 different diagnoses. Split it into two.',
   no_charges: 'Choose at least one charge.',
   method_required: 'Choose how it was paid.',
+  email_not_on_file: 'That address is not on this client’s record. Add it there first.',
+  email_unavailable: 'The email could not be sent. Check Settings → Sending, or print it instead.',
+  rate_limited: 'Too many emails sent in the last hour. Try again later.',
 }
 
 export const billingMessage = (code: string | undefined | null): string => (code && BILLING_MESSAGES[code]) || 'Something went wrong. Please try again.'

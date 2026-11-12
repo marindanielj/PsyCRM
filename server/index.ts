@@ -32,6 +32,7 @@ import type { ResolvedEmailSender } from './lib/sending/resolve'
 import { documentsRoute } from './routes/documents'
 import { brandLogoRoute, brandingRoute } from './routes/branding'
 import { invitesRoute } from './routes/invites'
+import { publicBillingRoute } from './routes/public-billing'
 import { publicDocumentsRoute } from './routes/public-documents'
 import { publicInvitesRoute } from './routes/public-invites'
 import { sessionNotesRoute } from './routes/session-notes'
@@ -214,7 +215,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }
     const strict = secureHeaders({ ...baseHeaders, contentSecurityPolicy: csp })
     const relaxed = secureHeaders({ ...baseHeaders, contentSecurityPolicy: undefined })
-    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') || c.req.path.startsWith('/d/') || c.req.path.startsWith('/i/') || c.req.path.startsWith('/p/') ? relaxed(c, next) : strict(c, next)))
+    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') || c.req.path.startsWith('/d/') || c.req.path.startsWith('/b/') || c.req.path.startsWith('/i/') || c.req.path.startsWith('/p/') ? relaxed(c, next) : strict(c, next)))
     app.use('/api/*', async (c, next) => {
       await next()
       c.header('Cache-Control', 'no-store')
@@ -295,6 +296,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // Hosted booking pages: pick a day + time, leave details. A booking creates a
   // contact + appointment and fires appointment_booked into live automations.
   // Client-facing signing pages (one-time-code verified, strict per-page CSP). Always on; a practice that turns the documents module off gets "invalid link".
+  app.route('/b', publicBillingRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure, resolveEmail: deps.resolveEmail }))
   app.route('/d', publicDocumentsRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure, dispatch: deps.dispatch, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
   // Client invitation pages (one-time link, own nonce CSP). Always on; a practice with contacts off gets "invalid link".
   // A practice's logo, for the pages its clients see.
@@ -349,7 +351,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     app.route('/api/loc/:loc/calendar-sync', calendarSyncRoute({ db: deps.db, secret: deps.sessionSecret, publicBaseUrl: deps.publicBaseUrl }))
   }
   // Charges and superbills (A4). Bookkeeping only: nothing here moves money or leaves the system.
-  app.route('/api/loc/:loc/billing', billingRoute({ db: deps.db, secret: deps.sessionSecret }))
+  app.route('/api/loc/:loc/billing', billingRoute({ db: deps.db, secret: deps.sessionSecret, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
   app.route('/api/loc/:loc/campaigns', campaignsRoute({ db: deps.db }))
   app.route('/api/loc/:loc/workflows', workflowsRoute({ db: deps.db }))
   app.route('/api/loc/:loc/reporting', reportingRoute({ db: deps.db }))

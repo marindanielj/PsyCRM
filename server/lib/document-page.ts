@@ -70,8 +70,8 @@ function show(el,text,cls){el.className='msg '+cls;el.textContent=text;el.hidden
 `
 
 /** `therapistCode`: the therapist gave this person a code (read out, not emailed), so the box to type it is already open. */
-export function renderVerifyPage(o: { practice: string; maskedEmail: string; token: string; nonce: string; brand?: string; logoUrl?: string; locked: boolean; therapistCode?: boolean }): string {
-  const script = `${CLIENT_COMMON.replace('__T__', jsonForScript(o.token))}
+export function renderVerifyPage(o: { practice: string; maskedEmail: string; token: string; nonce: string; brand?: string; logoUrl?: string; locked: boolean; therapistCode?: boolean; basePath?: string }): string {
+  const script = `${CLIENT_COMMON.replace('__T__', jsonForScript(o.token)).replace("'/d/'", jsonForScript(o.basePath ?? '/d/'))}
 const send=document.getElementById('send'),codeBox=document.getElementById('codebox'),verify=document.getElementById('verify'),code=document.getElementById('code'),msg=document.getElementById('msg');
 send&&send.addEventListener('click',async()=>{
   send.disabled=true;

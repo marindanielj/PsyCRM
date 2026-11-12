@@ -1992,3 +1992,34 @@ END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS charge_guard ON charges;
 CREATE TRIGGER charge_guard BEFORE UPDATE OR DELETE ON charges
   FOR EACH ROW EXECUTE FUNCTION charge_guard();
+
+-- Invoices and receipts emailed to the client. The email carries only a link; the page behind it asks for a one-time code
+-- sent to the same address. Only the hash of the link token and of the code are stored.
+CREATE TABLE IF NOT EXISTS billing_shares (
+  id             text PRIMARY KEY,
+  location_id    text NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  contact_id     text NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+  kind           text NOT NULL CHECK (kind IN ('invoice','receipt')),
+  document_id    text NOT NULL,
+  email          text NOT NULL,
+  token_hash     text NOT NULL UNIQUE,
+  otp_hash       text,
+  otp_expires_at timestamptz,
+  otp_attempts   integer NOT NULL DEFAULT 0,
+  created_by     text NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  expires_at     timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS billing_shares_by_document ON billing_shares(location_id, kind, document_id, created_at DESC);
+
+-- B11: the first-session intake note, in the therapist's own form. The form lives in one jsonb column so the note keeps
+-- the 72 h lock, the revisions and the addenda unchanged. A note USES the form when `intake` has a `version`: older
+-- "intake" notes written as DAP keep '{}' and are untouched by these rules (the production table already has rows).
+ALTER TABLE session_notes ADD COLUMN IF NOT EXISTS intake jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE session_notes DROP CONSTRAINT IF EXISTS session_notes_intake_required;
+ALTER TABLE session_notes ADD CONSTRAINT session_notes_intake_required CHECK (
+  status = 'draft' OR session_type <> 'intake' OR NOT (intake ? 'version')
+  OR coalesce(length(trim(intake->'texts'->>'presenting_problem')), 0) > 0);
+-- One live intake-form note per client.
+CREATE UNIQUE INDEX IF NOT EXISTS session_notes_one_intake
+  ON session_notes(location_id, contact_id) WHERE session_type = 'intake' AND deleted_at IS NULL AND intake ? 'version';
