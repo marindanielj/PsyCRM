@@ -313,7 +313,7 @@ Los specs de cada día están en [`specs/`](specs/README.md). La infraestructura
 | B8 | **Exportación del expediente completo** (PDF firmado) para solicitudes del cliente o de un tribunal | Derecho de acceso (HIPAA §164.524) |
 | B9 | **Multiusuario con roles** (terapeuta, asistente administrativo sin acceso a notas, supervisor con co-firma de internos) | Crecimiento de la práctica |
 | B10 | **Cifrado a nivel de campo** de notas y MSE (claves en KMS) + MFA obligatorio + alertas de acceso inusual | Defensa en profundidad para PHI |
-| B11 | **Nota de primera sesión (intake)**: variante de la nota de sesión con consentimientos verificados desde los documentos firmados, historia clínica, formulación, impresión diagnóstica y metas iniciales. Reutiliza el riesgo, el MSE y el bloqueo de 72 h. Ver [`specs/future-intake-notes.md`](specs/future-intake-notes.md) | Alimenta el plan de tratamiento (B1) y la bandera de riesgo; es el primer paso del expediente clínico |
+| B11 | **Nota de entrevista inicial (intake)**: su formulario impreso de 5 páginas pasado a la app, en español y en su mismo orden, más el estado mental (opcional), el riesgo estructurado y el diagnóstico ICD-10 (opcional). Usa las respuestas del cuestionario de admisión del cliente. Reutiliza la firma y el bloqueo de 72 h. Ver [`specs/future-intake-notes.md`](specs/future-intake-notes.md) | Alimenta el plan de tratamiento (B1) y la bandera de riesgo; es el primer paso del expediente clínico |
 
 ### C. Expansión futura: todo bilingüe (español / inglés)
 
