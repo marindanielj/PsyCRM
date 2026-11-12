@@ -307,7 +307,7 @@ Los specs de cada día están en [`specs/`](specs/README.md). La infraestructura
 | B2 | **Plan de seguridad (Stanley-Brown)** como documento estructurado, versionado y compartible con el cliente, enlazado desde la evaluación de riesgo de la nota. Opcional: escalas validadas (C-SSRS) dentro del paso de riesgo. La bandera y la evaluación obligatoria ya entran en el MVP | Gestión del riesgo suicida |
 | B3 | **Autorizaciones de divulgación (ROI)** con vigencia y revocación + **registro de divulgaciones** (HIPAA §164.528) | Cumplimiento al compartir información con médicos, escuelas o tribunales |
 | B4 | **Portal seguro del cliente** (documentos, citas, pagos, mensajes). Según D-46, como producto **separado** de OpenLevel | Autoservicio y menos carga administrativa |
-| B5 | **Telesalud** con integración de video con BAA (Zoom for Healthcare, Doxy.me) y link automático en la cita | Sesiones remotas |
+| B5 | **Telesalud**. Fase 1: sala fija de una plataforma con BAA (Doxy.me, Zoom for Healthcare) y enlace en la cita. Fase 2: **video integrado con Amazon Chime SDK**, bajo el BAA de AWS ya aceptado, con un enlace por cita como SimplePractice. Ver [`specs/future-telehealth.md`](specs/future-telehealth.md) | Sesiones remotas |
 | B6 | **Reclamaciones a seguros** (837P vía clearinghouse como Office Ally o Claim.MD) + verificación de elegibilidad | Si decide aceptar seguros |
 | B7 | **Resumen de alta / cierre de episodio** y reapertura | Ciclo de vida clínico completo |
 | B8 | **Exportación del expediente completo** (PDF firmado) para solicitudes del cliente o de un tribunal | Derecho de acceso (HIPAA §164.524) |

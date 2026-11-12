@@ -15,7 +15,7 @@ Cada spec se puede implementar por sí solo y en orden. Parte de [`../PLAN_MVP.m
 
 Extras posteriores al día 7: [invitación al cliente](extra-client-invite.md) · [marca por práctica](extra-branding.md) · [sincronización de calendario `.ics`](extra-calendar-sync.md) · [cobros y superbills (A4)](extra-billing-superbills.md) · [facturas y recibos (A4)](extra-billing-invoices-receipts.md) · [página pública y solicitudes](../RESULTADOS_PAGINA_PUBLICA.md).
 
-Ideas futuras con spec: [constructor de páginas por bloques (A12)](future-page-builder.md) · [nota de primera sesión (B11)](future-intake-notes.md).
+Ideas futuras con spec: [constructor de páginas por bloques (A12)](future-page-builder.md) · [nota de primera sesión (B11)](future-intake-notes.md) · [telesalud (B5)](future-telehealth.md).
 
 **Resultados:** [días 1 y 2](../RESULTADOS_DIAS_1_2.md) · [día 3](../RESULTADOS_DIA_3.md) · [día 4](../RESULTADOS_DIA_4.md) · [día 5](../RESULTADOS_DIA_5.md) · [día 6](../RESULTADOS_DIA_6.md) · [día 7](../RESULTADOS_DIA_7.md) · [invitación](../RESULTADOS_INVITACION.md) · [día 8](../RESULTADOS_DIA_8.md) · [marca](../RESULTADOS_MARCA.md) · [correo SES](../RESULTADOS_SES.md). Operación: [`OPERACIONES.md`](../OPERACIONES.md) · guía: [`GUIA_RAPIDA.md`](../GUIA_RAPIDA.md).
 
