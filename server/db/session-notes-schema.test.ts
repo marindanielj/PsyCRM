@@ -34,7 +34,7 @@ const closeWindow = (s: Db, id = 'n1') =>
 
 // --- the clock ----------------------------------------------------------------------
 
-test('a new note is a draft whose 72 h window the DATABASE starts; the caller cannot pre-sign, backdate or widen it', async () => {
+test('a new note is a draft with no clock; the caller cannot pre-sign, backdate or set its window', async () => {
   const s = await setup()
   await asActor(s.db, 'op1', (tx) =>
     tx.query(
@@ -43,12 +43,55 @@ test('a new note is a draft whose 72 h window the DATABASE starts; the caller ca
       [s.loc],
     ),
   )
-  const [n] = await s.db.query<{ status: string; signed_at: unknown; signed_by: unknown; signed_late: boolean; deleted_at: unknown; hours: number; created: string | Date }>(
-    `SELECT status, signed_at, signed_by, signed_late, deleted_at, extract(epoch from (locks_at - created_at))/3600 AS hours, created_at AS created FROM session_notes WHERE id='n1'`,
+  const [n] = await s.db.query<{ status: string; signed_at: unknown; signed_by: unknown; signed_late: boolean; deleted_at: unknown; locks_at: unknown; created: string | Date }>(
+    `SELECT status, signed_at, signed_by, signed_late, deleted_at, locks_at, created_at AS created FROM session_notes WHERE id='n1'`,
   )
-  expect(n).toMatchObject({ status: 'draft', signed_at: null, signed_by: null, signed_late: false, deleted_at: null })
-  expect(Number(n!.hours)).toBe(72)
+  expect(n).toMatchObject({ status: 'draft', signed_at: null, signed_by: null, signed_late: false, deleted_at: null, locks_at: null })
   expect(new Date(n!.created).getFullYear()).toBeGreaterThan(2020)
+})
+
+test('the 72 h window starts when the note is signed, and an old draft is never locked', async () => {
+  const s = await setup()
+  await newNote(s)
+  // a draft made ten days ago is still a draft: editable, and signed on time
+  await s.pg.exec(`SET session_replication_role = replica; UPDATE session_notes SET created_at = now() - interval '10 days' WHERE id = 'n1'; SET session_replication_role = DEFAULT;`)
+  await asActor(s.db, 'op1', (tx) => tx.query("UPDATE session_notes SET assessment='written on day 10' WHERE id='n1'"))
+  await sign(s)
+  const [n] = await s.db.query<{ signed_late: boolean; hours: number; assessment: string }>(
+    `SELECT signed_late, assessment, extract(epoch from (locks_at - signed_at))/3600 AS hours FROM session_notes WHERE id='n1'`,
+  )
+  expect(n).toMatchObject({ signed_late: false, assessment: 'written on day 10' })
+  expect(Number(n!.hours)).toBe(72)
+  // an amendment renews the signature, not the window
+  const before = (await s.db.query<{ locks_at: Date }>("SELECT locks_at FROM session_notes WHERE id='n1'"))[0]!.locks_at
+  await asActor(s.db, 'op1', (tx) => tx.query("UPDATE session_notes SET assessment='amended', signed_at = now() + interval '1 hour' WHERE id='n1'"))
+  expect((await s.db.query<{ locks_at: Date }>("SELECT locks_at FROM session_notes WHERE id='n1'"))[0]!.locks_at).toEqual(before)
+  // a signed note always has its window
+  await expect(s.pg.exec(`SET session_replication_role = replica; UPDATE session_notes SET locks_at = NULL WHERE id = 'n1'; SET session_replication_role = DEFAULT;`)).rejects.toThrow(/session_notes_window_when_signed/)
+})
+
+test('the migration opens drafts locked under the old rule (counted from creation) and leaves signed notes and their history alone', async () => {
+  const s = await setup()
+  await newNote(s, 'draft1')
+  await newNote(s, 'signed1')
+  await sign(s, 'signed1')
+  // the old rule: every note had a clock from creation; this draft's has run out
+  await s.pg.exec(`SET session_replication_role = replica; UPDATE session_notes SET locks_at = now() - interval '1 day' WHERE id = 'draft1'; SET session_replication_role = DEFAULT;`)
+  await expect(asActor(s.db, 'op1', (tx) => tx.query("UPDATE session_notes SET assessment='x' WHERE id='draft1'"))).rejects.toThrow(/session_note_locked/)
+  const signedWindow = (await s.db.query<{ locks_at: Date }>("SELECT locks_at FROM session_notes WHERE id='signed1'"))[0]!.locks_at
+  const revisions = (await s.db.query('SELECT 1 FROM session_note_revisions')).length
+
+  const { readFileSync } = await import('node:fs')
+  const schema = readFileSync(new URL('../../db/schema.sql', import.meta.url), 'utf8')
+  await s.pg.exec(schema)
+  await s.pg.exec(schema) // and again: nothing left to do
+
+  expect((await s.db.query<{ locks_at: unknown }>("SELECT locks_at FROM session_notes WHERE id='draft1'"))[0]!.locks_at).toBeNull()
+  await asActor(s.db, 'op1', (tx) => tx.query("UPDATE session_notes SET assessment='finished at last' WHERE id='draft1'"))
+  expect((await s.db.query<{ locks_at: Date }>("SELECT locks_at FROM session_notes WHERE id='signed1'"))[0]!.locks_at).toEqual(signedWindow)
+  expect((await s.db.query('SELECT 1 FROM session_note_revisions')).length).toBe(revisions + 1) // only the edit above; the migration wrote none
+  // the triggers are back on: an anonymous change is still refused
+  await expect(s.db.query("UPDATE session_notes SET assessment='anon' WHERE id='draft1'")).rejects.toThrow(/session_note_actor_required/)
 })
 
 test('created_at, locks_at, contact and creator can never be changed after creation', async () => {

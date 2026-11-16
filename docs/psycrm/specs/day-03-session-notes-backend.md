@@ -149,6 +149,8 @@ DROP TRIGGER IF EXISTS session_note_addenda_immutable ON session_note_addenda;
 CREATE TRIGGER session_note_addenda_immutable BEFORE UPDATE OR DELETE ON session_note_addenda
   FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 ```
+> **Cambio del 16 de noviembre de 2026:** las 72 h cuentan **desde la firma**, no desde la creación. Un borrador tiene `locks_at` NULL y nunca se bloquea; el trigger de UPDATE pone `locks_at = now() + 72 h` al firmar por primera vez, y una enmienda posterior no mueve ese plazo. Los borradores creados con la regla anterior se abrieron con una migración única. El texto de abajo describe el diseño original.
+
 `locks_at` se asigna por DEFAULT en el `INSERT`. El repo **no** lo envía, y si lo enviara, el trigger de UPDATE lo restaura. Para que un `INSERT` no pueda fijar un `locks_at` arbitrario, se agrega un trigger `BEFORE INSERT` que hace `NEW.created_at := now(); NEW.locks_at := now() + interval '72 hours'`.
 
 ### Reglas de producto (sobre las de la BD)

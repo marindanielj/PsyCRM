@@ -142,7 +142,7 @@ export function TodayPanel() {
           ) : null}
 
           {locking.length > 0 ? (
-            <Card title="Notes locking soon" tone="warn" icon={<Timer className="h-3.5 w-3.5 text-amber-600" />}>
+            <Card title="Signed notes locking soon" tone="warn" icon={<Timer className="h-3.5 w-3.5 text-amber-600" />}>
               <ul className="space-y-2">
                 {locking.map((n) => (
                   <li key={n.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-sm">

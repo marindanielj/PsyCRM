@@ -78,7 +78,7 @@ Si el cliente no ha contestado el cuestionario, esa columna no aparece.
 - **Al crear una nota** desde una cita de un cliente sin notas, el tipo se propone como `intake`. Ella lo puede cambiar.
 - **Para firmar** hace falta: la queja / problema que presenta y la evaluación de riesgo completa. Todo lo demás es opcional, incluidos el estado mental y el diagnóstico.
 - **Consentimientos:** si el cliente no ha firmado el consentimiento informado, la nota muestra un **aviso**. No bloquea la firma.
-- Después de las 72 horas la nota queda bloqueada igual que cualquier otra y se corrige con anexos.
+- Como cualquier nota: el borrador se edita sin límite; 72 horas después de **firmarla** queda bloqueada y se corrige con anexos.
 
 ## Modelo de datos
 

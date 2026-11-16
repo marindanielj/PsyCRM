@@ -181,7 +181,7 @@ Wizard de 5 pasos con autoguardado (borrador) cada ~10 s:
    - **Nunca se precarga** con las respuestas de la sesión anterior: cada sesión se contesta activamente. Así una nota copiada no aparenta una evaluación que no se hizo. Sí se muestra, como referencia, "Nivel en la sesión anterior: Bajo (12/oct)".
    - Si el nivel es ≥ moderado o alguna dimensión no es "niega": se exige la justificación y al menos una acción, se muestra un recordatorio del protocolo de crisis y, al firmar, se crea una tarea de seguimiento.
 4. **DAP**: tres áreas de texto, cada una con preguntas guía colapsables ("¿Qué reportó el cliente?", "¿Qué observaste?", "¿Cómo se relaciona con las metas?", "¿Qué sigue?") y la lista de intervenciones usadas. La "A" muestra el resumen de riesgo del paso 3 para que la evaluación clínica lo integre.
-5. **Revisar y firmar**: vista previa en formato reporte, luego "Firmar nota" (`status=signed`). Firmar **no** bloquea: lo que bloquea es el reloj de 72 h. Mientras faltan horas se muestra "Editable por 2 d 14 h más".
+5. **Revisar y firmar**: vista previa en formato reporte, luego "Firmar nota" (`status=signed`). El borrador se puede editar sin límite de tiempo. **Firmar arranca el reloj de 72 h**: durante ese plazo la nota firmada se puede enmendar (con motivo); después queda bloqueada. Mientras faltan horas se muestra "Editable · 2d 14h left".
 
 **Riesgo visible fuera de la nota (MVP):**
 - **Bandera en el expediente** del cliente con el nivel de su última nota firmada (verde / ámbar / rojo) y la fecha.
@@ -197,7 +197,7 @@ Wizard de 5 pasos con autoguardado (borrador) cada ~10 s:
 
 ### 3.4 Reglas (resumen)
 
-| Acción | < 72 h desde la creación | ≥ 72 h |
+| Acción | Borrador, o < 72 h desde la firma | ≥ 72 h desde la firma |
 |---|---|---|
 | Ver / imprimir | ✅ (se audita `note.viewed`) | ✅ (se audita) |
 | Editar | ✅ (revisión + audit con diff) | ❌ (API 409 + trigger de BD) |
@@ -271,7 +271,7 @@ Orden según el riesgo: **las notas antes que el onboarding**, porque se necesit
 
 ### Decisiones tomadas (2026-11-05)
 1. **Jurisdicción: Puerto Rico.** Zona horaria `America/Puerto_Rico` (AST, sin horario de verano). Líneas de crisis: 988 y Línea PAS (ASSMCA). La retención de expedientes y el consentimiento de menores se rigen por la ley local (Ley 408-2000 de Salud Mental, reglamentos de la Junta Examinadora de Psicólogos). **Hay que validarlo con un asesor legal antes de usar las plantillas.**
-2. **Las 72 h cuentan desde la creación de la nota.**
+2. **Las 72 h cuentan desde la firma de la nota** (cambiado el 16 de noviembre de 2026; antes contaban desde la creación). Un borrador sin firmar nunca se bloquea.
 3. **Firma:** nombre escrito + checkbox "acepto firmar electrónicamente" (requisito legal de la Ley de Transacciones Electrónicas de PR, basada en UETA, y de ESIGN) **+ firma dibujada** en pantalla, obligatoria por defecto y configurable por plantilla. La dibujada da más confianza al cliente y más peso como evidencia, y cuesta poco (un `<canvas>`). El nombre escrito sigue siendo la firma legal si alguien no puede dibujar.
 4. **Interfaz de la terapeuta en inglés. Documentos y páginas para clientes en español.** El modelo de datos queda preparado para varios idiomas (`locale` y `translation_group_id` en las plantillas).
 5. **Adolescentes: posibles. Adulto = 18 años o más** (para efectos de terapia, decide por sí mismo). Menor = menos de 18. Hay un paquete "Onboarding adolescente" con consentimiento del tutor + asentimiento del menor (varios firmantes por envío). **El paquete se elige según la fecha de nacimiento**, que pasa a ser un dato obligatorio al crear el cliente.
