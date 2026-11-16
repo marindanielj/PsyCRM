@@ -46,17 +46,21 @@ export interface SessionNote {
   created_by: string
   created_at: string
   updated_at: string
-  locks_at: string
+  locks_at: string | null
   deleted_at: string | null
   deleted_by: string | null
   delete_reason: string | null
 }
 
-/** Computed with the DATABASE clock, so a skewed app server cannot misreport the window. */
+/**
+ * Computed with the DATABASE clock, so a skewed app server cannot misreport the window. The 72 h
+ * window starts when the note is signed: a draft has none (`locksAt` and `msRemaining` null) and
+ * is always editable.
+ */
 export interface NoteLock {
   locked: boolean
-  locksAt: string
-  msRemaining: number
+  locksAt: string | null
+  msRemaining: number | null
 }
 export type SessionNoteWithLock = SessionNote & { lock: NoteLock }
 /** The note as the record view needs it: also says WHO signed (the display name, not just the id). */
@@ -76,7 +80,7 @@ export interface SessionNoteSummary {
   risk_level: string | null
   created_at: string
   updated_at: string
-  locks_at: string
+  locks_at: string | null
   deleted_at: string | null
   delete_reason: string | null
   lock: NoteLock
@@ -122,24 +126,26 @@ const NOTE_COLS = `id, location_id, contact_id, appointment_id, session_date::te
   interventions, diagnosis_codes, intake, status, signed_at, signed_by, signed_late, created_by, created_at, updated_at, locks_at,
   deleted_at, deleted_by, delete_reason`
 
-const LOCK_SQL = `(now() >= locks_at) AS lock_locked,
+const LOCK_SQL = `coalesce(now() >= locks_at, false) AS lock_locked,
   GREATEST(0, floor(extract(epoch from (locks_at - now())) * 1000))::bigint AS lock_ms`
 
 interface LockCols {
   lock_locked: boolean
-  lock_ms: string | number
+  /** NULL for a draft (no window yet). */
+  lock_ms: string | number | null
 }
 const iso = (v: string | Date) => (v instanceof Date ? v.toISOString() : new Date(v).toISOString())
 
 /** Fold the two computed columns into a `lock` object. */
-function withLock<T extends LockCols & { locks_at: string | Date }>(row: T): Omit<T, 'lock_locked' | 'lock_ms'> & { lock: NoteLock } {
+function withLock<T extends LockCols & { locks_at: string | Date | null }>(row: T): Omit<T, 'lock_locked' | 'lock_ms'> & { lock: NoteLock } {
   const { lock_locked, lock_ms, ...rest } = row
-  return { ...rest, lock: { locked: lock_locked, locksAt: iso(rest.locks_at), msRemaining: Number(lock_ms) } }
+  const open = rest.locks_at === null || rest.locks_at === undefined
+  return { ...rest, lock: { locked: Boolean(lock_locked), locksAt: open ? null : iso(rest.locks_at as string | Date), msRemaining: open || lock_ms === null ? null : Number(lock_ms) } }
 }
 
 const SUMMARY_COLS = `n.id, n.contact_id, n.appointment_id, n.session_date::text AS session_date, n.session_type, n.modality, n.status, n.signed_late,
   n.risk_level, n.created_at, n.updated_at, n.locks_at, n.deleted_at, n.delete_reason,
-  (now() >= n.locks_at) AS lock_locked,
+  coalesce(now() >= n.locks_at, false) AS lock_locked,
   GREATEST(0, floor(extract(epoch from (n.locks_at - now())) * 1000))::bigint AS lock_ms,
   COALESCE(c.name, NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), '')) AS contact_name`
 
@@ -277,12 +283,12 @@ export class SessionNotesRepo {
     )
   }
 
-  /** Unsigned drafts whose 72 h window closes within `hours`. */
+  /** Signed notes whose 72 h editing window (counted from the signature) closes within `hours`: the last chance to amend. */
   async lockingSoon(hours = 24): Promise<SessionNoteSummary[]> {
     const rows = await this.db.query<LockCols & { locks_at: string | Date } & Record<string, unknown>>(
       `SELECT ${SUMMARY_COLS} FROM session_notes n
        LEFT JOIN contacts c ON c.id = n.contact_id AND c.location_id = n.location_id
-       WHERE n.location_id = $1 AND n.status = 'draft' AND n.deleted_at IS NULL
+       WHERE n.location_id = $1 AND n.status = 'signed' AND n.deleted_at IS NULL
          AND n.locks_at > now() AND n.locks_at <= now() + ($2::int * interval '1 hour')
        ORDER BY n.locks_at`,
       [this.locationId, hours],

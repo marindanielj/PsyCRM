@@ -27,8 +27,8 @@ const RISK_STEP = { regular: 2, intake: 5 }
 
 /** The editor's own words, in English for session notes and in Spanish for the intake. */
 const UI = {
-  en: { newTitle: 'New session note', editTitle: 'Edit session note', signed: 'Signed', draft: 'Draft', windowHint: 'The 72-hour edit window starts when you first save.', back: 'Back', next: 'Next', sign: 'Sign note', saveChanges: 'Save changes', saving: 'Saving…', signing: 'Signing…', cancel: 'Cancel', confirmTitle: 'Sign this note?', signingAs: 'You are signing as', signHint: 'Complete the risk assessment to sign' },
-  es: { newTitle: 'Nota de entrevista inicial', editTitle: 'Nota de entrevista inicial', signed: 'Firmada', draft: 'Borrador', windowHint: 'Las 72 horas de edición empiezan al guardar por primera vez.', back: 'Atrás', next: 'Siguiente', sign: 'Firmar nota', saveChanges: 'Guardar cambios', saving: 'Guardando…', signing: 'Firmando…', cancel: 'Cancelar', confirmTitle: '¿Firmar esta nota?', signingAs: 'Firma como', signHint: 'Falta la queja / problema o la evaluación de riesgo' },
+  en: { newTitle: 'New session note', editTitle: 'Edit session note', signed: 'Signed', draft: 'Draft', windowHint: 'A draft stays editable until you sign it; the 72-hour window starts at the signature.', back: 'Back', next: 'Next', sign: 'Sign note', saveChanges: 'Save changes', saving: 'Saving…', signing: 'Signing…', cancel: 'Cancel', confirmTitle: 'Sign this note?', signingAs: 'You are signing as', signHint: 'Complete the risk assessment to sign' },
+  es: { newTitle: 'Nota de entrevista inicial', editTitle: 'Nota de entrevista inicial', signed: 'Firmada', draft: 'Borrador', windowHint: 'El borrador se puede editar hasta que lo firme; las 72 horas empiezan al firmar.', back: 'Atrás', next: 'Siguiente', sign: 'Firmar nota', saveChanges: 'Guardar cambios', saving: 'Guardando…', signing: 'Firmando…', cancel: 'Cancelar', confirmTitle: '¿Firmar esta nota?', signingAs: 'Firma como', signHint: 'Falta la queja / problema o la evaluación de riesgo' },
 }
 const AUTOSAVE_DEBOUNCE_MS = 2_000
 const AUTOSAVE_MIN_GAP_MS = 10_000
@@ -242,7 +242,7 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId, requestedType }:
     const t = window.setInterval(() => tick((n) => n + 1), 30_000)
     return () => window.clearInterval(t)
   }, [])
-  const liveLock: NoteLock | null = lock ? { ...lock, msRemaining: Math.max(0, lock.msRemaining - (savedAt ? Date.now() - savedAt : 0)) } : null
+  const liveLock: NoteLock | null = lock ? { ...lock, msRemaining: lock.msRemaining === null ? null : Math.max(0, lock.msRemaining - (savedAt ? Date.now() - savedAt : 0)) } : null
 
   // ---- moving around -----------------------------------------------------------------
   const goTo = async (next: number) => {
@@ -440,14 +440,14 @@ function Wizard({ loc, contactId, loaded, initialAppointmentId, requestedType }:
             <p className="mt-2 text-sm text-slate-600">
               {t.signingAs} <b>{operator?.name ?? operator?.email ?? 'you'}</b>.
               {intakeMode ? (
-                <> Podrá enmendarla durante las 72 horas desde que se creó; después queda bloqueada y solo admite anexos.</>
-              ) : liveLock && !liveLock.locked ? (
+                <> Podrá enmendarla durante las 72 horas siguientes a la firma; después queda bloqueada y solo admite anexos.</>
+              ) : liveLock && !liveLock.locked && liveLock.msRemaining !== null ? (
                 <>
                   {' '}
                   You can still amend it for <b>{formatLockRemaining(liveLock.msRemaining).replace(' left', '')}</b>; after that the note locks permanently and can only receive addenda.
                 </>
               ) : (
-                <> After the 72-hour window the note locks permanently and can only receive addenda.</>
+                <> You can amend it for 72 hours after signing; after that it locks permanently and can only receive addenda.</>
               )}
             </p>
             <div className="mt-5 flex justify-end gap-2">

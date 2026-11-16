@@ -58,14 +58,13 @@ type S = Awaited<ReturnType<typeof setup>>
 
 // --- create ----------------------------------------------------------------------------
 
-test('creating a note returns a draft with a 72 h window, a "create" revision, and an audit row that names fields but not content', async () => {
+test('creating a note returns a draft with no clock yet, a "create" revision, and an audit row that names fields but not content', async () => {
   const s = await setup()
   const r = await s.call('POST', '/', { contactId: 'c1', sessionDate: TODAY, appointmentId: 'ap1', sessionType: 'intake', dataSubjective: PHI, mse: { affect: { values: ['restricted'] } } })
   expect(r.status).toBe(201)
   expect(r.json.note).toMatchObject({ contact_id: 'c1', appointment_id: 'ap1', status: 'draft', session_type: 'intake', created_by: 'op1', data_subjective: PHI })
-  expect(r.json.note.lock.locked).toBe(false)
-  expect(r.json.note.lock.msRemaining).toBeGreaterThan(71.9 * 3600_000)
-  expect(r.json.note.lock.msRemaining).toBeLessThanOrEqual(72 * 3600_000)
+  // the 72 h window starts at the signature
+  expect(r.json.note.lock).toEqual({ locked: false, locksAt: null, msRemaining: null })
 
   const revs = await s.db.query<{ kind: string; changed_by: string }>('SELECT kind, changed_by FROM session_note_revisions')
   expect(revs).toEqual([{ kind: 'create', changed_by: 'op1' }])
@@ -282,19 +281,23 @@ test('after 72 h: edit and delete answer 409 note_locked, and each attempt is re
   expect((await s.audits()).filter((a) => a.action === 'note.edit_rejected_locked')).toHaveLength(2) // the refusals persisted
 })
 
-test('a draft nobody signed can still be signed late (flagged, audited as note.signed_late) but only if its risk assessment is complete', async () => {
+test('a draft is never locked, however old: it can be finished, deleted or signed; the window starts at the signature', async () => {
   const s = await setup()
-  const incomplete = await s.create()
-  const complete = await s.create({ ...RISK_OK })
-  await closeNoteWindow(s.pg, incomplete)
-  await closeNoteWindow(s.pg, complete)
-  expect((await s.call('POST', `/${incomplete}/sign`)).status).toBe(422)
-  expect((await s.call('PATCH', `/${incomplete}`, { riskSuicidal: 'denied' })).status).toBe(409) // cannot complete it now either
-  const r = await s.call('POST', `/${complete}/sign`)
+  const old = await s.create()
+  const other = await s.create()
+  await s.pg.exec(`SET session_replication_role = replica; UPDATE session_notes SET created_at = now() - interval '30 days' WHERE id IN ('${old}','${other}'); SET session_replication_role = DEFAULT;`)
+  expect((await s.call('GET', `/${old}`)).json.lock).toEqual({ locked: false, locksAt: null, msRemaining: null })
+  expect((await s.call('PATCH', `/${old}`, { ...RISK_OK, assessment: 'finished a month later' })).status).toBe(200)
+  const r = await s.call('POST', `/${old}/sign`)
   expect(r.status).toBe(200)
-  expect(r.json).toMatchObject({ late: true, note: { status: 'signed', signed_late: true } })
-  expect((await s.audits()).map((a) => a.action)).toContain('note.signed_late')
-  expect((await s.call('PATCH', `/${complete}`, { assessment: 'x', changeReason: 'x' })).status).toBe(409)
+  expect(r.json).toMatchObject({ late: false, note: { status: 'signed', signed_late: false } })
+  expect(r.json.note.lock.locked).toBe(false)
+  expect(r.json.note.lock.msRemaining).toBeGreaterThan(71.9 * 3600_000)
+  expect(r.json.note.lock.msRemaining).toBeLessThanOrEqual(72 * 3600_000)
+  // inside the window a signed note is amended with a reason
+  expect((await s.call('PATCH', `/${old}`, { assessment: 'amended', changeReason: 'typo' })).status).toBe(200)
+  // an old draft can still be deleted
+  expect((await s.call('DELETE', `/${other}`, { reason: 'duplicate' })).status).toBe(204)
 })
 
 test('addenda are the way to add to a frozen note: allowed on signed and locked notes, listed with their author, audited without their text', async () => {
@@ -392,18 +395,18 @@ test('the elevated-risk list uses each client\'s LATEST signed note, ignores dra
   expect((await s.call('GET', '/risk/summary')).json.elevated.map((x: any) => x.contact_name)).toEqual(['Luis Mora']) // deleted -> back to imminent
 })
 
-test('"locking soon" lists unsigned drafts whose window closes within the hour range, soonest first', async () => {
+test('"locking soon" lists signed notes whose window closes within the hour range, soonest first; drafts never lock', async () => {
   const s = await setup()
-  const a = await s.create()
-  const b = await s.create({ sessionDate: '2026-11-04' })
-  const signed = await s.create({ sessionDate: '2026-11-03', ...RISK_OK })
-  await s.call('POST', `/${signed}/sign`)
+  const a = await s.create({ ...RISK_OK })
+  const b = await s.create({ sessionDate: '2026-11-04', ...RISK_OK })
+  await s.create({ sessionDate: '2026-11-03' }) // a draft: no window, never listed
+  await s.call('POST', `/${a}/sign`)
+  await s.call('POST', `/${b}/sign`)
   await setNoteWindow(s.pg, a, 600) // 10 h left
   await setNoteWindow(s.pg, b, 120) // 2 h left
-  await setNoteWindow(s.pg, signed, 60) // signed notes never appear
   const r = (await s.call('GET', '/locking-soon')).json.notes
   expect(r.map((n: any) => n.id)).toEqual([b, a])
-  expect(r[0]).toMatchObject({ contact_name: 'Ana Rivera', status: 'draft' })
+  expect(r[0]).toMatchObject({ contact_name: 'Ana Rivera', status: 'signed' })
   expect(r[0].lock.msRemaining).toBeGreaterThan(110 * 60_000)
   expect((await s.call('GET', '/locking-soon?hours=5')).json.notes.map((n: any) => n.id)).toEqual([b])
   expect((await s.call('GET', '/locking-soon?hours=999')).status).toBe(400)

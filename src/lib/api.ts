@@ -112,11 +112,12 @@ export interface AuditVerification {
 
 export type RiskIssue = 'risk_suicidal' | 'risk_self_harm' | 'risk_harm_others' | 'risk_level' | 'risk_notes' | 'risk_actions'
 
+/** The 72 h editing window starts when a note is signed: a draft has none (`locksAt` / `msRemaining` null) and stays editable. */
 export interface NoteLock {
   locked: boolean
-  locksAt: string
-  /** Time left in the 72 h edit window, by the database clock. */
-  msRemaining: number
+  locksAt: string | null
+  /** Time left in the 72 h edit window, by the database clock; null for a draft. */
+  msRemaining: number | null
 }
 
 export interface SessionNote {
@@ -157,7 +158,7 @@ export interface SessionNote {
   created_by_name?: string | null
   created_at: string
   updated_at: string
-  locks_at: string
+  locks_at: string | null
   deleted_at: string | null
   lock: NoteLock
 }
@@ -176,7 +177,7 @@ export interface SessionNoteSummary {
   risk_level: string | null
   created_at: string
   updated_at: string
-  locks_at: string
+  locks_at: string | null
   deleted_at: string | null
   delete_reason: string | null
   lock: NoteLock

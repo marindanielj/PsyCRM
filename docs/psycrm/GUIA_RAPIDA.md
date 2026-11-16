@@ -52,7 +52,7 @@ Contexto → Estado mental → **Riesgo** → DAP → Revisar y firmar.
 
 - **El riesgo es obligatorio en cada sesión** (ideación suicida, autolesión, daño a otros y nivel general). Sin él no se puede firmar.
 - Con riesgo **moderado o mayor** hace falta una justificación y al menos una acción, y el sistema le crea una tarea de seguimiento.
-- Se guarda sola mientras escribe. Puede corregir la nota durante **72 horas desde que la creó**; **después ya no se puede corregir ni borrar: solo admite anexos** (Add addendum). Aun una nota que borre dentro de esas 72 horas conserva su historia en el registro.
+- Se guarda sola mientras escribe. Mientras la nota es un **borrador** la puede corregir siempre. Al **firmarla** tiene **72 horas** para enmendarla (con un motivo); **después ya no se puede corregir ni borrar: solo admite anexos** (Add addendum). Aun una nota que borre conserva su historia en el registro.
 
 ## 5. Imprimir o exportar una nota
 Abra la nota → **Print / Save as PDF** y elija "Guardar como PDF".

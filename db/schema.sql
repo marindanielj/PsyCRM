@@ -1290,8 +1290,10 @@ CREATE TABLE IF NOT EXISTS session_notes (
 );
 CREATE INDEX IF NOT EXISTS session_notes_by_contact
   ON session_notes(location_id, contact_id, session_date DESC, created_at DESC) WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS session_notes_locking
-  ON session_notes(location_id, locks_at) WHERE status = 'draft' AND deleted_at IS NULL;
+-- Signed notes whose editing window is still open ("locking soon"). Drafts have no window.
+DROP INDEX IF EXISTS session_notes_locking;
+CREATE INDEX IF NOT EXISTS session_notes_window
+  ON session_notes(location_id, locks_at) WHERE status = 'signed' AND deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS session_note_revisions (
   id            text PRIMARY KEY,
@@ -1316,13 +1318,14 @@ CREATE TABLE IF NOT EXISTS session_note_addenda (
 );
 CREATE INDEX IF NOT EXISTS session_note_addenda_by_note ON session_note_addenda(note_id, created_at);
 
--- A new note is always a fresh draft with the clock started by the database: the
--- caller cannot pre-sign it, backdate it, or shorten/lengthen the edit window.
+-- A new note is always a fresh draft: the caller cannot pre-sign it, backdate it, or set its
+-- edit window. A draft has no clock at all (locks_at NULL): the 72 h window starts when the
+-- note is signed (set by session_note_guard below), so an unsigned draft is always editable.
 CREATE OR REPLACE FUNCTION session_note_before_insert() RETURNS trigger AS $$
 BEGIN
   NEW.created_at     := now();
   NEW.updated_at     := now();
-  NEW.locks_at       := now() + interval '72 hours';
+  NEW.locks_at       := NULL;
   NEW.status         := 'draft';
   NEW.signed_at      := NULL;
   NEW.signed_by      := NULL;
@@ -1350,6 +1353,12 @@ BEGIN
   IF OLD.status = 'signed' AND NEW.status = 'draft' THEN
     RAISE EXCEPTION 'session_note_unsign' USING ERRCODE = 'P0001';
   END IF;
+  -- The 72 h editing window starts at the first signature and never moves after that
+  -- (an amendment with a reason renews the signature, not the window).
+  IF OLD.status = 'draft' AND NEW.status = 'signed' AND OLD.locks_at IS NULL THEN
+    NEW.locks_at := now() + interval '72 hours';
+  END IF;
+  -- A draft has no clock (NULL), so this only ever applies to a signed note.
   IF now() >= OLD.locks_at THEN
     -- The single exception once the window has closed: a DRAFT that was never signed
     -- may still be signed (late), provided nothing but the signature columns changes.
@@ -2023,3 +2032,24 @@ ALTER TABLE session_notes ADD CONSTRAINT session_notes_intake_required CHECK (
 -- One live intake-form note per client.
 CREATE UNIQUE INDEX IF NOT EXISTS session_notes_one_intake
   ON session_notes(location_id, contact_id) WHERE session_type = 'intake' AND deleted_at IS NULL AND intake ? 'version';
+
+-- The 72 h window starts at signing, not at creation (decided 16 Nov 2026): a draft is editable
+-- until it is signed. The column becomes nullable (NULL = draft, no clock yet). Drafts made under
+-- the old rule get their clock cleared once, so the ones that had locked unsigned open again.
+-- Signed notes keep the window they already had. The triggers are paused only for that one
+-- UPDATE, which is a correction of the rule, not an edit of any note's content.
+ALTER TABLE session_notes ALTER COLUMN locks_at DROP DEFAULT;
+ALTER TABLE session_notes ALTER COLUMN locks_at DROP NOT NULL;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM session_notes WHERE status = 'draft' AND locks_at IS NOT NULL) THEN
+    ALTER TABLE session_notes DISABLE TRIGGER session_note_guard;
+    ALTER TABLE session_notes DISABLE TRIGGER session_note_record_revision;
+    UPDATE session_notes SET locks_at = NULL WHERE status = 'draft' AND locks_at IS NOT NULL;
+    ALTER TABLE session_notes ENABLE TRIGGER session_note_guard;
+    ALTER TABLE session_notes ENABLE TRIGGER session_note_record_revision;
+  END IF;
+END $$;
+-- Every signed note has its window; only a draft may be without one.
+ALTER TABLE session_notes DROP CONSTRAINT IF EXISTS session_notes_window_when_signed;
+ALTER TABLE session_notes ADD CONSTRAINT session_notes_window_when_signed CHECK (status = 'draft' OR locks_at IS NOT NULL);

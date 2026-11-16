@@ -10,7 +10,7 @@
 - Nunca se envía información clínica por correo electrónico ni mensaje de texto: solo enlaces. Los documentos y las notas se ven dentro del sistema.
 
 ## 2. Notas clínicas y documentos
-- Una nota se puede corregir durante **72 horas** desde su creación; después solo admite anexos y ya no puede borrarse. Aun una nota borrada dentro de ese plazo conserva su historia en el sistema.
+- Un borrador se puede corregir hasta que se firma. Una nota firmada se puede enmendar durante **72 horas** desde la firma; después solo admite anexos y ya no puede borrarse. Aun una nota borrada dentro de ese plazo conserva su historia en el sistema.
 - Los documentos firmados por el cliente no se modifican ni se borran. Cada firma guarda quién firmó, cuándo y cómo se verificó.
 - Todo lo que se hace en el sistema (abrir una nota, firmar, enviar documentos) queda en el **registro de auditoría**, que se revisa ante cualquier duda.
 
