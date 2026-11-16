@@ -24,9 +24,9 @@ async function setup() {
   // signed notes, inserted with triggers off (the clinical machinery is tested elsewhere)
   const note = (id: string, loc: string, contact_: string, type: string, modality: string, minutes: number, dx: string[], status = 'signed', date = '2026-11-02') =>
     pg.exec(`SET session_replication_role = replica;
-      INSERT INTO session_notes (id, location_id, contact_id, session_date, duration_min, modality, session_type, diagnosis_codes, status, signed_at, signed_by, created_by,
+      INSERT INTO session_notes (id, location_id, contact_id, session_date, duration_min, modality, session_type, diagnosis_codes, status, signed_at, signed_by, locks_at, created_by,
         risk_suicidal, risk_self_harm, risk_harm_others, risk_level)
-      VALUES ('${id}','${loc}','${contact_}','${date}',${minutes},'${modality}','${type}','{${dx.join(',')}}','${status}',${status === 'signed' ? 'now()' : 'NULL'},${status === 'signed' ? "'op1'" : 'NULL'},'op1','denied','denied','denied','low');
+      VALUES ('${id}','${loc}','${contact_}','${date}',${minutes},'${modality}','${type}','{${dx.join(',')}}','${status}',${status === 'signed' ? 'now()' : 'NULL'},${status === 'signed' ? "'op1'" : 'NULL'},${status === 'signed' ? "now() + interval '72 hours'" : 'NULL'},'op1','denied','denied','denied','low');
       SET session_replication_role = DEFAULT;`)
   await note('n1', locA, 'c1', 'individual', 'in_person', 50, ['F41.1', 'F32.A'])
   await note('n2', locA, 'c1', 'intake', 'telehealth_video', 60, ['F41.1'], 'signed', '2026-11-01')
