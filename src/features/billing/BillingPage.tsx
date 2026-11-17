@@ -8,6 +8,7 @@ import { INVOICE_STATUS_LABELS, MODALITY_LABELS, PAYMENT_LABELS, SESSION_TYPE_LA
 import { cn, formatMoneyExact } from '../../lib/utils'
 import { useTenant } from '../../state/location'
 import { type ChargeDraft, ChargeDialog, IssueDialog, ReasonDialog, draftFromCharge, draftFromSuggestion } from './BillingDialogs'
+import { ChargePaymentsDialog, DeleteChargeDialog } from './ChargeCorrections'
 import { InvoiceDialog, RecordPaymentDialog } from './PaymentDialogs'
 
 type Tab = 'charges' | 'invoices' | 'receipts' | 'superbills'
@@ -20,7 +21,8 @@ const todayYmd = () => {
 
 type Group = { contactId: string; name: string; charges: ChargeRow[] }
 type Dialog =
-  | { kind: 'charge'; draft: ChargeDraft; editingId?: string }
+  | { kind: 'charge'; draft: ChargeDraft; editingId?: string; lockedBy?: { kind: 'invoice' | 'superbill'; number: string; href: string } | null }
+  | { kind: 'payments'; charge: ChargeRow }
   | { kind: 'pay'; group: Group }
   | { kind: 'void'; charge: ChargeRow }
   | { kind: 'invoice'; group: Group }
@@ -108,7 +110,7 @@ export function BillingPage() {
 
   if (!loc || state === 'loading' || !meta || !profile) return state === 'error' ? <p role="alert" className="p-6 text-sm text-rose-700">Could not load billing.</p> : <PageSpinner />
 
-  const setupMissing = !profile.npi || !profile.hasTaxId
+  const setupMissing = !profile.npi // the tax id is optional for a superbill
   const toggle = (id: string) => setSelected((cur) => { const n = new Set(cur); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const done = () => { setDialog(null); void reload() }
   const today = todayYmd()
@@ -134,7 +136,7 @@ export function BillingPage() {
 
         {setupMissing && (
           <div role="note" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            To issue superbills, add your {!profile.npi ? 'NPI' : ''}{!profile.npi && !profile.hasTaxId ? ' and ' : ''}{!profile.hasTaxId ? 'tax ID' : ''} in <Link className="font-medium underline" to="/settings/billing">Settings → Billing</Link>. Invoices and receipts do not need them.
+            To issue superbills, add your NPI in <Link className="font-medium underline" to="/settings/billing">Settings → Billing</Link>. Invoices and receipts do not need it.
           </div>
         )}
 
@@ -219,7 +221,10 @@ export function BillingPage() {
                 <tbody className="divide-y divide-slate-100">
                   {charges.length === 0 && <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-500">No charges here yet.</td></tr>}
                   {charges.map((c) => {
-                    const free = !c.superbill_id && !c.invoice_id && !c.voided_at
+                    const live = !c.voided_at
+                    const lockedBy = c.superbill_id
+                      ? { kind: 'superbill' as const, number: c.superbill_number ?? '', href: `/billing/superbills/${c.superbill_id}` }
+                      : c.invoice_id ? { kind: 'invoice' as const, number: c.invoice_number ?? '', href: `/billing/invoices/${c.invoice_id}` } : null
                     return (
                       <tr key={c.id} className={cn(c.voided_at && 'text-slate-400')}>
                         <td className="px-3 py-2">{!c.voided_at && <input type="checkbox" aria-label={`Select ${c.contact_name ?? 'client'} ${c.service_date}`} checked={selected.has(c.id)} onChange={() => toggle(c.id)} />}</td>
@@ -244,8 +249,9 @@ export function BillingPage() {
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-right">
                           {!c.voided_at && owed(c) > 0 && <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: 'pay', group: { contactId: c.contact_id, name: c.contact_name ?? 'client', charges: [c] } })}>Payment</Button>}
-                          {free && <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: 'charge', draft: draftFromCharge(c), editingId: c.id })}>Edit</Button>}
-                          {free && c.paid_cents === 0 && <Button size="sm" variant="ghost" className="text-rose-600" onClick={() => setDialog({ kind: 'void', charge: c })}>Void</Button>}
+                          {live && <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: 'charge', draft: draftFromCharge(c), editingId: c.id, lockedBy })}>Edit</Button>}
+                          {live && c.paid_cents > 0 && <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: 'payments', charge: c })}>Payments</Button>}
+                          {live && <Button size="sm" variant="ghost" className="text-rose-600" onClick={() => setDialog({ kind: 'void', charge: c })}>Delete</Button>}
                         </td>
                       </tr>
                     )
@@ -333,22 +339,12 @@ export function BillingPage() {
         )}
       </div>
 
-      {dialog?.kind === 'charge' && <ChargeDialog loc={loc} meta={meta} contacts={contacts} draft={dialog.draft} editingId={dialog.editingId} onClose={() => setDialog(null)} onSaved={done} />}
+      {dialog?.kind === 'charge' && <ChargeDialog loc={loc} meta={meta} contacts={contacts} draft={dialog.draft} editingId={dialog.editingId} lockedBy={dialog.lockedBy} onClose={() => setDialog(null)} onSaved={done} />}
+      {dialog?.kind === 'payments' && <ChargePaymentsDialog loc={loc} charge={dialog.charge} onClose={done} onChanged={() => void reload()} />}
       {dialog?.kind === 'pay' && <RecordPaymentDialog loc={loc} contactId={dialog.group.contactId} clientName={dialog.group.name} charges={dialog.group.charges} onClose={() => setDialog(null)} onRecorded={(id) => navigate(`/billing/receipts/${id}`)} />}
       {dialog?.kind === 'invoice' && <InvoiceDialog loc={loc} clientName={dialog.group.name} contactId={dialog.group.contactId} charges={dialog.group.charges} onClose={() => setDialog(null)} onIssued={(id) => navigate(`/billing/invoices/${id}`)} />}
       {dialog?.kind === 'superbill' && <IssueDialog loc={loc} clientName={dialog.group.name} contactId={dialog.group.contactId} charges={dialog.group.charges} onClose={() => setDialog(null)} onIssued={(id) => navigate(`/billing/superbills/${id}`)} />}
-      {dialog?.kind === 'void' && (
-        <ReasonDialog
-          title="Void this charge?"
-          intro="A voided charge stays on the list, marked as voided. It cannot be undone."
-          confirm="Void charge"
-          onClose={() => setDialog(null)}
-          onSubmit={async (reason) => {
-            await api.billing.voidCharge(loc, dialog.charge.id, reason)
-            done()
-          }}
-        />
-      )}
+      {dialog?.kind === 'void' && <DeleteChargeDialog loc={loc} charge={dialog.charge} onClose={() => setDialog(null)} onDeleted={() => done()} />}
     </div>
   )
 }

@@ -7,7 +7,8 @@ import {
 } from '../../lib/api'
 import { INVOICE_STATUS_LABELS, formatServiceDate, paymentState, serviceLabel } from '../../lib/billing'
 import { cn, formatMoneyExact } from '../../lib/utils'
-import { type ChargeDraft, ChargeDialog, draftFromSuggestion } from './BillingDialogs'
+import { type ChargeDraft, ChargeDialog, draftFromCharge, draftFromSuggestion } from './BillingDialogs'
+import { ChargePaymentsDialog, DeleteChargeDialog } from './ChargeCorrections'
 import { InvoiceDialog, RecordPaymentDialog } from './PaymentDialogs'
 
 const STATE_STYLE = {
@@ -17,7 +18,9 @@ const STATE_STYLE = {
 } as const
 
 type Dialog =
-  | { kind: 'charge'; draft: ChargeDraft }
+  | { kind: 'charge'; draft: ChargeDraft; editing?: ChargeRow }
+  | { kind: 'payments'; charge: ChargeRow }
+  | { kind: 'delete'; charge: ChargeRow }
   | { kind: 'pay'; charge: ChargeRow }
   | { kind: 'invoice'; charge: ChargeRow }
   | null
@@ -74,9 +77,9 @@ export function ContactBilling({ locationId, contactId, contactName, onChanged }
   }, [reload])
 
   // The charge form needs the code lists; load them only when it is first opened.
-  async function openCharge(draft: ChargeDraft) {
+  async function openCharge(draft: ChargeDraft, editing?: ChargeRow) {
     if (!meta) setMeta(await api.billing.meta(locationId))
-    setDialog({ kind: 'charge', draft })
+    setDialog({ kind: 'charge', draft, editing })
   }
 
   function changed() {
@@ -147,6 +150,9 @@ export function ContactBilling({ locationId, contactId, contactName, onChanged }
                     <div className="flex gap-1">
                       {open && <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: 'pay', charge: c })}><HandCoins className="h-4 w-4" /> Payment</Button>}
                       {open && !c.invoice_id && c.fee_cents > 0 && <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: 'invoice', charge: c })}><FileText className="h-4 w-4" /> Invoice</Button>}
+                      <Button size="sm" variant="ghost" onClick={() => void openCharge(draftFromCharge(c), c)}>Edit</Button>
+                      {c.paid_cents > 0 && <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: 'payments', charge: c })}>Payments</Button>}
+                      <Button size="sm" variant="ghost" className="text-rose-600" onClick={() => setDialog({ kind: 'delete', charge: c })}>Delete</Button>
                     </div>
                   </li>
                 )
@@ -171,8 +177,23 @@ export function ContactBilling({ locationId, contactId, contactName, onChanged }
       )}
 
       {dialog?.kind === 'charge' && meta && (
-        <ChargeDialog loc={locationId} meta={meta} contacts={[{ id: contactId, name: contactName }]} draft={dialog.draft} onClose={() => setDialog(null)} onSaved={changed} />
+        <ChargeDialog
+          loc={locationId}
+          meta={meta}
+          contacts={[{ id: contactId, name: contactName }]}
+          draft={dialog.draft}
+          editingId={dialog.editing?.id}
+          lockedBy={
+            dialog.editing?.superbill_id
+              ? { kind: 'superbill', number: dialog.editing.superbill_number ?? '', href: `/billing/superbills/${dialog.editing.superbill_id}` }
+              : dialog.editing?.invoice_id ? { kind: 'invoice', number: dialog.editing.invoice_number ?? '', href: `/billing/invoices/${dialog.editing.invoice_id}` } : null
+          }
+          onClose={() => setDialog(null)}
+          onSaved={changed}
+        />
       )}
+      {dialog?.kind === 'payments' && <ChargePaymentsDialog loc={locationId} charge={dialog.charge} onClose={changed} onChanged={() => { void reload(); onChanged?.() }} />}
+      {dialog?.kind === 'delete' && <DeleteChargeDialog loc={locationId} charge={dialog.charge} onClose={() => setDialog(null)} onDeleted={changed} />}
       {dialog?.kind === 'pay' && (
         <RecordPaymentDialog loc={locationId} contactId={contactId} clientName={contactName} charges={[dialog.charge]} onClose={() => setDialog(null)} onRecorded={(id) => { onChanged?.(); navigate(`/billing/receipts/${id}`) }} />
       )}
