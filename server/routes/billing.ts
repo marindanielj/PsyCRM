@@ -21,6 +21,7 @@ import {
 } from '../lib/billing-vocab'
 import type { ResolvedEmailSender } from '../lib/sending/resolve'
 import { PracticeRepo } from '../repos/practice-repo'
+import { BillingCorrections } from '../repos/billing-corrections'
 import { billingDocumentsRoute } from './billing-documents'
 import {
   BillingProfileRepo,
@@ -89,6 +90,7 @@ const STATUS: Record<ChargeError, 400 | 404 | 409 | 422> = {
   not_found: 404,
   voided: 409,
   issued: 409,
+  on_invoice: 409,
   has_payments: 409,
   overpaid: 422,
   unknown_contact: 422,
@@ -114,6 +116,7 @@ export function billingRoute(deps: {
   const profile = (c: Context<AppEnv>) => new BillingProfileRepo(deps.db, c.get('locationId'))
   const charges = (c: Context<AppEnv>) => new ChargesRepo(deps.db, c.get('locationId'))
   const superbills = (c: Context<AppEnv>) => new SuperbillsRepo(deps.db, c.get('locationId'))
+  const corrections = (c: Context<AppEnv>) => new BillingCorrections(deps.db, c.get('locationId'))
   const ctx = auditContext
 
   // What the forms offer.
@@ -167,9 +170,26 @@ export function billingRoute(deps: {
     return r.ok ? c.json({ ok: true, charge: r.charge }) : c.json({ error: r.error }, STATUS[r.error])
   })
 
-  app.post('/charges/:id/void', zValidator('json', reason), async (c) => {
-    const r = await charges(c).void(c.req.param('id'), c.req.valid('json').reason, c.get('operatorId'), ctx(c))
-    return r.ok ? c.json({ ok: true, charge: r.charge }) : c.json({ error: r.error }, STATUS[r.error])
+  // Delete (void) a charge. With `cascade`, the receipts that paid it, its invoice and its superbill are voided with it,
+  // in one transaction; without it, the usual rules answer (void those first).
+  app.post('/charges/:id/void', zValidator('json', reason.extend({ cascade: z.boolean().optional() })), async (c) => {
+    const { reason: why, cascade } = c.req.valid('json')
+    const r = await corrections(c).deleteCharge(c.req.param('id'), why, c.get('operatorId'), ctx(c), { cascade })
+    return r.ok ? c.json({ ok: true, charge: r.charge, voidedDocuments: r.voidedDocuments ?? [] }) : c.json({ error: r.error }, STATUS[r.error] ?? 409)
+  })
+
+  // Who paid a charge: its live payments, each with its receipt.
+  app.get('/charges/:id/payments', async (c) => {
+    const payments = await corrections(c).paymentsForCharge(c.req.param('id'))
+    return payments ? c.json({ payments }) : c.json({ error: 'not_found' }, 404)
+  })
+
+  // Take one charge out of a payment: the receipt is voided and the rest of the payment is recorded again (new receipt).
+  app.post('/receipts/:id/remove-charge', zValidator('json', reason.extend({ chargeId: z.string().min(1) })), async (c) => {
+    const { chargeId, reason: why } = c.req.valid('json')
+    const r = await corrections(c).removeChargeFromReceipt(c.req.param('id'), chargeId, why, c.get('operatorId'), ctx(c))
+    if (r.ok) return c.json({ ok: true, voided: r.voided, newReceipt: r.newReceipt })
+    return c.json({ error: r.error }, r.error === 'not_found' ? 404 : 409)
   })
 
   // --- superbills ----------------------------------------------------------------------------------------------------

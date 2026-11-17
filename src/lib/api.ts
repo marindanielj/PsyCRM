@@ -2405,6 +2405,17 @@ export interface ReceiptSummary {
   line_count: number
 }
 
+/** A live payment on a charge, with its receipt. */
+export interface ChargePayment {
+  receipt_id: string
+  receipt_number: string
+  paid_on: string
+  method: string
+  amount_cents: number
+  receipt_charge_count: number
+  receipt_total_cents: number
+}
+
 export interface ReceiptDetail {
   id: string
   contact_id: string
@@ -2524,8 +2535,14 @@ export const api = {
     invoicePrinted: (loc: string, id: string) => req<{ ok: true }>(`/loc/${loc}/billing/invoices/${id}/printed`, { method: 'POST' }),
     voidInvoice: (loc: string, id: string, reason: string) =>
       req<{ ok: true }>(`/loc/${loc}/billing/invoices/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
-    voidCharge: (loc: string, id: string, reason: string) =>
-      req<{ ok: true; charge: ChargeRow }>(`/loc/${loc}/billing/charges/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    /** Delete (void) a charge. With `cascade`, the receipts that paid it, its invoice and its superbill are voided with it. */
+    voidCharge: (loc: string, id: string, reason: string, cascade = false) =>
+      req<{ ok: true; charge: ChargeRow; voidedDocuments: string[] }>(`/loc/${loc}/billing/charges/${id}/void`, { method: 'POST', body: JSON.stringify({ reason, cascade }) }),
+    /** The live payments on a charge, each with its receipt. */
+    chargePayments: (loc: string, id: string) => req<{ payments: ChargePayment[] }>(`/loc/${loc}/billing/charges/${id}/payments`),
+    /** Take one charge out of a payment: the receipt is voided and the rest is recorded again as a new receipt. */
+    removeChargeFromReceipt: (loc: string, receiptId: string, chargeId: string, reason: string) =>
+      req<{ ok: true; voided: string; newReceipt: { id: string; number: string } | null }>(`/loc/${loc}/billing/receipts/${receiptId}/remove-charge`, { method: 'POST', body: JSON.stringify({ chargeId, reason }) }),
     superbills: (loc: string, contactId?: string) => req<{ superbills: SuperbillSummary[] }>(`/loc/${loc}/billing/superbills${qs({ contactId })}`),
     issueSuperbill: (loc: string, input: { contactId: string; chargeIds: string[]; clientAddress?: string; memberId?: string }) =>
       req<{ ok: true; superbill: SuperbillDetail }>(`/loc/${loc}/billing/superbills`, { method: 'POST', body: JSON.stringify(input) }),

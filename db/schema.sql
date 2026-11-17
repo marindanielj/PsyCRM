@@ -1944,6 +1944,7 @@ DECLARE
   old_inv billing_invoices%ROWTYPE;
   new_inv billing_invoices%ROWTYPE;
   frozen  boolean := false;
+  on_invoice boolean := false;
 BEGIN
   IF TG_OP = 'DELETE' THEN
     RAISE EXCEPTION 'charge_no_delete' USING ERRCODE = 'P0001';
@@ -1960,14 +1961,23 @@ BEGIN
   END IF;
   IF OLD.invoice_id IS NOT NULL THEN
     SELECT * INTO old_inv FROM billing_invoices WHERE id = OLD.invoice_id;
-    IF old_inv.voided_at IS NULL THEN frozen := true; END IF;
+    IF old_inv.voided_at IS NULL THEN on_invoice := true; END IF;
   END IF;
 
+  -- On a live superbill, nothing of the charge changes (the superbill carries all of it).
   IF frozen THEN
     IF NEW.voided_at IS NOT NULL
        OR (to_jsonb(NEW) - ARRAY['paid_cents','paid_at','payment_method','updated_at','superbill_id','invoice_id'])
           <> (to_jsonb(OLD) - ARRAY['paid_cents','paid_at','payment_method','updated_at','superbill_id','invoice_id']) THEN
       RAISE EXCEPTION 'charge_issued' USING ERRCODE = 'P0001';
+    END IF;
+  -- On a live invoice only: what the invoice shows (date, service, units, fee) is frozen; the diagnosis, modifiers and
+  -- place of service are not on an invoice, so they can still be corrected (e.g. a diagnosis added before a superbill).
+  ELSIF on_invoice THEN
+    IF NEW.voided_at IS NOT NULL
+       OR (to_jsonb(NEW) - ARRAY['paid_cents','paid_at','payment_method','updated_at','superbill_id','invoice_id','diagnosis_codes','modifiers','place_of_service'])
+          <> (to_jsonb(OLD) - ARRAY['paid_cents','paid_at','payment_method','updated_at','superbill_id','invoice_id','diagnosis_codes','modifiers','place_of_service']) THEN
+      RAISE EXCEPTION 'charge_on_invoice' USING ERRCODE = 'P0001';
     END IF;
   END IF;
 
@@ -1985,7 +1995,7 @@ BEGIN
 
   IF NEW.invoice_id IS DISTINCT FROM OLD.invoice_id THEN
     IF old_inv.id IS NOT NULL AND old_inv.voided_at IS NULL THEN
-      RAISE EXCEPTION 'charge_issued' USING ERRCODE = 'P0001';
+      RAISE EXCEPTION 'charge_on_invoice' USING ERRCODE = 'P0001';
     END IF;
     IF NEW.invoice_id IS NOT NULL THEN
       SELECT * INTO new_inv FROM billing_invoices WHERE id = NEW.invoice_id;

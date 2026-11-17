@@ -194,7 +194,7 @@ export interface ChargeInput {
 
 export type ChargePatch = Partial<Pick<ChargeInput, 'serviceDate' | 'cptCode' | 'modifiers' | 'placeOfService' | 'units' | 'diagnosisCodes' | 'feeCents'>>
 
-export type ChargeError = 'not_found' | 'voided' | 'issued' | 'has_payments' | 'overpaid' | 'unknown_contact' | 'unknown_note' | 'unknown_appointment' | 'note_already_charged' | 'nothing_to_change'
+export type ChargeError = 'not_found' | 'voided' | 'issued' | 'on_invoice' | 'has_payments' | 'overpaid' | 'unknown_contact' | 'unknown_note' | 'unknown_appointment' | 'note_already_charged' | 'nothing_to_change'
 export type ChargeResult = { ok: true; charge: Charge } | { ok: false; error: ChargeError }
 
 /** What the therapist is offered for a signed note that has no charge yet: everything pre-filled, nothing fixed. */
@@ -349,7 +349,9 @@ export class ChargesRepo {
       const cur = (await tx.query<Charge>(`SELECT ${CHARGE_COLS} FROM charges ch WHERE ch.location_id = $1 AND ch.id = $2 FOR UPDATE`, [this.locationId, id]))[0]
       if (!cur) return { ok: false, error: 'not_found' }
       if (cur.voided_at) return { ok: false, error: 'voided' }
-      if (cur.superbill_id || cur.invoice_id) return { ok: false, error: 'issued' }
+      // On a live superbill nothing changes (void the superbill first). On a live invoice, what the invoice shows (date,
+      // service, units, fee) is frozen, but the diagnosis, modifiers and place of service can still be corrected.
+      if (cur.superbill_id) return { ok: false, error: 'issued' }
       const cols: Record<keyof ChargePatch, string> = {
         serviceDate: 'service_date', cptCode: 'cpt_code', modifiers: 'modifiers', placeOfService: 'place_of_service',
         units: 'units', diagnosisCodes: 'diagnosis_codes', feeCents: 'fee_cents',
@@ -367,6 +369,7 @@ export class ChargesRepo {
         changed.push(col)
       }
       if (sets.length === 0) return { ok: false, error: 'nothing_to_change' }
+      if (cur.invoice_id && changed.some((c) => ['service_date', 'cpt_code', 'units', 'fee_cents'].includes(c))) return { ok: false, error: 'on_invoice' }
       if (patch.feeCents !== undefined && patch.feeCents < cur.paid_cents) return { ok: false, error: 'overpaid' }
       const rows = await tx.query<Charge>(`UPDATE charges SET ${sets.join(', ')} WHERE location_id = $1 AND id = $2 RETURNING ${CHARGE_COLS.replace(/ch\./g, '')}`, params)
       await audit(tx, this.locationId, { action: 'charge.updated', entityType: 'charge', entityId: id, contactId: cur.contact_id, details: { fields: changed }, ...ctx })
@@ -382,7 +385,8 @@ export class ChargesRepo {
       const cur = (await tx.query<Charge>(`SELECT ${CHARGE_COLS} FROM charges ch WHERE ch.location_id = $1 AND ch.id = $2 FOR UPDATE`, [this.locationId, id]))[0]
       if (!cur) return { ok: false, error: 'not_found' }
       if (cur.voided_at) return { ok: false, error: 'voided' }
-      if (cur.superbill_id || cur.invoice_id) return { ok: false, error: 'issued' } // void the superbill / invoice first
+      if (cur.superbill_id) return { ok: false, error: 'issued' } // void the superbill first (or delete with everything that depends on it)
+      if (cur.invoice_id) return { ok: false, error: 'on_invoice' } // void the invoice first
       if (cur.paid_cents > 0) return { ok: false, error: 'has_payments' } // void its receipt first
       const rows = await tx.query<Charge>(
         `UPDATE charges SET voided_at = now(), voided_by = $3, void_reason = $4 WHERE location_id = $1 AND id = $2 RETURNING ${CHARGE_COLS.replace(/ch\./g, '')}`,

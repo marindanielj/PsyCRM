@@ -57,13 +57,15 @@ export const draftFromCharge = (c: ChargeRow): ChargeDraft => ({
   units: c.units, diagnosisCodes: c.diagnosis_codes, feeCents: c.fee_cents,
 })
 
-export function ChargeDialog({ loc, meta, contacts, draft, editingId, onClose, onSaved }: {
+export function ChargeDialog({ loc, meta, contacts, draft, editingId, lockedBy, onClose, onSaved }: {
   loc: string
   meta: BillingMeta
   contacts: { id: string; name: string }[]
   draft: ChargeDraft
   /** Set when editing an existing charge (the client cannot change then). */
   editingId?: string
+  /** The document that holds the charge: on an invoice only the diagnosis, modifiers and place can change; on a superbill nothing. */
+  lockedBy?: { kind: 'invoice' | 'superbill'; number: string; href: string } | null
   onClose: () => void
   onSaved: () => void
 }) {
@@ -84,6 +86,8 @@ export function ChargeDialog({ loc, meta, contacts, draft, editingId, onClose, o
   const feeCents = dollarsToCents(fee)
   const unitsN = Number(units)
   const ready = Boolean(contactId && date && cpt && feeCents !== null && Number.isInteger(unitsN) && unitsN >= 1)
+  const allLocked = lockedBy?.kind === 'superbill'
+  const shownLocked = Boolean(lockedBy) // date, service, units and fee
 
   async function save() {
     if (!ready || busy || feeCents === null) return
@@ -109,7 +113,16 @@ export function ChargeDialog({ loc, meta, contacts, draft, editingId, onClose, o
 
   return (
     <Modal title={editingId ? 'Edit charge' : 'Add charge'} onClose={onClose} wide>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+      {lockedBy ? (
+        <p role="note" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          {lockedBy.kind === 'superbill' ? (
+            <>This charge is on superbill <a className="font-mono font-medium underline" href={lockedBy.href}>{lockedBy.number}</a>, which has all of it. To change anything, void that superbill first (or use <b>Delete</b> if the charge was a mistake).</>
+          ) : (
+            <>This charge is on invoice <a className="font-mono font-medium underline" href={lockedBy.href}>{lockedBy.number}</a>, so its date, service, units and fee stay as invoiced. You can still change the <b>diagnosis</b>, <b>modifiers</b> and <b>place of service</b>.</>
+          )}
+        </p>
+      ) : null}
+      <fieldset disabled={allLocked} className="mt-4 grid gap-4 sm:grid-cols-2 disabled:opacity-70">
         <div className="sm:col-span-2">
           <Label htmlFor="ch-client">Client</Label>
           <select id="ch-client" value={contactId} disabled={Boolean(editingId || draft.sessionNoteId)} onChange={(e) => setContactId(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50">
@@ -119,11 +132,11 @@ export function ChargeDialog({ loc, meta, contacts, draft, editingId, onClose, o
         </div>
         <div>
           <Label htmlFor="ch-date">Date of service</Label>
-          <Input id="ch-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <Input id="ch-date" type="date" disabled={shownLocked} value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
         <div>
           <Label htmlFor="ch-cpt">Service (CPT code)</Label>
-          <select id="ch-cpt" value={cptChoice} onChange={(e) => setCptChoice(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+          <select id="ch-cpt" disabled={shownLocked} value={cptChoice} onChange={(e) => setCptChoice(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
             <option value="">Choose…</option>
             {meta.cpt.map((c) => <option key={c.code} value={c.code}>{c.code} · {c.label}</option>)}
             <option value="other">Another code…</option>
@@ -155,17 +168,17 @@ export function ChargeDialog({ loc, meta, contacts, draft, editingId, onClose, o
         </div>
         <div>
           <Label htmlFor="ch-fee">Fee ($)</Label>
-          <Input id="ch-fee" inputMode="decimal" value={fee} placeholder="110.00" onChange={(e) => setFee(e.target.value)} />
+          <Input id="ch-fee" inputMode="decimal" disabled={shownLocked} value={fee} placeholder="110.00" onChange={(e) => setFee(e.target.value)} />
           {fee.trim() !== '' && feeCents === null && <p role="alert" className="mt-1 text-xs font-medium text-rose-600">Use an amount like 110 or 110.50.</p>}
         </div>
         <div>
           <Label htmlFor="ch-units">Units</Label>
-          <Input id="ch-units" type="number" min={1} max={99} value={units} onChange={(e) => setUnits(e.target.value)} />
+          <Input id="ch-units" type="number" min={1} max={99} disabled={shownLocked} value={units} onChange={(e) => setUnits(e.target.value)} />
         </div>
-      </div>
+      </fieldset>
       {error && <p role="alert" className="mt-3 text-sm font-medium text-rose-600">{error}</p>}
       <Footer onClose={onClose}>
-        <Button type="button" disabled={!ready || busy} onClick={() => void save()}>{busy ? 'Saving…' : editingId ? 'Save changes' : 'Add charge'}</Button>
+        {!allLocked && <Button type="button" disabled={!ready || busy} onClick={() => void save()}>{busy ? 'Saving…' : editingId ? 'Save changes' : 'Add charge'}</Button>}
       </Footer>
     </Modal>
   )

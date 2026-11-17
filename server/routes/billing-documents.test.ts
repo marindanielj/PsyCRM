@@ -275,15 +275,21 @@ test('an invoice\'s state and balance follow the payments live, while the docume
   expect(list.map((i: any) => [i.number, i.status, i.total_cents, i.balance_cents, i.line_count])).toEqual([[`FAC-${YEAR}-0001`, 'open', 10000, 4000, 1]])
 })
 
-test('while a charge is on an invoice its content is frozen, but it can still be paid', async () => {
+test('while a charge is on an invoice what the invoice shows is frozen; the diagnosis can still be corrected and it can be paid', async () => {
   const s = await setup()
   const id = await s.mk()
   await s.call(s.A, 'POST', '/invoices', { contactId: 'c1', chargeIds: [id] })
-  expect((await s.call(s.A, 'PATCH', `/charges/${id}`, { feeCents: 1 })).body.error).toBe('issued')
-  expect((await s.call(s.A, 'POST', `/charges/${id}/void`, { reason: 'Trying to void it' })).body.error).toBe('issued')
-  expect(await dbError(s.db.query('UPDATE charges SET fee_cents = 1 WHERE id = $1', [id]))).toMatch(/charge_issued/)
-  expect(await dbError(s.db.query("UPDATE charges SET cpt_code = '90837' WHERE id = $1", [id]))).toMatch(/charge_issued/)
-  expect(await dbError(s.db.query('UPDATE charges SET invoice_id = NULL WHERE id = $1', [id]))).toMatch(/charge_issued/)
+  expect((await s.call(s.A, 'PATCH', `/charges/${id}`, { feeCents: 1 })).body.error).toBe('on_invoice')
+  expect((await s.call(s.A, 'PATCH', `/charges/${id}`, { serviceDate: '2026-11-03' })).body.error).toBe('on_invoice')
+  expect((await s.call(s.A, 'POST', `/charges/${id}/void`, { reason: 'Trying to void it' })).body.error).toBe('on_invoice')
+  // not on the invoice: diagnosis, modifiers and place of service
+  const dx = await s.call(s.A, 'PATCH', `/charges/${id}`, { diagnosisCodes: ['F41.1', 'F32.A'], modifiers: ['95'], placeOfService: '10' })
+  expect(dx.status).toBe(200)
+  expect(dx.body.charge).toMatchObject({ diagnosis_codes: ['F41.1', 'F32.A'], modifiers: ['95'], place_of_service: '10' })
+  expect(await dbError(s.db.query('UPDATE charges SET fee_cents = 1 WHERE id = $1', [id]))).toMatch(/charge_on_invoice/)
+  expect(await dbError(s.db.query("UPDATE charges SET cpt_code = '90837' WHERE id = $1", [id]))).toMatch(/charge_on_invoice/)
+  expect(await dbError(s.db.query('UPDATE charges SET invoice_id = NULL WHERE id = $1', [id]))).toMatch(/charge_on_invoice/)
+  expect(await dbError(s.db.query("UPDATE charges SET voided_at = now(), void_reason = 'x' WHERE id = $1", [id]))).toMatch(/charge_on_invoice/)
   expect(await dbError(s.db.query('DELETE FROM charges WHERE id = $1', [id]))).toMatch(/charge_no_delete/)
   expect((await s.pay([[id, 10000]])).status).toBe(201)
 })
