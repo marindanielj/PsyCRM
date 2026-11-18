@@ -5,7 +5,7 @@
  */
 import type { Database } from '../db/database'
 import type { AuditEntry } from '../lib/audit'
-import { BillingInvoicesRepo, PaymentsRepo, type ReceiptRow } from './billing-documents-repo'
+import { BillingInvoicesRepo, PaymentsRepo, type ReceiptRow, refreshChargeCaches } from './billing-documents-repo'
 import { type Charge, type ChargeResult, ChargesRepo, SuperbillsRepo } from './billing-repo'
 
 type Ctx = Pick<AuditEntry, 'actor' | 'ip' | 'userAgent'>
@@ -140,6 +140,9 @@ export class BillingCorrections {
             done.push(sb.number)
           }
         }
+        // A charge from before the payments ledger can carry a "paid" amount with no payment behind it (the old
+        // "set the total paid"). With its receipts voided, its paid amount is whatever live payments remain: none.
+        await refreshChargeCaches(tx, this.locationId, [chargeId])
         const r = await new ChargesRepo(tx, this.locationId).void(chargeId, reason, operatorId, ctx)
         if (!r.ok) throw new Abort(r.error)
         return { ...r, voidedDocuments: done }
