@@ -144,3 +144,16 @@ test('deleting a charge that has nothing depending on it needs no cascade', asyn
   expect((await s.call(s.A, 'POST', `/charges/${a}/void`, { reason: 'Duplicate', cascade: true })).body.error).toBe('voided')
   expect((await s.call(s.B, 'POST', `/charges/${a}/void`, { reason: 'Duplicate', cascade: true })).body.error).toBe('not_found')
 })
+
+test('a charge from before the payments ledger (a "paid" amount with no payment behind it) on an invoice can be deleted', async () => {
+  const s = await setup()
+  const a = await s.mk()
+  const inv = (await s.call(s.A, 'POST', '/invoices', { contactId: 'c1', chargeIds: [a] })).body.invoice
+  // the old "set the total paid": an amount on the charge with no payment row (written with the triggers off)
+  await s.pg.exec(`SET session_replication_role = replica; UPDATE charges SET paid_cents = 5000, payment_method = 'cash', paid_at = now() WHERE id = '${a}'; SET session_replication_role = DEFAULT;`)
+  expect((await s.call(s.A, 'POST', `/charges/${a}/void`, { reason: 'Initial test' })).body.error).toBe('on_invoice')
+  const r = await s.call(s.A, 'POST', `/charges/${a}/void`, { reason: 'Initial test', cascade: true })
+  expect(r.status).toBe(200)
+  expect(r.body.voidedDocuments).toEqual([inv.number])
+  expect(await s.chargeRow(a)).toMatchObject({ paid_cents: 0, invoice_id: null })
+})

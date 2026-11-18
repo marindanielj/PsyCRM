@@ -47,7 +47,7 @@ async function nextNumber(tx: Database, locationId: string, table: 'billing_invo
  * Recompute each charge's derived payment figures from its live payments: the total, the method and the time of the latest.
  * Always called inside the transaction that changed the payments.
  */
-async function refreshChargeCaches(tx: Database, locationId: string, chargeIds: string[]): Promise<void> {
+export async function refreshChargeCaches(tx: Database, locationId: string, chargeIds: string[]): Promise<void> {
   await tx.query(
     `UPDATE charges ch SET paid_cents = p.total, payment_method = p.method, paid_at = p.at
        FROM (
