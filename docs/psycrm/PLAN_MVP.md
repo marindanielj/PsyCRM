@@ -314,6 +314,7 @@ Los specs de cada día están en [`specs/`](specs/README.md). La infraestructura
 | B9 | **Multiusuario con roles** (terapeuta, asistente administrativo sin acceso a notas, supervisor con co-firma de internos) | Crecimiento de la práctica |
 | B10 | **Cifrado a nivel de campo** de notas y MSE (claves en KMS) + MFA obligatorio + alertas de acceso inusual | Defensa en profundidad para PHI |
 | B11 | **Nota de entrevista inicial (intake)**: su formulario impreso de 5 páginas pasado a la app, en español y en su mismo orden, más el estado mental (opcional), el riesgo estructurado y el diagnóstico ICD-10 (opcional). Usa las respuestas del cuestionario de admisión del cliente. Reutiliza la firma y el bloqueo de 72 h. Ver [`specs/future-intake-notes.md`](specs/future-intake-notes.md) | Alimenta el plan de tratamiento (B1) y la bandera de riesgo; es el primer paso del expediente clínico |
+| B12 | **Documentación asistida por IA en la teleconsulta**: solo en sesiones virtuales y en español, se elige antes de grabar si es entrevista inicial o nota de sesión; Amazon Transcribe pasa la conversación a texto y Claude en Amazon Bedrock llena un **borrador** del formato elegido, con sus fuentes. El riesgo lo marca siempre la terapeuta; consentimiento escrito del cliente; el audio no se guarda. Depende de la fase 2 de B5. Ver [`specs/future-ai-scribe.md`](specs/future-ai-scribe.md) | Menos tiempo documentando sin perder control clínico |
 
 ### C. Expansión futura: todo bilingüe (español / inglés)
 
