@@ -35,6 +35,9 @@ Costo: Chime SDK cobra por minuto de cada participante; una sesión de 50 minuto
 - **Reserva pública (opcional):** permitir elegir "por video" solo en los calendarios donde ella lo active.
 - **No se usa Google Meet con una cuenta de Gmail personal:** Meet solo tiene BAA con Google Workspace de pago.
 
+## Después: documentación asistida por IA
+Sobre el video de la fase 2 se puede transcribir la teleconsulta y llenar un borrador de la nota (B12). Ver [`future-ai-scribe.md`](future-ai-scribe.md).
+
 ## Preguntas para ella
 1. ¿Qué plataforma usa hoy para el video? ¿Tiene BAA con esa plataforma?
 2. ¿Su Gmail es Google Workspace de pago o personal?
