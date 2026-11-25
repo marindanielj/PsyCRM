@@ -21,6 +21,18 @@ Construido el 25 de noviembre de 2026 sobre **Amazon Chime SDK** (confirmado por
 - **Auditoría:** `appointment.video_started`, `appointment.video_admitted`, `appointment.video_ended` (sin contenido). Entradas y salidas, en `video_meeting_events`.
 - Las rutas de video **solo existen si `CHIME_REGION` está definida**. Sin ella no hay botones ni página `/v`.
 
+## Abrir, editar y borrar una cita
+
+Pedido el mismo día: no había forma de abrir una cita para ver sus detalles ni de modificarla o borrarla.
+
+- **Abrir:** pulsar una cita en el mes o en la agenda (también con Enter) abre una ventana con sus detalles: hora, calendario, cliente, cómo se realiza, lugar, notas, estado, y **Join video** / **Copy message** si es por video.
+- **Editar:** título, cliente, fecha, hora, duración, modalidad, lugar, notas y estado, en una sola petición (`PATCH /appointments/:id`). El servidor aplica detalles, cambio de hora y cambio de estado **juntos o ninguno**: si el nuevo horario ya está ocupado, tampoco se guarda el título.
+- **Borrar:** `DELETE /appointments/:id`. Pide confirmación. Un cargo hecho a partir de la cita **no se toca** (guarda el id solo como información).
+- **No se puede borrar** una cita con **nota de sesión** (el mensaje sugiere marcarla como cancelada) ni con una **sala de video en curso**.
+- **Modalidad:** no se puede cambiar en una cita **completada** (el lugar de servicio de la facturación depende de ella) ni **mientras la sala de video está en curso** (termínela primero desde la sala). Pasar a video sin consentimiento firmado avisa, no bloquea.
+- **Bitácora:** `appointment.updated` (solo **nombres** de campos, nunca el texto; la modalidad con de/a), y por fin se usa `appointment.deleted`.
+- **Cliente:** el cliente de una cita tiene que ser de esta práctica, al agendar y al editar (antes, agendar aceptaba el id de un cliente de otra práctica).
+
 ## Falta antes de usarlo con clientes
 
 1. **IAM:** el rol de la tarea de ECS no tiene permisos de Chime (las tres llamadas que usa el servidor son crear sala, crear asistente y borrar sala; **confirmar los nombres exactos de las acciones en la documentación de IAM de Chime SDK antes de escribir la política**). Es un cambio en `infra/` que hay que revisar aparte; la prueba de infraestructura hoy afirma que el rol solo envía correo.
@@ -31,7 +43,6 @@ Construido el 25 de noviembre de 2026 sobre **Amazon Chime SDK** (confirmado por
 ## Límites conocidos
 
 - **No hay correo ni recordatorio automático de citas** en PsyCRM (ni confirmación ni recordatorio con tiempo). Por eso el enlace va en **Copy message**, que la terapeuta pega en WhatsApp o SMS. Un recordatorio automático sería una pieza nueva (un disparador por tiempo en los flujos).
-- La modalidad se elige al agendar; todavía no se puede cambiar en una cita ya creada.
 - La zona horaria que se muestra en la sala y en el mensaje es la de Puerto Rico, fija.
 - No se identifica al cliente más allá del enlace: quien tenga el enlace y llegue a la sala de espera es admitido solo si la terapeuta lo decide.
 - El consentimiento se busca por la plantilla sembrada `telepsychology`; una plantilla propia con otro nombre de familia no cuenta.

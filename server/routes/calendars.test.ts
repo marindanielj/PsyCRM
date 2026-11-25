@@ -334,6 +334,7 @@ const putJson = (app: Hono<AppEnv>, path: string, method: string, body: unknown)
 test('creating an appointment is audited with its calendar and time, not its title or notes', async () => {
   const db = new FakeDatabase()
   db.enqueue([{ id: 'cal1', location_id: 'locA', name: 'Sessions' }]) // calendar lookup
+  db.enqueue([{ id: 'c1' }]) // the client is this practice's
   db.enqueue([{ id: 'ap1', contact_id: 'c1', starts_at: '2026-11-10T14:00:00.000Z' }]) // insert
   const res = await putJson(harness(db), '/appointments', 'POST', {
     calendarId: 'cal1', title: 'Ana Rivera – anxiety', startsAt: '2026-11-10T14:00:00.000Z', endsAt: '2026-11-10T14:50:00.000Z', contactId: 'c1', notes: 'private note',
@@ -520,6 +521,7 @@ test('an appointment the therapist books for a client fires appointment_booked (
 
   const withClient = new FakeDatabase()
   withClient.enqueue([{ id: 'cal1', location_id: 'locA', name: 'Sessions' }])
+  withClient.enqueue([{ id: 'c1' }]) // the client is this practice's
   withClient.enqueue([{ id: 'a1', location_id: 'locA', calendar_id: 'cal1', contact_id: 'c1' }])
   expect((await post(make(withClient), 'c1')).status).toBe(201)
   expect(events).toEqual([{ locationId: 'locA', triggerType: 'appointment_booked', contactId: 'c1', depth: 0, payload: { appointmentId: 'a1', calendarId: 'cal1', source: 'operator' } }])

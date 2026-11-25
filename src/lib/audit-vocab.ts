@@ -23,6 +23,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   'task.completed': 'Task completed',
   'appointment.booked': 'Appointment booked by client',
   'appointment.created': 'Appointment created',
+  'appointment.updated': 'Appointment details changed',
   'appointment.rescheduled': 'Appointment rescheduled',
   'appointment.status_changed': 'Appointment status changed',
   'appointment.checked_in': 'Client checked in',

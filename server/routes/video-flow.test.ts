@@ -174,8 +174,10 @@ test('in the assembled app the room keeps its own CSP, needs a sign-in, and the 
   expect(room.headers.get('x-frame-options')).toBe('DENY')
 
   expect((await on.request(path)).status).toBe(401) // no sign-in, no room
-  expect(await (await on.request('/api/loc/loc_a/video', { headers: { cookie } })).json()).toEqual({ enabled: true })
-  expect((await off.request('/api/loc/loc_a/video', { headers: { cookie } })).status).toBe(404)
+  expect(await (await on.request('/api/loc/loc_a/features', { headers: { cookie } })).json()).toEqual({ video: true })
+  expect(await (await off.request('/api/loc/loc_a/features', { headers: { cookie } })).json()).toEqual({ video: false })
+  expect((await on.request('/api/loc/loc_a/features')).status).toBe(401) // behind the sign-in too
+  expect((await off.request('/api/loc/loc_a/video/appointments/a1/video', { headers: { cookie } })).status).toBe(404) // no video routes when off
   expect((await off.request(`/v/${'A'.repeat(43)}`)).status).not.toBe(200) // no public page either
   // every other app page still gets the strict policy
   expect((await on.request('/api/loc/loc_a/calendars', { headers: { cookie } })).headers.get('content-security-policy')).toContain("script-src 'self'")

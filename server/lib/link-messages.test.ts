@@ -42,6 +42,7 @@ test('the video session message names the time in Puerto Rico, carries the link,
   expect(m).toContain('Consultorio Rivera le espera para su sesión por video el jueves')
   expect(m).toContain('3:00') // 19:00 UTC is 3:00 p. m. in Puerto Rico
   expect(m).toContain('15 minutos antes')
+  expect(m).not.toMatch(/\.\./) // the time ends in a period (p. m.): no second one after it
   expect(m).toContain('https://app.example.com/v/tok')
   expect(m).toContain('no se graba')
   expect(m).not.toMatch(/psicoterapia|terapia|diagn|consentimiento|admisión/i)

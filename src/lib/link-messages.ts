@@ -22,5 +22,5 @@ export function sessionWhen(startsAt: string): string {
 
 /** The text a therapist pastes to a client for a video session: when, and the link (open from 15 minutes before). */
 export function videoMessage(o: { practice: string; name: string; link: string; startsAt: string }): string {
-  return `Hola ${first(o.name)}:\n\n${o.practice || 'Su terapeuta'} le espera para su sesión por video el ${sessionWhen(o.startsAt)}. Entre desde su teléfono o computadora con este enlace seguro (se abre 15 minutos antes de la hora):\n\n${o.link}\n\nBusque un lugar privado y tranquilo. La sesión no se graba.`
+  return `Hola ${first(o.name)}:\n\n${o.practice || 'Su terapeuta'} le espera para su sesión por video el ${sessionWhen(o.startsAt)}\n\nEntre desde su teléfono o computadora con este enlace seguro (se abre 15 minutos antes de la hora):\n\n${o.link}\n\nBusque un lugar privado y tranquilo. La sesión no se graba.`
 }

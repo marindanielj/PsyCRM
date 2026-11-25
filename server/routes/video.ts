@@ -51,9 +51,6 @@ export function videoRoute(deps: { db: Database; secret: string; provider: Video
     }
   }
 
-  /** The web app asks this once to know whether to show the Join video / Copy link buttons. */
-  app.get('/', (c) => c.json({ enabled: true }))
-
   /** The room page (opened in a new tab from the agenda). Its own CSP: the call needs Chime's hosts and blob: media. */
   app.get('/appointments/:id/room', async (c) => {
     const loc = c.get('locationId')

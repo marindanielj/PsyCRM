@@ -12,13 +12,13 @@ import {
   type NewAppointment,
   api,
 } from '../../lib/api'
-import { brandName } from '../../lib/brand'
-import { videoMessage } from '../../lib/link-messages'
 import { moduleEnabled } from '../../lib/modules'
 import { cn, dayKey, formatDayLabel, formatTime } from '../../lib/utils'
 import { useTenant } from '../../state/location'
 import { BookingSettingsDialog } from './BookingSettingsDialog'
+import { AppointmentDialog } from './AppointmentDialog'
 import { NewAppointmentDialog } from './NewAppointmentDialog'
+import { VideoActions } from './VideoActions'
 import { TodayPanel } from '../session-notes/TodayPanel'
 import { MonthView } from './MonthView'
 import { hostedUrl } from '../trigger-links/link-ui'
@@ -93,6 +93,7 @@ export function CalendarsPage() {
   const [view, setView] = useState<'agenda' | 'month'>('month')
   const [notice, setNotice] = useState<string | null>(null)
   const [videoOn, setVideoOn] = useState(false)
+  const [openApptId, setOpenApptId] = useState<string | null>(null)
   useEffect(() => {
     if (!loc) return
     let active = true
@@ -198,6 +199,24 @@ export function CalendarsPage() {
   function onCalendarSaved(updated: Calendar) {
     setCalendars((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
     setBookingCalId(null)
+  }
+
+  const openAppt = openApptId ? appts.find((a) => a.id === openApptId) : undefined
+  // A saved edit replaces the row at once; a new time can reorder the agenda, so reload too.
+  function onApptSaved(updated: Appointment, warnings: string[]) {
+    setAppts((prev) => prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)))
+    const notes = [
+      warnings.includes('overlaps_personal_calendar') ? 'That time overlaps something in your personal calendar.' : null,
+      warnings.includes('telepsychology_consent_missing') ? 'This client has no signed telepsychology consent on file yet.' : null,
+    ].filter(Boolean)
+    setNotice(notes.length ? `Saved. ${notes.join(' ')}` : null)
+    void reload()
+  }
+  function onApptDeleted(id: string) {
+    setAppts((prev) => prev.filter((a) => a.id !== id))
+    setOpenApptId(null)
+    setNotice(null)
+    void reload()
   }
 
   const contactName = (a: Appointment) =>
@@ -376,7 +395,7 @@ export function CalendarsPage() {
             </Button>
           </div>
         ) : view === 'month' ? (
-          <MonthView appts={filtered} calendars={calById} onStatus={setStatusOf} contactName={contactName} loadBusy={loadBusy} />
+          <MonthView appts={filtered} calendars={calById} onStatus={setStatusOf} onOpen={setOpenApptId} contactName={contactName} loadBusy={loadBusy} />
         ) : (
           <div className="ol-scroll min-h-0 flex-1 overflow-y-auto bg-slate-50 px-3 py-4 lg:px-6 lg:py-5">
             {filtered.length === 0 ? (
@@ -400,6 +419,7 @@ export function CalendarsPage() {
                           contactName={contactName(appt)}
                           onStatus={setStatusOf}
                           onCheckIn={checkIn}
+                          onOpen={setOpenApptId}
                           loc={loc}
                           videoOn={videoOn}
                         />
@@ -420,6 +440,21 @@ export function CalendarsPage() {
           defaultCalendarId={selectedCalId ?? calendars[0]?.id ?? ''}
           onCancel={() => setShowDialog(false)}
           onCreate={createAppt}
+        />
+      )}
+
+      {openAppt && loc && (
+        <AppointmentDialog
+          key={openAppt.id}
+          appt={openAppt}
+          calendar={calById[openAppt.calendar_id]}
+          contacts={Object.values(contactsById)}
+          loc={loc}
+          videoOn={videoOn}
+          notesOn={moduleEnabled(current, 'session_notes')}
+          onClose={() => setOpenApptId(null)}
+          onSaved={onApptSaved}
+          onDeleted={onApptDeleted}
         />
       )}
 
@@ -485,6 +520,7 @@ function AppointmentRow({
   contactName,
   onStatus,
   onCheckIn,
+  onOpen,
   loc,
   videoOn,
 }: {
@@ -493,10 +529,10 @@ function AppointmentRow({
   contactName?: string
   onStatus: (id: string, next: AppointmentStatus) => void
   onCheckIn: (id: string) => void
+  onOpen: (id: string) => void
   loc: string
   videoOn: boolean
 }) {
-  const [linkNote, setLinkNote] = useState<string | null>(null)
   const { current } = useTenant()
   const notesOn = moduleEnabled(current, 'session_notes')
   const color = calColor(calendar?.color ?? 'indigo')
@@ -516,7 +552,19 @@ function AppointmentRow({
           <p className="text-[11px] text-slate-400">{formatTime(appt.ends_at)}</p>
         </div>
         <div className={cn('mt-1 w-1 shrink-0 self-stretch rounded-full', color.bar)} />
-        <div className="min-w-0 flex-1">
+        <div
+          className="min-w-0 flex-1 cursor-pointer rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
+          role="button"
+          tabIndex={0}
+          aria-label={`Open appointment: ${appt.title}`}
+          onClick={() => onOpen(appt.id)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              onOpen(appt.id)
+            }
+          }}
+        >
           <p className="truncate text-sm font-medium text-slate-900">{appt.title}</p>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
             <span className="inline-flex items-center gap-1.5">
@@ -544,33 +592,7 @@ function AppointmentRow({
         </div>
         <div className="relative flex shrink-0 items-center gap-2 self-start">
           {videoOn && appt.modality === 'telehealth_video' && !dimmed && appt.status !== 'completed' ? (
-            <>
-              <Button
-                size="sm"
-                onClick={() => window.open(`/api/loc/${loc}/video/appointments/${appt.id}/room`, '_blank', 'noopener')}
-              >
-                <Video className="h-3.5 w-3.5" /> Join video
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={async () => {
-                  try {
-                    const { video } = await api.appointmentVideo(loc, appt.id)
-                    const link = new URL(video.link, window.location.origin).href
-                    await navigator.clipboard.writeText(
-                      videoMessage({ practice: brandName(current), name: contactName ?? '', link, startsAt: appt.starts_at }),
-                    )
-                    setLinkNote('Message copied')
-                  } catch {
-                    setLinkNote('Could not copy')
-                  }
-                  window.setTimeout(() => setLinkNote(null), 1600)
-                }}
-              >
-                {linkNote ?? 'Copy message'}
-              </Button>
-            </>
+            <VideoActions loc={loc} appt={appt} contactName={contactName} />
           ) : null}
           {(appt.status === 'scheduled' || appt.status === 'confirmed') && appt.contact_id ? (
             <Button size="sm" variant="outline" onClick={() => onCheckIn(appt.id)}>

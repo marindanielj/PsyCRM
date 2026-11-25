@@ -7,6 +7,7 @@ import { DEMO_LOGIN, seedPracticeDemo } from '../db/seed-demo'
 import { PgliteDatabase } from './db/pglite-database'
 import { createApp } from './index'
 import { dispatchWorkflowEvent } from './jobs/workflow-dispatcher'
+import { fakeVideoProvider } from './lib/video/provider'
 
 /**
  * Local dev server. Runs the whole app against in-process PGlite (real Postgres,
@@ -58,6 +59,8 @@ async function main() {
     // No pg-boss against pglite — run the dispatch in-process so triggers fire
     // (and `wait` steps defer via the runner's default setTimeout) right here.
     dispatch,
+    // Opt-in (DEV_FAKE_VIDEO=1): the video buttons, room page and client page, against a pretend Chime. No call connects.
+    video: process.env.DEV_FAKE_VIDEO === '1' ? fakeVideoProvider() : undefined,
     // Opt-in for trying the Calendar sync settings page locally (DEV_ENABLE_CALENDAR_SYNC=1). The poller does not run here.
     integrations: process.env.DEV_ENABLE_CALENDAR_SYNC === '1' ? ['calendar_sync'] : [],
   })

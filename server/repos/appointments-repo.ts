@@ -30,6 +30,14 @@ export interface AppointmentInput {
   modality?: string
 }
 
+export interface AppointmentDetailsPatch {
+  title?: string
+  contactId?: string | null
+  locationText?: string | null
+  notes?: string | null
+  modality?: string
+}
+
 export class AppointmentsRepo extends LocationScopedRepo {
   /** Appointments whose start falls in [from, to). Ordered chronologically. */
   listByRange(fromISO: string, toISO: string): Promise<Appointment[]> {
@@ -74,6 +82,37 @@ export class AppointmentsRepo extends LocationScopedRepo {
       ],
     )
     return rows[0]!
+  }
+
+  /**
+   * Change an appointment's details: only the fields given (camelCase), the rest untouched. Returns undefined
+   * when nothing was given or the appointment is not here.
+   */
+  async updateDetails(id: string, patch: AppointmentDetailsPatch): Promise<Appointment | undefined> {
+    const sets: string[] = []
+    const extra: unknown[] = []
+    const push = (col: string, value: unknown) => {
+      extra.push(value)
+      sets.push(`${col}=$${extra.length + 1}`) // +1: $1 is the location
+    }
+    if (patch.title !== undefined) push('title', patch.title)
+    if (patch.contactId !== undefined) push('contact_id', patch.contactId)
+    if (patch.locationText !== undefined) push('location_text', patch.locationText)
+    if (patch.notes !== undefined) push('notes', patch.notes)
+    if (patch.modality !== undefined) push('modality', patch.modality)
+    if (sets.length === 0) return undefined
+    extra.push(id)
+    const rows = await this.scopedWrite<Appointment>(
+      `UPDATE appointments SET ${sets.join(', ')}, updated_at=now() WHERE location_id=$1 AND id=$${extra.length + 1} RETURNING *`,
+      extra,
+    )
+    return rows[0]
+  }
+
+  /** Remove an appointment. The database refuses while a session note points at it (RESTRICT). */
+  async delete(id: string): Promise<Appointment | undefined> {
+    const rows = await this.scopedWrite<Appointment>('DELETE FROM appointments WHERE location_id=$1 AND id=$2 RETURNING *', [id])
+    return rows[0]
   }
 
   /** Move an appointment to a new time (drag or edit). */

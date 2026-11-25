@@ -357,6 +357,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     // Settings -> Calendar sync: her feed address and the personal calendars PsyCRM reads for busy time.
     app.route('/api/loc/:loc/calendar-sync', calendarSyncRoute({ db: deps.db, secret: deps.sessionSecret, publicBaseUrl: deps.publicBaseUrl }))
   }
+  // Which optional capabilities this deployment has, so the web app can hide buttons instead of probing for 404s.
+  app.get('/api/loc/:loc/features', (c) => c.json({ video: Boolean(deps.video) }))
   if (deps.video) app.route('/api/loc/:loc/video', videoRoute({ db: deps.db, secret: deps.sessionSecret, provider: deps.video, publicBaseUrl: deps.publicBaseUrl }))
   // Charges and superbills (A4). Bookkeeping only: nothing here moves money or leaves the system.
   app.route('/api/loc/:loc/billing', billingRoute({ db: deps.db, secret: deps.sessionSecret, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
