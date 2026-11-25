@@ -74,7 +74,9 @@ npx cdk deploy -c alertEmails=… \
   -c sesFromAddress=no-reply@<dominio> -c imageTag=<sha de la imagen> -c desiredCount=1
 ```
 
-Contexto opcional: `enableGuardDuty` (false), `githubRepo`, `githubEnvironment`, `sesConfigurationSet`.
+Contexto opcional: `enableGuardDuty` (false), `githubRepo`, `githubEnvironment`, `sesConfigurationSet`, `enableVideo` (false: ver abajo).
+
+**Video integrado (`-c enableVideo=true`)**: da al rol de la tarea solo `chime:CreateMeeting`, `chime:CreateAttendee` y `chime:DeleteMeeting`, y le pasa a la app `CHIME_REGION` (la región del despliegue). Sin esto las sesiones por video no existen para la aplicación. Chime no admite limitar `CreateMeeting` a un recurso, por eso la declaración va con `Resource: *`. **Ojo:** como `imageTag`, hay que repetir `-c enableVideo=true` en cada `cdk deploy`; sin la bandera el permiso se quita. Ver `docs/psycrm/RESULTADOS_VIDEO.md`.
 
 **CI/CD**: crea el entorno `production` en GitHub (con aprobación manual) y la variable de repositorio `AWS_DEPLOY_ROLE_ARN` con la salida `DeployRoleArn`. El workflow registra revisiones nuevas de las definiciones de tarea fuera de CDK; por eso, al volver a ejecutar `cdk deploy`, pasa `-c imageTag=<sha en producción>` o volverá a la imagen anterior.
 

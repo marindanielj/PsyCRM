@@ -186,6 +186,13 @@ describe('public service (with a domain)', () => {
     })
   })
 
+  it('grants nothing of Chime and sets no video region unless video is switched on', () => {
+    expect(JSON.stringify(t.findResources('AWS::IAM::Policy'))).not.toContain('chime:')
+    const defs = Object.values(t.findResources('AWS::ECS::TaskDefinition')) as { Properties: { Family: string; ContainerDefinitions: { Environment: { Name: string }[] }[] } }[]
+    const env = defs.find((d) => d.Properties.Family === 'psycrm-app')?.Properties.ContainerDefinitions[0]?.Environment.map((e) => e.Name)
+    expect(env).not.toContain('CHIME_REGION')
+  })
+
   it('alarms on health, errors, database and email reputation', () => {
     const names = Object.values(t.findResources('AWS::CloudWatch::Alarm')).map((a) => (a as { Properties: { AlarmName: string } }).Properties.AlarmName).sort()
     expect(names).toEqual([
@@ -202,6 +209,33 @@ describe('public service (with a domain)', () => {
   it('refuses to build without an https address or a certificate', () => {
     expect(() => build({ ...BASE, publicBaseUrl: 'http://app.example.com', certificateArn: 'x' })).toThrow(/https/)
     expect(() => build({ ...BASE, publicBaseUrl: 'https://app.example.com' })).toThrow(/certificateArn/)
+  })
+})
+
+describe('public service with video switched on (-c enableVideo=true)', () => {
+  const t = build({ ...WITH_DOMAIN, enableVideo: 'true' })
+
+  it('lets the task open, join and close a Chime meeting, and nothing else of Chime', () => {
+    const statements = (Object.values(t.findResources('AWS::IAM::Policy')) as { Properties: { PolicyDocument: { Statement: { Action: string | string[]; Resource: unknown }[] } } }[])
+      .flatMap((p) => p.Properties.PolicyDocument.Statement)
+    const chime = statements.filter((s) => [s.Action].flat().some((a) => a.startsWith('chime:')))
+    expect(chime).toHaveLength(1)
+    expect([chime[0]!.Action].flat().sort()).toEqual(['chime:CreateAttendee', 'chime:CreateMeeting', 'chime:DeleteMeeting'])
+    expect(statements.every((s) => ![s.Action].flat().includes('*'))).toBe(true) // no statement grants every action
+  })
+
+  it('still sends email only as the configured address', () => {
+    t.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([Match.objectLike({ Action: 'ses:SendEmail', Condition: { StringEquals: { 'ses:FromAddress': 'no-reply@example.com' } } })]),
+      }),
+    })
+  })
+
+  it('tells the app which region to use for video', () => {
+    const defs = Object.values(t.findResources('AWS::ECS::TaskDefinition')) as { Properties: { Family: string; ContainerDefinitions: { Environment: { Name: string; Value: string }[] }[] } }[]
+    const env = Object.fromEntries((defs.find((d) => d.Properties.Family === 'psycrm-app')?.Properties.ContainerDefinitions[0]?.Environment ?? []).map((e) => [e.Name, e.Value]))
+    expect(env).toMatchObject({ CHIME_REGION: 'us-east-1' })
   })
 })
 

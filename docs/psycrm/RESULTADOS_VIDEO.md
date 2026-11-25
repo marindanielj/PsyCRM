@@ -35,8 +35,11 @@ Pedido el mismo día: no había forma de abrir una cita para ver sus detalles ni
 
 ## Falta antes de usarlo con clientes
 
-1. **IAM:** el rol de la tarea de ECS no tiene permisos de Chime (las tres llamadas que usa el servidor son crear sala, crear asistente y borrar sala; **confirmar los nombres exactos de las acciones en la documentación de IAM de Chime SDK antes de escribir la política**). Es un cambio en `infra/` que hay que revisar aparte; la prueba de infraestructura hoy afirma que el rol solo envía correo.
-2. **`CHIME_REGION`** en el entorno de la tarea (por ejemplo `us-east-1`).
+1. **IAM y región (hecho en el código, falta desplegar):** `infra/` tiene ahora el ajuste `enableVideo`, **apagado por defecto**. Encendido (`-c enableVideo=true`), el rol de la tarea recibe **solo** `chime:CreateMeeting`, `chime:CreateAttendee` y `chime:DeleteMeeting` (nombres confirmados en la [referencia de autorización de servicio de AWS](https://docs.aws.amazon.com/service-authorization/latest/reference/list_chime.html)) y la app recibe `CHIME_REGION` (= la región del despliegue, `us-east-1`). Chime no admite limitar `CreateMeeting` a un recurso, así que la declaración va con `Resource: *`; las otras dos quedan igual, porque el formato del ARN de una reunión no se pudo probar antes de un despliegue.
+   - Para encenderlo, agregar `-c enableVideo=true` al `cdk deploy` (junto con los demás `-c` de siempre).
+   - **Cuidado:** si se vuelve a ejecutar `cdk deploy` **sin** esa bandera, se **quita** el permiso y las rutas de video dejan de existir. Es el mismo cuidado que ya hay con `imageTag`.
+   - Con el ajuste apagado el rol queda exactamente como antes (solo enviar correo); la prueba que lo afirma sigue vigente y hay otra que exige que, encendido, sean exactamente esas tres acciones.
+2. **Desplegar** con la bandera y comprobar en el navegador que la agenda muestra **Join video** (el botón solo aparece cuando la app tiene video).
 3. **Probar con llamadas reales** desde un teléfono y desde un computador, incluida una conexión mala y un cliente que se cae y vuelve a entrar. Todo lo verificado hasta aquí fue contra un Chime simulado.
 4. Confirmar la **tarifa vigente** de Chime SDK por minuto y participante.
 
