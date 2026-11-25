@@ -50,6 +50,8 @@ import { inquiriesRoute, publicPageAdminRoute } from './routes/public-page-admin
 import { blogRoute } from './routes/blog'
 import { billingRoute } from './routes/billing'
 import { calendarsRoute } from './routes/calendars'
+import { chimeProvider, type VideoProvider } from './lib/video/provider'
+import { videoRoute } from './routes/video'
 import { calendarFeedRoute, calendarSyncRoute } from './routes/calendar-sync'
 import { callsRoute } from './routes/calls'
 import { campaignsRoute } from './routes/campaigns'
@@ -127,6 +129,8 @@ export interface AppDeps {
   resolveEmail?: (db: Database, locationId: string) => Promise<ResolvedEmailSender>
   /** Public origin for the links in emails (PUBLIC_BASE_URL). Falls back to each request's origin. */
   publicBaseUrl?: string
+  /** The video service behind built-in video sessions. Unset = the video routes are not mounted. */
+  video?: VideoProvider
   /**
    * When an operator last changed their password (epoch ms) or null; sessions issued before it are rejected.
    * Defaults to reading operators.password_changed_at. Tests that queue canned rows on a FakeDatabase pass
@@ -350,6 +354,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     // Settings -> Calendar sync: her feed address and the personal calendars PsyCRM reads for busy time.
     app.route('/api/loc/:loc/calendar-sync', calendarSyncRoute({ db: deps.db, secret: deps.sessionSecret, publicBaseUrl: deps.publicBaseUrl }))
   }
+  if (deps.video) app.route('/api/loc/:loc/video', videoRoute({ db: deps.db, secret: deps.sessionSecret, provider: deps.video, publicBaseUrl: deps.publicBaseUrl }))
   // Charges and superbills (A4). Bookkeeping only: nothing here moves money or leaves the system.
   app.route('/api/loc/:loc/billing', billingRoute({ db: deps.db, secret: deps.sessionSecret, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
   app.route('/api/loc/:loc/campaigns', campaignsRoute({ db: deps.db }))
@@ -531,6 +536,7 @@ async function bootstrap() {
     secure: config.NODE_ENV === 'production',
     staticDir: config.STATIC_DIR,
     publicBaseUrl: config.PUBLIC_BASE_URL,
+    video: config.CHIME_REGION ? chimeProvider({ region: config.CHIME_REGION }) : undefined,
     integrations,
     claude,
     dispatch,
