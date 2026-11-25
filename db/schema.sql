@@ -2102,3 +2102,10 @@ CREATE TABLE IF NOT EXISTS video_meeting_events (
   at          timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS video_meeting_events_by_meeting ON video_meeting_events(meeting_id, at);
+
+-- What the client confirmed when she came into the waiting room: where she is, whether that is
+-- Puerto Rico (the licence), and whether she is somewhere private. The therapist reads it before
+-- admitting her, and carries it into the session note.
+ALTER TABLE video_meetings ADD COLUMN IF NOT EXISTS client_location text;
+ALTER TABLE video_meetings ADD COLUMN IF NOT EXISTS client_in_pr boolean;
+ALTER TABLE video_meetings ADD COLUMN IF NOT EXISTS client_private boolean;

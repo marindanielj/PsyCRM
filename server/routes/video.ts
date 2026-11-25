@@ -32,13 +32,15 @@ export function videoRoute(deps: { db: Database; secret: string; provider: Video
     return { appt }
   }
 
-  const shape = (m: { id: string; waiting_since: string | null; admitted_at: string | null; ended_at: string | null }, appt: { starts_at: string; ends_at: string }) => {
+  const shape = (m: { id: string; waiting_since: string | null; admitted_at: string | null; ended_at: string | null; client_location?: string | null; client_in_pr?: boolean | null; client_private?: boolean | null }, appt: { starts_at: string; ends_at: string }) => {
     const w = videoWindow(appt.starts_at, appt.ends_at, clock())
     return {
       link: linkFor(m.id),
       waiting: Boolean(m.waiting_since) && !m.admitted_at && !m.ended_at,
       admitted: Boolean(m.admitted_at),
       ended: Boolean(m.ended_at),
+      // What the client said when she came in: where she is, in Puerto Rico, somewhere private.
+      clientConfirmation: m.waiting_since ? { location: m.client_location ?? null, inPuertoRico: m.client_in_pr ?? null, privatePlace: m.client_private ?? null } : null,
       window: { state: w.state, opensAt: w.opensAt.toISOString(), closesAt: w.closesAt.toISOString() },
     }
   }

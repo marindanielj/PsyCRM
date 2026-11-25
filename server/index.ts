@@ -52,6 +52,7 @@ import { billingRoute } from './routes/billing'
 import { calendarsRoute } from './routes/calendars'
 import { chimeProvider, type VideoProvider } from './lib/video/provider'
 import { videoRoute } from './routes/video'
+import { publicVideoRoute } from './routes/public-video'
 import { calendarFeedRoute, calendarSyncRoute } from './routes/calendar-sync'
 import { callsRoute } from './routes/calls'
 import { campaignsRoute } from './routes/campaigns'
@@ -219,7 +220,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }
     const strict = secureHeaders({ ...baseHeaders, contentSecurityPolicy: csp })
     const relaxed = secureHeaders({ ...baseHeaders, contentSecurityPolicy: undefined })
-    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') || c.req.path.startsWith('/d/') || c.req.path.startsWith('/b/') || c.req.path.startsWith('/i/') || c.req.path.startsWith('/p/') ? relaxed(c, next) : strict(c, next)))
+    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') || c.req.path.startsWith('/d/') || c.req.path.startsWith('/b/') || c.req.path.startsWith('/v/') || c.req.path.startsWith('/i/') || c.req.path.startsWith('/p/') ? relaxed(c, next) : strict(c, next)))
     app.use('/api/*', async (c, next) => {
       await next()
       c.header('Cache-Control', 'no-store')
@@ -304,6 +305,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route('/d', publicDocumentsRoute({ db: deps.db, sessionSecret: deps.sessionSecret, secure: deps.secure, dispatch: deps.dispatch, resolveEmail: deps.resolveEmail, publicBaseUrl: deps.publicBaseUrl }))
   // Client invitation pages (one-time link, own nonce CSP). Always on; a practice with contacts off gets "invalid link".
   // A practice's logo, for the pages its clients see.
+  if (deps.video) app.route('/v', publicVideoRoute({ db: deps.db, provider: deps.video }))
   app.route('/brand', brandLogoRoute({ db: deps.db }))
   app.route('/i', publicInvitesRoute({ db: deps.db, dispatch: deps.dispatch }))
   // A practice's public page and its request form. Off until the practice publishes it; a request lands in an inbox, not in a record.

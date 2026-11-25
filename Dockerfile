@@ -7,8 +7,9 @@ FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
-COPY tsconfig.json vite.config.ts index.html ./
+COPY tsconfig.json vite.config.ts vite.video.config.ts index.html ./
 COPY src ./src
+COPY client-video ./client-video
 # The product name on the sign-in page (before anyone is signed in there is no practice to take it from).
 ARG VITE_APP_NAME=PsyCRM
 ENV VITE_APP_NAME=$VITE_APP_NAME
