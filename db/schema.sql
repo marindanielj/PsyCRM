@@ -2063,3 +2063,13 @@ END $$;
 -- Every signed note has its window; only a draft may be without one.
 ALTER TABLE session_notes DROP CONSTRAINT IF EXISTS session_notes_window_when_signed;
 ALTER TABLE session_notes ADD CONSTRAINT session_notes_window_when_signed CHECK (status = 'draft' OR locks_at IS NOT NULL);
+
+-- PsyCRM virtual sessions (B5, slice 1): how an appointment is held. The values are the
+-- session note's modalities (clinical-vocab MODALITIES), so the note inherits it. A
+-- calendar carries the default for the appointments booked on it.
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS modality text NOT NULL DEFAULT 'in_person';
+ALTER TABLE appointments DROP CONSTRAINT IF EXISTS appointments_modality_check;
+ALTER TABLE appointments ADD CONSTRAINT appointments_modality_check CHECK (modality IN ('in_person','telehealth_video','phone'));
+ALTER TABLE calendars ADD COLUMN IF NOT EXISTS default_modality text NOT NULL DEFAULT 'in_person';
+ALTER TABLE calendars DROP CONSTRAINT IF EXISTS calendars_default_modality_check;
+ALTER TABLE calendars ADD CONSTRAINT calendars_default_modality_check CHECK (default_modality IN ('in_person','telehealth_video','phone'));

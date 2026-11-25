@@ -8,6 +8,7 @@ import { CalendarsRepo } from '../repos/calendars-repo'
 import type { Database } from '../db/database'
 import type { WorkflowDispatch } from '../jobs/workflow-dispatcher'
 import { audit, auditContext } from '../lib/audit'
+import { MODALITIES } from '../lib/clinical-vocab'
 import { CalendarSyncRepo } from '../repos/calendar-sync-repo'
 import { TimelineRepo } from '../repos/timeline-repo'
 
@@ -26,6 +27,8 @@ const createApptSchema = z
     contactId: z.string().nullable().optional(),
     locationText: z.string().nullable().optional(),
     notes: z.string().nullable().optional(),
+    // Omitted: the calendar's default applies.
+    modality: z.enum(MODALITIES).optional(),
   })
   .refine((v) => new Date(v.endsAt) > new Date(v.startsAt), {
     message: 'endsAt must be after startsAt',
@@ -82,6 +85,7 @@ const patchCalSchema = z.object({
   availability: z.array(availabilityWindowSchema).optional(),
   bookingHeadline: z.string().nullable().optional(),
   bookingBlurb: z.string().nullable().optional(),
+  defaultModality: z.enum(MODALITIES).optional(),
 })
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
@@ -158,13 +162,13 @@ export function calendarsRoute(deps: {
     if (!calendar) return c.json({ error: 'unknown calendar' }, 400)
     try {
       const appointment = await deps.db.transaction(async (tx) => {
-        const created = await new AppointmentsRepo(tx, loc).create(input)
+        const created = await new AppointmentsRepo(tx, loc).create({ ...input, modality: input.modality ?? calendar.default_modality })
         await audit(tx, loc, {
           action: 'appointment.created',
           entityType: 'appointment',
           entityId: created.id,
           contactId: created.contact_id ?? null,
-          details: { calendarId: input.calendarId, startsAt: created.starts_at },
+          details: { calendarId: input.calendarId, startsAt: created.starts_at, modality: created.modality },
           ...auditContext(c),
         })
         return created

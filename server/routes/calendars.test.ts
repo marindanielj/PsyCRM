@@ -531,3 +531,47 @@ test('an appointment the therapist books for a client fires appointment_booked (
   expect((await post(make(noClient))).status).toBe(201)
   expect(events).toEqual([])
 })
+
+const apptBody = { calendarId: 'cal1', title: 'Session', startsAt: '2026-06-04T15:00:00Z', endsAt: '2026-06-04T15:50:00Z' }
+const postAppt = (db: FakeDatabase, body: unknown) =>
+  harness(db).request('/appointments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+
+test('an appointment inherits its calendar\'s default modality when none is given', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ id: 'cal1', location_id: 'locA', default_modality: 'telehealth_video' }])
+  db.enqueue([{ id: 'a1', location_id: 'locA', modality: 'telehealth_video' }])
+  const res = await postAppt(db, apptBody)
+
+  expect(res.status).toBe(201)
+  expect(db.calls[1]?.params).toContain('telehealth_video')
+})
+
+test('an explicit modality wins over the calendar default', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ id: 'cal1', location_id: 'locA', default_modality: 'telehealth_video' }])
+  db.enqueue([{ id: 'a1', location_id: 'locA', modality: 'phone' }])
+  const res = await postAppt(db, { ...apptBody, modality: 'phone' })
+
+  expect(res.status).toBe(201)
+  expect(db.calls[1]?.params).toContain('phone')
+  expect(db.calls[1]?.params).not.toContain('telehealth_video')
+})
+
+test('an unknown modality is a 400 and nothing is booked', async () => {
+  const db = new FakeDatabase()
+  const res = await postAppt(db, { ...apptBody, modality: 'carrier_pigeon' })
+
+  expect(res.status).toBe(400)
+  expect(db.calls.length).toBe(0)
+})
+
+test('PATCH / sets a calendar\'s default modality, and rejects an unknown one', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ id: 'cal1', default_modality: 'telehealth_video' }])
+  const ok = await patchJson(harness(db), '/cal1', { defaultModality: 'telehealth_video' })
+  expect(ok.status).toBe(200)
+  expect(db.calls[0]?.sql).toMatch(/default_modality=\$2/)
+
+  const bad = await patchJson(harness(new FakeDatabase()), '/cal1', { defaultModality: 'smoke_signals' })
+  expect(bad.status).toBe(400)
+})

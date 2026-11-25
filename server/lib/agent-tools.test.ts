@@ -19,6 +19,7 @@ const cal: Calendar = {
   availability: [{ weekday: 1, start: '09:00', end: '17:00' }], // Mondays 9-5
   booking_headline: null,
   booking_blurb: null,
+  default_modality: 'in_person',
   created_at: '2026-06-01T00:00:00.000Z',
 }
 

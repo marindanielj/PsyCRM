@@ -11,6 +11,7 @@ export interface Appointment {
   ends_at: string
   status: string
   checked_in_at: string | null
+  modality: string
   location_text: string | null
   notes: string | null
   created_at: string
@@ -25,6 +26,8 @@ export interface AppointmentInput {
   contactId?: string | null
   locationText?: string | null
   notes?: string | null
+  /** in_person | telehealth_video | phone; omitted means in_person. */
+  modality?: string
 }
 
 export class AppointmentsRepo extends LocationScopedRepo {
@@ -56,8 +59,8 @@ export class AppointmentsRepo extends LocationScopedRepo {
     const id = nanoid()
     const rows = await this.scopedWrite<Appointment>(
       `INSERT INTO appointments
-        (id, location_id, calendar_id, contact_id, title, starts_at, ends_at, location_text, notes)
-       VALUES ($2,$1,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        (id, location_id, calendar_id, contact_id, title, starts_at, ends_at, location_text, notes, modality)
+       VALUES ($2,$1,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [
         id,
         input.calendarId,
@@ -67,6 +70,7 @@ export class AppointmentsRepo extends LocationScopedRepo {
         input.endsAt,
         input.locationText ?? null,
         input.notes ?? null,
+        input.modality ?? 'in_person',
       ],
     )
     return rows[0]!
