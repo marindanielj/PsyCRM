@@ -2073,3 +2073,32 @@ ALTER TABLE appointments ADD CONSTRAINT appointments_modality_check CHECK (modal
 ALTER TABLE calendars ADD COLUMN IF NOT EXISTS default_modality text NOT NULL DEFAULT 'in_person';
 ALTER TABLE calendars DROP CONSTRAINT IF EXISTS calendars_default_modality_check;
 ALTER TABLE calendars ADD CONSTRAINT calendars_default_modality_check CHECK (default_modality IN ('in_person','telehealth_video','phone'));
+
+-- PsyCRM virtual sessions (B5, slice 2): one built-in video room per appointment. The
+-- client's /v/<token> link is derived from the row id with an HMAC (so it can be shown
+-- again for a reminder); only its sha256 is stored, for lookup. `chime_meeting` is the
+-- Chime meeting descriptor (media URLs, no credentials); attendee join tokens are never stored.
+CREATE TABLE IF NOT EXISTS video_meetings (
+  id             text PRIMARY KEY,
+  location_id    text NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  appointment_id text NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+  token_hash     text NOT NULL,
+  chime_meeting  jsonb,
+  waiting_since  timestamptz,
+  admitted_at    timestamptz,
+  ended_at       timestamptz,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS video_meetings_by_appointment ON video_meetings(appointment_id);
+CREATE UNIQUE INDEX IF NOT EXISTS video_meetings_by_token ON video_meetings(token_hash);
+
+-- Who came and went, and when. Times only: never audio, video or content.
+CREATE TABLE IF NOT EXISTS video_meeting_events (
+  id          text PRIMARY KEY,
+  location_id text NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  meeting_id  text NOT NULL REFERENCES video_meetings(id) ON DELETE CASCADE,
+  role        text NOT NULL CHECK (role IN ('therapist','client')),
+  event       text NOT NULL CHECK (event IN ('waiting','admitted','joined','left')),
+  at          timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS video_meeting_events_by_meeting ON video_meeting_events(meeting_id, at);
