@@ -676,6 +676,8 @@ export interface Calendar {
   availability: AvailabilityWindow[]
   booking_headline: string | null
   booking_blurb: string | null
+  /** How appointments booked here are held unless chosen otherwise. */
+  default_modality: 'in_person' | 'telehealth_video' | 'phone'
 }
 
 export interface NewCalendar {
@@ -703,6 +705,7 @@ export interface CalendarPatch {
   availability?: AvailabilityWindow[]
   bookingHeadline?: string | null
   bookingBlurb?: string | null
+  defaultModality?: 'in_person' | 'telehealth_video' | 'phone'
 }
 
 export interface Appointment {
@@ -714,6 +717,7 @@ export interface Appointment {
   ends_at: string
   status: AppointmentStatus
   checked_in_at?: string | null
+  modality: 'in_person' | 'telehealth_video' | 'phone'
   location_text: string | null
   notes: string | null
 }
@@ -726,6 +730,8 @@ export interface NewAppointment {
   contactId?: string | null
   locationText?: string | null
   notes?: string | null
+  /** Omitted: the calendar's default applies. */
+  modality?: 'in_person' | 'telehealth_video' | 'phone'
 }
 
 export type CampaignChannel = 'sms' | 'email'

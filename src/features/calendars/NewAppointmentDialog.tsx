@@ -3,7 +3,10 @@ import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import type { Calendar, Contact, NewAppointment } from '../../lib/api'
+import { MODALITIES, label } from '../../lib/clinical-vocab'
 import { formatPhone } from '../../lib/utils'
+
+type NewAppointmentModality = (typeof MODALITIES)[number]
 
 const selectClass =
   'h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition-colors focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30'
@@ -41,13 +44,19 @@ export function NewAppointmentDialog({
   const [duration, setDuration] = useState(
     () => calendars.find((c) => c.id === firstCal)?.duration_min ?? 30,
   )
+  const [modality, setModality] = useState<NewAppointmentModality>(
+    () => calendars.find((c) => c.id === firstCal)?.default_modality ?? 'in_person',
+  )
   const [saving, setSaving] = useState(false)
 
   // Switching calendars resets the duration to that calendar's default slot.
   function pickCalendar(id: string) {
     setCalendarId(id)
     const cal = calendars.find((c) => c.id === id)
-    if (cal) setDuration(cal.duration_min)
+    if (cal) {
+      setDuration(cal.duration_min)
+      setModality(cal.default_modality)
+    }
   }
 
   const valid = useMemo(
@@ -69,6 +78,7 @@ export function NewAppointmentDialog({
         endsAt: new Date(start.getTime() + duration * 60_000).toISOString(),
         contactId: contactId || null,
         locationText: locationText.trim() || null,
+        modality,
       })
     } finally {
       setSaving(false)
@@ -112,6 +122,22 @@ export function NewAppointmentDialog({
               {calendars.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <Label htmlFor="appt-modality">How it's held</Label>
+            <select
+              id="appt-modality"
+              value={modality}
+              onChange={(e) => setModality(e.target.value as NewAppointmentModality)}
+              className={selectClass}
+            >
+              {MODALITIES.map((m) => (
+                <option key={m} value={m}>
+                  {label(m)}
                 </option>
               ))}
             </select>

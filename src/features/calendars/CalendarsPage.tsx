@@ -1,4 +1,4 @@
-import { ArrowLeft, CalendarDays, ChevronDown, ExternalLink, Globe, MapPin, Plus, Settings2 } from 'lucide-react'
+import { ArrowLeft, CalendarDays, ChevronDown, ExternalLink, Globe, MapPin, Phone, Plus, Settings2, Video } from 'lucide-react'
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
@@ -504,6 +504,12 @@ function AppointmentRow({
             {contactName && (
               <span className="min-w-0 truncate text-slate-400">
                 · <span className="text-slate-500">{contactName}</span>
+              </span>
+            )}
+            {appt.modality !== 'in_person' && (
+              <span className="inline-flex items-center gap-1 rounded bg-sky-50 px-1.5 py-0.5 font-medium text-sky-700">
+                {appt.modality === 'phone' ? <Phone className="h-3 w-3" /> : <Video className="h-3 w-3" />}
+                {appt.modality === 'phone' ? 'Phone' : 'Video'}
               </span>
             )}
             {appt.location_text && (
