@@ -48,6 +48,18 @@ export class AppStack extends Construct {
       )
     }
 
+    if (settings.enableVideo) {
+      // Exactly the three calls the app makes (server/lib/video/provider.ts): open a room, let a person in, close it.
+      // Chime lists no resource type for CreateMeeting, so it cannot be scoped to one; the two others are left on the
+      // same footing rather than guess an ARN that cannot be tested before a deploy. Nothing else of Chime is granted.
+      taskRole.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ['chime:CreateMeeting', 'chime:CreateAttendee', 'chime:DeleteMeeting'],
+          resources: ['*'],
+        }),
+      )
+    }
+
     // ---- task: 0.5 vCPU / 1 GB, ARM64, non-root, read-only root filesystem with a scratch /tmp
     const task = new ecs.FargateTaskDefinition(this, 'Task', {
       family: NAMES.appFamily,
@@ -73,6 +85,7 @@ export class AppStack extends Construct {
         PUBLIC_BASE_URL: publicBaseUrl,
         ...(sesFromAddress ? { SES_FROM_ADDRESS: sesFromAddress, SES_REGION: settings.region } : {}),
         ...(sesConfigurationSet ? { SES_CONFIGURATION_SET: sesConfigurationSet } : {}),
+        ...(settings.enableVideo ? { CHIME_REGION: settings.region } : {}),
       },
       secrets: {
         DATABASE_URL: ecs.Secret.fromSecretsManager(data.databaseUrl),

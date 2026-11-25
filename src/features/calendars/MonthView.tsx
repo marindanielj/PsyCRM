@@ -8,12 +8,14 @@ interface MonthViewProps {
   appts: Appointment[]
   calendars: Record<string, Calendar>
   onStatus: (id: string, next: AppointmentStatus) => void
+  /** Open an appointment's details (click or Enter on its chip). */
+  onOpen?: (id: string) => void
   contactName: (a: Appointment) => string | undefined
   /** Time blocked in her personal calendar (calendar sync) for a date range. Absent when sync is off. */
   loadBusy?: (from: string, to: string) => Promise<BusyBlock[]>
 }
 
-export function MonthView({ appts, calendars, onStatus, contactName, loadBusy }: MonthViewProps) {
+export function MonthView({ appts, calendars, onStatus, onOpen, contactName, loadBusy }: MonthViewProps) {
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [busy, setBusy] = useState<BusyBlock[]>([])
   
@@ -115,7 +117,20 @@ export function MonthView({ appts, calendars, onStatus, contactName, loadBusy }:
                   ))}
                   {dayAppts.map(a => {
                     return (
-                      <div key={a.id} className={cn("text-[11px] px-1.5 py-1 rounded border truncate cursor-pointer hover:bg-slate-200 transition-colors", a.status === 'cancelled' || a.status === 'no_show' ? 'opacity-50 border-slate-200 bg-slate-50' : 'border-brand-200 bg-brand-50')} title={`${formatTime(a.starts_at)} - ${a.title}`}>
+                      <div
+                        key={a.id}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Open appointment: ${a.title}`}
+                        onClick={() => onOpen?.(a.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            onOpen?.(a.id)
+                          }
+                        }}
+                        className={cn("text-[11px] px-1.5 py-1 rounded border truncate cursor-pointer hover:bg-slate-200 transition-colors", a.status === 'cancelled' || a.status === 'no_show' ? 'opacity-50 border-slate-200 bg-slate-50' : 'border-brand-200 bg-brand-50')} title={`${formatTime(a.starts_at)} - ${a.title}`}
+                      >
                         <span className="font-semibold text-slate-700 mr-1">{formatTime(a.starts_at)}</span>
                         <span className="text-slate-700">{a.title}</span>
                       </div>

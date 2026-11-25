@@ -10,7 +10,7 @@
     "dev": "vite",
     "dev:server": "tsx watch server/index.ts",
     "dev:local": "tsx watch server/dev-server.ts",
-    "build": "vite build",
+    "build": "vite build && vite build -c vite.video.config.ts",
     "migrate": "tsx db/migrate.ts",
     "seed": "tsx db/seed.ts",
     "shoot": "node scripts/shoot.mjs",
@@ -23,12 +23,14 @@
     "start": "tsx server/index.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-chime-sdk-meetings": "^3.1177.0",
     "@aws-sdk/client-sesv2": "^3.1163.0",
     "@electric-sql/pglite": "^0.5.1",
     "@hono/node-server": "^2.1.6",
     "@hono/zod-validator": "^0.8.0",
     "@node-rs/argon2": "^2.0.2",
     "@tailwindcss/vite": "^4.3.0",
+    "amazon-chime-sdk-js": "^3.33.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "hono": "^4.13.16",

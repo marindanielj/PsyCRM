@@ -5,6 +5,7 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { Textarea } from '../../components/ui/textarea'
 import { ApiError, type AvailabilityWindow, type Calendar, type CalendarPatch, api } from '../../lib/api'
+import { MODALITIES, label } from '../../lib/clinical-vocab'
 import { cn } from '../../lib/utils'
 import { CopyButton, hostedUrl } from '../trigger-links/link-ui'
 
@@ -96,6 +97,7 @@ export function BookingSettingsDialog({
   const [headline, setHeadline] = useState(calendar.booking_headline ?? '')
   const [blurb, setBlurb] = useState(calendar.booking_blurb ?? '')
   const [availability, setAvailability] = useState<AvailabilityWindow[]>(calendar.availability ?? [])
+  const [defaultModality, setDefaultModality] = useState(calendar.default_modality ?? 'in_person')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -136,6 +138,7 @@ export function BookingSettingsDialog({
       name: name.trim() || calendar.name,
       color,
       durationMin: Math.max(5, durationMin || 30),
+      defaultModality,
       bookingEnabled: enabled,
       bookingSlug: finalSlug || null,
       timezone,
@@ -286,6 +289,22 @@ export function BookingSettingsDialog({
 
           {/* Timing */}
           <section className="space-y-3">
+            <div>
+              <Label htmlFor="cal-modality">Sessions are held</Label>
+              <select
+                id="cal-modality"
+                value={defaultModality}
+                onChange={(e) => setDefaultModality(e.target.value as typeof defaultModality)}
+                className={selectClass}
+              >
+                {MODALITIES.map((m) => (
+                  <option key={m} value={m}>
+                    {label(m)}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-500">The default for new appointments on this calendar. Each one can be changed.</p>
+            </div>
             <div>
               <Label htmlFor="cal-tz">Timezone</Label>
               <select

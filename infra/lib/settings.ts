@@ -33,6 +33,11 @@ export interface Settings {
   /** Verified SES sender, e.g. no-reply@example.com. The task role may send only as this address. */
   sesFromAddress?: string
   sesConfigurationSet?: string
+  /**
+   * Built-in video sessions (Amazon Chime SDK, under the account's BAA). Off until chosen on purpose: when on, the
+   * task role may create and end video meetings and the app is told which region to use (CHIME_REGION).
+   */
+  enableVideo: boolean
 }
 
 const str = (app: App, k: string): string | undefined => {
@@ -66,6 +71,7 @@ export function readSettings(app: App): Settings {
     certificateArn: str(app, 'certificateArn'),
     sesFromAddress: str(app, 'sesFromAddress'),
     sesConfigurationSet: str(app, 'sesConfigurationSet'),
+    enableVideo: bool(app, 'enableVideo', false),
   }
 }
 

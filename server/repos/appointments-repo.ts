@@ -11,6 +11,7 @@ export interface Appointment {
   ends_at: string
   status: string
   checked_in_at: string | null
+  modality: string
   location_text: string | null
   notes: string | null
   created_at: string
@@ -25,6 +26,16 @@ export interface AppointmentInput {
   contactId?: string | null
   locationText?: string | null
   notes?: string | null
+  /** in_person | telehealth_video | phone; omitted means in_person. */
+  modality?: string
+}
+
+export interface AppointmentDetailsPatch {
+  title?: string
+  contactId?: string | null
+  locationText?: string | null
+  notes?: string | null
+  modality?: string
 }
 
 export class AppointmentsRepo extends LocationScopedRepo {
@@ -56,8 +67,8 @@ export class AppointmentsRepo extends LocationScopedRepo {
     const id = nanoid()
     const rows = await this.scopedWrite<Appointment>(
       `INSERT INTO appointments
-        (id, location_id, calendar_id, contact_id, title, starts_at, ends_at, location_text, notes)
-       VALUES ($2,$1,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        (id, location_id, calendar_id, contact_id, title, starts_at, ends_at, location_text, notes, modality)
+       VALUES ($2,$1,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [
         id,
         input.calendarId,
@@ -67,9 +78,41 @@ export class AppointmentsRepo extends LocationScopedRepo {
         input.endsAt,
         input.locationText ?? null,
         input.notes ?? null,
+        input.modality ?? 'in_person',
       ],
     )
     return rows[0]!
+  }
+
+  /**
+   * Change an appointment's details: only the fields given (camelCase), the rest untouched. Returns undefined
+   * when nothing was given or the appointment is not here.
+   */
+  async updateDetails(id: string, patch: AppointmentDetailsPatch): Promise<Appointment | undefined> {
+    const sets: string[] = []
+    const extra: unknown[] = []
+    const push = (col: string, value: unknown) => {
+      extra.push(value)
+      sets.push(`${col}=$${extra.length + 1}`) // +1: $1 is the location
+    }
+    if (patch.title !== undefined) push('title', patch.title)
+    if (patch.contactId !== undefined) push('contact_id', patch.contactId)
+    if (patch.locationText !== undefined) push('location_text', patch.locationText)
+    if (patch.notes !== undefined) push('notes', patch.notes)
+    if (patch.modality !== undefined) push('modality', patch.modality)
+    if (sets.length === 0) return undefined
+    extra.push(id)
+    const rows = await this.scopedWrite<Appointment>(
+      `UPDATE appointments SET ${sets.join(', ')}, updated_at=now() WHERE location_id=$1 AND id=$${extra.length + 1} RETURNING *`,
+      extra,
+    )
+    return rows[0]
+  }
+
+  /** Remove an appointment. The database refuses while a session note points at it (RESTRICT). */
+  async delete(id: string): Promise<Appointment | undefined> {
+    const rows = await this.scopedWrite<Appointment>('DELETE FROM appointments WHERE location_id=$1 AND id=$2 RETURNING *', [id])
+    return rows[0]
   }
 
   /** Move an appointment to a new time (drag or edit). */

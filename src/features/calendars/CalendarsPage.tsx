@@ -1,4 +1,4 @@
-import { ArrowLeft, CalendarDays, ChevronDown, ExternalLink, Globe, MapPin, Plus, Settings2 } from 'lucide-react'
+import { ArrowLeft, CalendarDays, ChevronDown, ExternalLink, Globe, MapPin, Phone, Plus, Settings2, Video } from 'lucide-react'
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
@@ -16,7 +16,9 @@ import { moduleEnabled } from '../../lib/modules'
 import { cn, dayKey, formatDayLabel, formatTime } from '../../lib/utils'
 import { useTenant } from '../../state/location'
 import { BookingSettingsDialog } from './BookingSettingsDialog'
+import { AppointmentDialog } from './AppointmentDialog'
 import { NewAppointmentDialog } from './NewAppointmentDialog'
+import { VideoActions } from './VideoActions'
 import { TodayPanel } from '../session-notes/TodayPanel'
 import { MonthView } from './MonthView'
 import { hostedUrl } from '../trigger-links/link-ui'
@@ -90,6 +92,16 @@ export function CalendarsPage() {
   const [agendaOpen, setAgendaOpen] = useState(true)
   const [view, setView] = useState<'agenda' | 'month'>('month')
   const [notice, setNotice] = useState<string | null>(null)
+  const [videoOn, setVideoOn] = useState(false)
+  const [openApptId, setOpenApptId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!loc) return
+    let active = true
+    void api.videoEnabled(loc).then((on) => active && setVideoOn(on))
+    return () => {
+      active = false
+    }
+  }, [loc])
 
   useEffect(() => {
     if (!loc) return
@@ -155,7 +167,11 @@ export function CalendarsPage() {
     const r = await api.createAppointment(loc, input)
     setShowDialog(false)
     // Booking over her own personal calendar is allowed, but she should know.
-    setNotice(r.warnings?.includes('overlaps_personal_calendar') ? 'Booked. That time overlaps something in your personal calendar.' : null)
+    const notes = [
+      r.warnings?.includes('overlaps_personal_calendar') ? 'That time overlaps something in your personal calendar.' : null,
+      r.warnings?.includes('telepsychology_consent_missing') ? 'This client has no signed telepsychology consent on file yet.' : null,
+    ].filter(Boolean)
+    setNotice(notes.length ? `Booked. ${notes.join(' ')}` : null)
     await reload()
   }
 
@@ -183,6 +199,24 @@ export function CalendarsPage() {
   function onCalendarSaved(updated: Calendar) {
     setCalendars((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
     setBookingCalId(null)
+  }
+
+  const openAppt = openApptId ? appts.find((a) => a.id === openApptId) : undefined
+  // A saved edit replaces the row at once; a new time can reorder the agenda, so reload too.
+  function onApptSaved(updated: Appointment, warnings: string[]) {
+    setAppts((prev) => prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)))
+    const notes = [
+      warnings.includes('overlaps_personal_calendar') ? 'That time overlaps something in your personal calendar.' : null,
+      warnings.includes('telepsychology_consent_missing') ? 'This client has no signed telepsychology consent on file yet.' : null,
+    ].filter(Boolean)
+    setNotice(notes.length ? `Saved. ${notes.join(' ')}` : null)
+    void reload()
+  }
+  function onApptDeleted(id: string) {
+    setAppts((prev) => prev.filter((a) => a.id !== id))
+    setOpenApptId(null)
+    setNotice(null)
+    void reload()
   }
 
   const contactName = (a: Appointment) =>
@@ -361,7 +395,7 @@ export function CalendarsPage() {
             </Button>
           </div>
         ) : view === 'month' ? (
-          <MonthView appts={filtered} calendars={calById} onStatus={setStatusOf} contactName={contactName} loadBusy={loadBusy} />
+          <MonthView appts={filtered} calendars={calById} onStatus={setStatusOf} onOpen={setOpenApptId} contactName={contactName} loadBusy={loadBusy} />
         ) : (
           <div className="ol-scroll min-h-0 flex-1 overflow-y-auto bg-slate-50 px-3 py-4 lg:px-6 lg:py-5">
             {filtered.length === 0 ? (
@@ -385,6 +419,9 @@ export function CalendarsPage() {
                           contactName={contactName(appt)}
                           onStatus={setStatusOf}
                           onCheckIn={checkIn}
+                          onOpen={setOpenApptId}
+                          loc={loc}
+                          videoOn={videoOn}
                         />
                       ))}
                     </div>
@@ -403,6 +440,21 @@ export function CalendarsPage() {
           defaultCalendarId={selectedCalId ?? calendars[0]?.id ?? ''}
           onCancel={() => setShowDialog(false)}
           onCreate={createAppt}
+        />
+      )}
+
+      {openAppt && loc && (
+        <AppointmentDialog
+          key={openAppt.id}
+          appt={openAppt}
+          calendar={calById[openAppt.calendar_id]}
+          contacts={Object.values(contactsById)}
+          loc={loc}
+          videoOn={videoOn}
+          notesOn={moduleEnabled(current, 'session_notes')}
+          onClose={() => setOpenApptId(null)}
+          onSaved={onApptSaved}
+          onDeleted={onApptDeleted}
         />
       )}
 
@@ -468,12 +520,18 @@ function AppointmentRow({
   contactName,
   onStatus,
   onCheckIn,
+  onOpen,
+  loc,
+  videoOn,
 }: {
   appt: Appointment
   calendar?: Calendar
   contactName?: string
   onStatus: (id: string, next: AppointmentStatus) => void
   onCheckIn: (id: string) => void
+  onOpen: (id: string) => void
+  loc: string
+  videoOn: boolean
 }) {
   const { current } = useTenant()
   const notesOn = moduleEnabled(current, 'session_notes')
@@ -494,7 +552,19 @@ function AppointmentRow({
           <p className="text-[11px] text-slate-400">{formatTime(appt.ends_at)}</p>
         </div>
         <div className={cn('mt-1 w-1 shrink-0 self-stretch rounded-full', color.bar)} />
-        <div className="min-w-0 flex-1">
+        <div
+          className="min-w-0 flex-1 cursor-pointer rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
+          role="button"
+          tabIndex={0}
+          aria-label={`Open appointment: ${appt.title}`}
+          onClick={() => onOpen(appt.id)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              onOpen(appt.id)
+            }
+          }}
+        >
           <p className="truncate text-sm font-medium text-slate-900">{appt.title}</p>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
             <span className="inline-flex items-center gap-1.5">
@@ -506,6 +576,12 @@ function AppointmentRow({
                 · <span className="text-slate-500">{contactName}</span>
               </span>
             )}
+            {appt.modality !== 'in_person' && (
+              <span className="inline-flex items-center gap-1 rounded bg-sky-50 px-1.5 py-0.5 font-medium text-sky-700">
+                {appt.modality === 'phone' ? <Phone className="h-3 w-3" /> : <Video className="h-3 w-3" />}
+                {appt.modality === 'phone' ? 'Phone' : 'Video'}
+              </span>
+            )}
             {appt.location_text && (
               <span className="inline-flex min-w-0 items-center gap-1 text-slate-400">
                 <MapPin className="h-3 w-3 shrink-0" />
@@ -515,6 +591,9 @@ function AppointmentRow({
           </div>
         </div>
         <div className="relative flex shrink-0 items-center gap-2 self-start">
+          {videoOn && appt.modality === 'telehealth_video' && !dimmed && appt.status !== 'completed' ? (
+            <VideoActions loc={loc} appt={appt} contactName={contactName} />
+          ) : null}
           {(appt.status === 'scheduled' || appt.status === 'confirmed') && appt.contact_id ? (
             <Button size="sm" variant="outline" onClick={() => onCheckIn(appt.id)}>
               Check in

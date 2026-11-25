@@ -19,6 +19,7 @@ function calendar(over: Partial<Calendar> = {}): Calendar {
     availability: [{ weekday: 1, start: '09:00', end: '12:00' }],
     booking_headline: 'Book your cash-offer call',
     booking_blurb: 'Pick a time that works — it takes 30 minutes.',
+    default_modality: 'in_person',
     created_at: '2025-06-01T00:00:00Z',
     ...over,
   }

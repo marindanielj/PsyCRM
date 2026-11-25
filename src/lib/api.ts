@@ -676,6 +676,8 @@ export interface Calendar {
   availability: AvailabilityWindow[]
   booking_headline: string | null
   booking_blurb: string | null
+  /** How appointments booked here are held unless chosen otherwise. */
+  default_modality: 'in_person' | 'telehealth_video' | 'phone'
 }
 
 export interface NewCalendar {
@@ -703,6 +705,7 @@ export interface CalendarPatch {
   availability?: AvailabilityWindow[]
   bookingHeadline?: string | null
   bookingBlurb?: string | null
+  defaultModality?: 'in_person' | 'telehealth_video' | 'phone'
 }
 
 export interface Appointment {
@@ -714,8 +717,21 @@ export interface Appointment {
   ends_at: string
   status: AppointmentStatus
   checked_in_at?: string | null
+  modality: 'in_person' | 'telehealth_video' | 'phone'
   location_text: string | null
   notes: string | null
+}
+
+/** Edit payload for an appointment: any subset, applied together by the server (details, a new time, a new status). */
+export interface AppointmentPatch {
+  title?: string
+  contactId?: string | null
+  locationText?: string | null
+  notes?: string | null
+  modality?: 'in_person' | 'telehealth_video' | 'phone'
+  startsAt?: string
+  endsAt?: string
+  status?: AppointmentStatus
 }
 
 export interface NewAppointment {
@@ -726,6 +742,8 @@ export interface NewAppointment {
   contactId?: string | null
   locationText?: string | null
   notes?: string | null
+  /** Omitted: the calendar's default applies. */
+  modality?: 'in_person' | 'telehealth_video' | 'phone'
 }
 
 export type CampaignChannel = 'sms' | 'email'
@@ -3041,9 +3059,18 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ startsAt, endsAt }),
     }),
+  updateAppointment: (loc: string, id: string, patch: AppointmentPatch) =>
+    req<{ ok: true; appointment: Appointment; warnings?: string[] }>(`/loc/${loc}/calendars/appointments/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteAppointment: (loc: string, id: string) => req<{ ok: true }>(`/loc/${loc}/calendars/appointments/${id}`, { method: 'DELETE' }),
   /** Front-desk check-in: scheduled/confirmed -> checked_in. A second tap is a harmless no-op. */
   checkInAppointment: (loc: string, id: string) =>
     req<{ ok: true; appointment: Appointment; changed: boolean }>(`/loc/${loc}/calendars/appointments/${id}/check-in`, { method: 'POST' }),
+  /** Whether built-in video is switched on for this deployment (the route only exists then). */
+  videoEnabled: (loc: string) =>
+    req<{ video: boolean }>(`/loc/${loc}/features`).then((r) => r.video, () => false),
+  /** The client's join link and the room's state, for the agenda's Copy link. */
+  appointmentVideo: (loc: string, id: string) =>
+    req<{ ok: true; video: { link: string; waiting: boolean; admitted: boolean; ended: boolean; consentSigned: boolean | null } }>(`/loc/${loc}/video/appointments/${id}/video`),
   setAppointmentStatus: (loc: string, id: string, status: AppointmentStatus) =>
     req<{ ok: true; appointment: Appointment }>(`/loc/${loc}/calendars/appointments/${id}`, {
       method: 'PATCH',

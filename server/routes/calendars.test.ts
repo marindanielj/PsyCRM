@@ -334,6 +334,7 @@ const putJson = (app: Hono<AppEnv>, path: string, method: string, body: unknown)
 test('creating an appointment is audited with its calendar and time, not its title or notes', async () => {
   const db = new FakeDatabase()
   db.enqueue([{ id: 'cal1', location_id: 'locA', name: 'Sessions' }]) // calendar lookup
+  db.enqueue([{ id: 'c1' }]) // the client is this practice's
   db.enqueue([{ id: 'ap1', contact_id: 'c1', starts_at: '2026-11-10T14:00:00.000Z' }]) // insert
   const res = await putJson(harness(db), '/appointments', 'POST', {
     calendarId: 'cal1', title: 'Ana Rivera – anxiety', startsAt: '2026-11-10T14:00:00.000Z', endsAt: '2026-11-10T14:50:00.000Z', contactId: 'c1', notes: 'private note',
@@ -520,6 +521,7 @@ test('an appointment the therapist books for a client fires appointment_booked (
 
   const withClient = new FakeDatabase()
   withClient.enqueue([{ id: 'cal1', location_id: 'locA', name: 'Sessions' }])
+  withClient.enqueue([{ id: 'c1' }]) // the client is this practice's
   withClient.enqueue([{ id: 'a1', location_id: 'locA', calendar_id: 'cal1', contact_id: 'c1' }])
   expect((await post(make(withClient), 'c1')).status).toBe(201)
   expect(events).toEqual([{ locationId: 'locA', triggerType: 'appointment_booked', contactId: 'c1', depth: 0, payload: { appointmentId: 'a1', calendarId: 'cal1', source: 'operator' } }])
@@ -530,4 +532,48 @@ test('an appointment the therapist books for a client fires appointment_booked (
   noClient.enqueue([{ id: 'a2', location_id: 'locA', calendar_id: 'cal1', contact_id: null }])
   expect((await post(make(noClient))).status).toBe(201)
   expect(events).toEqual([])
+})
+
+const apptBody = { calendarId: 'cal1', title: 'Session', startsAt: '2026-06-04T15:00:00Z', endsAt: '2026-06-04T15:50:00Z' }
+const postAppt = (db: FakeDatabase, body: unknown) =>
+  harness(db).request('/appointments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+
+test('an appointment inherits its calendar\'s default modality when none is given', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ id: 'cal1', location_id: 'locA', default_modality: 'telehealth_video' }])
+  db.enqueue([{ id: 'a1', location_id: 'locA', modality: 'telehealth_video' }])
+  const res = await postAppt(db, apptBody)
+
+  expect(res.status).toBe(201)
+  expect(db.calls[1]?.params).toContain('telehealth_video')
+})
+
+test('an explicit modality wins over the calendar default', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ id: 'cal1', location_id: 'locA', default_modality: 'telehealth_video' }])
+  db.enqueue([{ id: 'a1', location_id: 'locA', modality: 'phone' }])
+  const res = await postAppt(db, { ...apptBody, modality: 'phone' })
+
+  expect(res.status).toBe(201)
+  expect(db.calls[1]?.params).toContain('phone')
+  expect(db.calls[1]?.params).not.toContain('telehealth_video')
+})
+
+test('an unknown modality is a 400 and nothing is booked', async () => {
+  const db = new FakeDatabase()
+  const res = await postAppt(db, { ...apptBody, modality: 'carrier_pigeon' })
+
+  expect(res.status).toBe(400)
+  expect(db.calls.length).toBe(0)
+})
+
+test('PATCH / sets a calendar\'s default modality, and rejects an unknown one', async () => {
+  const db = new FakeDatabase()
+  db.enqueue([{ id: 'cal1', default_modality: 'telehealth_video' }])
+  const ok = await patchJson(harness(db), '/cal1', { defaultModality: 'telehealth_video' })
+  expect(ok.status).toBe(200)
+  expect(db.calls[0]?.sql).toMatch(/default_modality=\$2/)
+
+  const bad = await patchJson(harness(new FakeDatabase()), '/cal1', { defaultModality: 'smoke_signals' })
+  expect(bad.status).toBe(400)
 })

@@ -51,6 +51,8 @@ const EnvSchema = z.object({
   SES_FROM_ADDRESS: z.string().optional(),
   SES_REGION: z.string().optional(),
   SES_CONFIGURATION_SET: z.string().optional(),
+  /** Amazon Chime SDK region for built-in video sessions (the task role is the credential). Unset = video rooms off. */
+  CHIME_REGION: z.string().optional(),
   // Directory holding the built web app (vite build output) to serve from the API
   // process. Empty = serve no static files (dev: Vite serves the SPA itself).
   STATIC_DIR: z.string().optional(),

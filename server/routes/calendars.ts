@@ -2,12 +2,16 @@ import { zValidator } from '@hono/zod-validator'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { AppEnv } from '../app-env'
-import { isUniqueViolation } from '../lib/db-errors'
+import { isForeignKeyViolation, isUniqueViolation } from '../lib/db-errors'
 import { AppointmentsRepo } from '../repos/appointments-repo'
 import { CalendarsRepo } from '../repos/calendars-repo'
+import { ContactsRepo } from '../repos/contacts-repo'
+import { VideoMeetingsRepo } from '../repos/video-meetings-repo'
 import type { Database } from '../db/database'
 import type { WorkflowDispatch } from '../jobs/workflow-dispatcher'
 import { audit, auditContext } from '../lib/audit'
+import { MODALITIES } from '../lib/clinical-vocab'
+import { hasTelepsychologyConsent } from '../lib/telepsychology-consent'
 import { CalendarSyncRepo } from '../repos/calendar-sync-repo'
 import { TimelineRepo } from '../repos/timeline-repo'
 
@@ -26,6 +30,8 @@ const createApptSchema = z
     contactId: z.string().nullable().optional(),
     locationText: z.string().nullable().optional(),
     notes: z.string().nullable().optional(),
+    // Omitted: the calendar's default applies.
+    modality: z.enum(MODALITIES).optional(),
   })
   .refine((v) => new Date(v.endsAt) > new Date(v.startsAt), {
     message: 'endsAt must be after startsAt',
@@ -37,6 +43,12 @@ const patchApptSchema = z
     startsAt: z.string().datetime().optional(),
     endsAt: z.string().datetime().optional(),
     status: z.enum(APPOINTMENT_STATUS).optional(),
+    // Details. Any subset; a reschedule and a status change may ride along in the same call.
+    title: z.string().trim().min(1).max(200).optional(),
+    contactId: z.string().min(1).nullable().optional(),
+    locationText: z.string().max(300).nullable().optional(),
+    notes: z.string().max(5000).nullable().optional(),
+    modality: z.enum(MODALITIES).optional(),
   })
   // Only enforce ordering when a reschedule supplies both ends; a status-only
   // patch leaves both undefined and passes untouched.
@@ -82,6 +94,7 @@ const patchCalSchema = z.object({
   availability: z.array(availabilityWindowSchema).optional(),
   bookingHeadline: z.string().nullable().optional(),
   bookingBlurb: z.string().nullable().optional(),
+  defaultModality: z.enum(MODALITIES).optional(),
 })
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
@@ -156,15 +169,17 @@ export function calendarsRoute(deps: {
     // an appointment attached to another tenant's calendar.
     const calendar = await new CalendarsRepo(deps.db, loc).get(input.calendarId)
     if (!calendar) return c.json({ error: 'unknown calendar' }, 400)
+    // Same for the client: a contact id from another practice must not be attachable.
+    if (input.contactId && !(await new ContactsRepo(deps.db, loc).get(input.contactId))) return c.json({ error: 'unknown contact' }, 400)
     try {
       const appointment = await deps.db.transaction(async (tx) => {
-        const created = await new AppointmentsRepo(tx, loc).create(input)
+        const created = await new AppointmentsRepo(tx, loc).create({ ...input, modality: input.modality ?? calendar.default_modality })
         await audit(tx, loc, {
           action: 'appointment.created',
           entityType: 'appointment',
           entityId: created.id,
           contactId: created.contact_id ?? null,
-          details: { calendarId: input.calendarId, startsAt: created.starts_at },
+          details: { calendarId: input.calendarId, startsAt: created.starts_at, modality: created.modality },
           ...auditContext(c),
         })
         return created
@@ -174,7 +189,12 @@ export function calendarsRoute(deps: {
       if (appointment.contact_id) {
         await deps.dispatch?.({ locationId: loc, triggerType: 'appointment_booked', contactId: appointment.contact_id, payload: { appointmentId: appointment.id, calendarId: input.calendarId, source: 'operator' }, depth: 0 })
       }
-      return c.json({ ok: true, appointment, warnings: await warningsFor(loc, appointment.starts_at, appointment.ends_at) }, 201)
+      const warnings = await warningsFor(loc, appointment.starts_at, appointment.ends_at)
+      // A video session with no signed telepsychology consent on file: tell her, never block her.
+      if (appointment.modality === 'telehealth_video' && appointment.contact_id && !(await hasTelepsychologyConsent(deps.db, loc, appointment.contact_id))) {
+        warnings.push('telepsychology_consent_missing')
+      }
+      return c.json({ ok: true, appointment, warnings }, 201)
     } catch (err) {
       // The no-double-book index refused this calendar+instant. An honest 409,
       // not a 500 — the operator must pick another time.
@@ -188,14 +208,59 @@ export function calendarsRoute(deps: {
     const id = c.req.param('id')
     const body = c.req.valid('json')
 
-    // One concern per call: reschedule (needs both timestamps) > status change.
-    let appointment
-    if (body.startsAt !== undefined && body.endsAt !== undefined) {
-      const { startsAt, endsAt } = body
-      try {
-        appointment = await deps.db.transaction(async (tx) => {
-          const r = await new AppointmentsRepo(tx, loc).rescheduleWithPrev(id, startsAt, endsAt)
-          if (!r) return undefined
+    const hasMove = body.startsAt !== undefined && body.endsAt !== undefined
+    if ((body.startsAt === undefined) !== (body.endsAt === undefined)) return c.json({ error: 'startsAt and endsAt go together' }, 400)
+    const details = {
+      title: body.title, contactId: body.contactId, locationText: body.locationText, notes: body.notes, modality: body.modality,
+    }
+    const hasDetails = Object.values(details).some((v) => v !== undefined)
+    if (!hasMove && !hasDetails && body.status === undefined) return c.json({ error: 'nothing to change' }, 400)
+
+    type Outcome = { ok: true; appointment: Awaited<ReturnType<AppointmentsRepo['get']>> & object } | { ok: false; status: 400 | 404 | 409; error: string }
+    let outcome: Outcome
+    try {
+      outcome = await deps.db.transaction(async (tx): Promise<Outcome> => {
+        const repo = new AppointmentsRepo(tx, loc)
+        let current: Awaited<ReturnType<AppointmentsRepo['get']>>
+
+        // 1. details: title, client, place, notes, how it is held.
+        if (hasDetails) {
+          current = await repo.get(id)
+          if (!current) return { ok: false, status: 404, error: 'not found' }
+          if (typeof body.contactId === 'string' && !(await new ContactsRepo(tx, loc).get(body.contactId))) {
+            return { ok: false, status: 400, error: 'unknown contact' }
+          }
+          if (body.modality !== undefined && body.modality !== current.modality) {
+            // The session note's billing place of service follows the modality: not after it was held.
+            if (current.status === 'completed') return { ok: false, status: 409, error: 'completed appointment' }
+            // Someone may be inside the call: end it from the room first.
+            if (current.modality === 'telehealth_video') {
+              const room = await new VideoMeetingsRepo(tx, loc).getByAppointment(id)
+              if (room?.chime_meeting && !room.ended_at) return { ok: false, status: 409, error: 'video session in progress' }
+            }
+          }
+          const was: Record<string, unknown> = { title: current.title, contactId: current.contact_id, locationText: current.location_text, notes: current.notes, modality: current.modality }
+          const changed = (Object.keys(details) as (keyof typeof details)[]).filter((k) => details[k] !== undefined && (details[k] ?? null) !== (was[k] ?? null))
+          if (changed.length > 0) {
+            const updated = await repo.updateDetails(id, details)
+            if (!updated) return { ok: false, status: 404, error: 'not found' }
+            await audit(tx, loc, {
+              action: 'appointment.updated',
+              entityType: 'appointment',
+              entityId: id,
+              contactId: updated.contact_id ?? null,
+              // Field names only, never the text; the one closed value that matters (how it is held) with from/to.
+              details: { fields: changed, ...(changed.includes('modality') ? { modality: { from: current.modality, to: updated.modality } } : {}) },
+              ...auditContext(c),
+            })
+            current = updated
+          }
+        }
+
+        // 2. a new time.
+        if (hasMove) {
+          const r = await repo.rescheduleWithPrev(id, body.startsAt!, body.endsAt!)
+          if (!r) return { ok: false, status: 404, error: 'not found' }
           await audit(tx, loc, {
             action: 'appointment.rescheduled',
             entityType: 'appointment',
@@ -204,35 +269,71 @@ export function calendarsRoute(deps: {
             details: { from: r.prevStartsAt, to: r.appointment.starts_at },
             ...auditContext(c),
           })
-          return r.appointment
-        })
-      } catch (err) {
-        // Moving onto a slot another live appointment already holds → 409.
-        if (isUniqueViolation(err)) return c.json({ error: 'time already booked' }, 409)
-        throw err
-      }
-    } else if (body.status !== undefined) {
-      const status = body.status
-      appointment = await deps.db.transaction(async (tx) => {
-        const r = await new AppointmentsRepo(tx, loc).setStatusWithPrev(id, status)
-        if (!r) return undefined
+          current = r.appointment
+        }
+
+        // 3. a new status.
+        if (body.status !== undefined) {
+          const r = await repo.setStatusWithPrev(id, body.status)
+          if (!r) return { ok: false, status: 404, error: 'not found' }
+          await audit(tx, loc, {
+            action: 'appointment.status_changed',
+            entityType: 'appointment',
+            entityId: r.appointment.id,
+            contactId: r.appointment.contact_id ?? null,
+            details: { from: r.prevStatus, to: body.status },
+            ...auditContext(c),
+          })
+          current = r.appointment
+        }
+        return current ? { ok: true, appointment: current } : { ok: false, status: 404, error: 'not found' }
+      })
+    } catch (err) {
+      // Moving onto a slot another live appointment already holds → 409.
+      if (isUniqueViolation(err)) return c.json({ error: 'time already booked' }, 409)
+      throw err
+    }
+    if (!outcome.ok) return c.json({ error: outcome.error }, outcome.status)
+    const appointment = outcome.appointment
+    // A move is the only change that can land on top of her own calendar.
+    const warnings = hasMove ? await warningsFor(loc, appointment.starts_at, appointment.ends_at) : []
+    // Switching to video for a client with no consent on file: tell her, never block her.
+    if (body.modality === 'telehealth_video' && appointment.contact_id && !(await hasTelepsychologyConsent(deps.db, loc, appointment.contact_id))) {
+      warnings.push('telepsychology_consent_missing')
+    }
+    return c.json({ ok: true, appointment, warnings })
+  })
+
+  // Delete an appointment. Never while a session note is written for it (the database refuses) or while a video
+  // session is live. A charge made from it is untouched: it carries the appointment id as plain information.
+  app.delete('/appointments/:id', async (c) => {
+    const loc = c.get('locationId')
+    const id = c.req.param('id')
+    try {
+      const result = await deps.db.transaction(async (tx) => {
+        const repo = new AppointmentsRepo(tx, loc)
+        const cur = await repo.get(id)
+        if (!cur) return 'not_found' as const
+        const room = await new VideoMeetingsRepo(tx, loc).getByAppointment(id)
+        if (room?.chime_meeting && !room.ended_at) return 'video_live' as const
+        await repo.delete(id)
         await audit(tx, loc, {
-          action: 'appointment.status_changed',
+          action: 'appointment.deleted',
           entityType: 'appointment',
-          entityId: r.appointment.id,
-          contactId: r.appointment.contact_id ?? null,
-          details: { from: r.prevStatus, to: status },
+          entityId: id,
+          contactId: cur.contact_id ?? null,
+          details: { startsAt: cur.starts_at, status: cur.status, modality: cur.modality },
           ...auditContext(c),
         })
-        return r.appointment
+        return 'deleted' as const
       })
-    } else {
-      return c.json({ error: 'startsAt+endsAt or status required' }, 400)
+      if (result === 'not_found') return c.json({ error: 'not found' }, 404)
+      if (result === 'video_live') return c.json({ error: 'video session in progress' }, 409)
+      return c.json({ ok: true })
+    } catch (err) {
+      if (isForeignKeyViolation(err)) return c.json({ error: 'has a session note' }, 409)
+      throw err
     }
-    if (!appointment) return c.json({ error: 'not found' }, 404)
-    // A move is the only change that can land on top of her own calendar.
-    const warnings = body.startsAt !== undefined && body.endsAt !== undefined ? await warningsFor(loc, appointment.starts_at, appointment.ends_at) : []
-    return c.json({ ok: true, appointment, warnings })
   })
 
   // Front-desk check-in. One tap: scheduled/confirmed -> checked_in, with the time. The

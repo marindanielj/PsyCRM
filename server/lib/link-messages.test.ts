@@ -33,3 +33,18 @@ test('the pasted text is the same wording as the emails the system sends', async
   expect(stripTail(sent[0]!)).toBe(inviteMessage({ practice: o.practice, name: o.name, link: LINK }))
   expect(stripTail(sent[1]!)).toBe(documentsMessage({ practice: o.practice, name: o.name, link: LINK }).split('\n\nPara abrirlos')[0])
 })
+
+import { videoMessage } from '../../src/lib/link-messages'
+
+test('the video session message names the time in Puerto Rico, carries the link, and says nothing clinical', () => {
+  const m = videoMessage({ practice: 'Consultorio Rivera', name: 'Ana Rivera', link: 'https://app.example.com/v/tok', startsAt: '2026-06-04T19:00:00Z' })
+  expect(m).toContain('Hola Ana:')
+  expect(m).toContain('Consultorio Rivera le espera para su sesión por video el jueves')
+  expect(m).toContain('3:00') // 19:00 UTC is 3:00 p. m. in Puerto Rico
+  expect(m).toContain('15 minutos antes')
+  expect(m).not.toMatch(/\.\./) // the time ends in a period (p. m.): no second one after it
+  expect(m).toContain('https://app.example.com/v/tok')
+  expect(m).toContain('no se graba')
+  expect(m).not.toMatch(/psicoterapia|terapia|diagn|consentimiento|admisión/i)
+  expect(videoMessage({ practice: '', name: 'Ana', link: 'x', startsAt: '2026-06-04T19:00:00Z' })).toContain('Su terapeuta le espera')
+})

@@ -19,6 +19,7 @@ export interface Calendar {
   availability: AvailabilityWindow[]
   booking_headline: string | null
   booking_blurb: string | null
+  default_modality: string
   created_at: string
 }
 
@@ -46,6 +47,7 @@ export interface CalendarPatch {
   availability?: AvailabilityWindow[]
   bookingHeadline?: string | null
   bookingBlurb?: string | null
+  defaultModality?: string
 }
 
 export class CalendarsRepo extends LocationScopedRepo {
@@ -103,6 +105,7 @@ export class CalendarsRepo extends LocationScopedRepo {
     if (patch.availability !== undefined) push('availability', JSON.stringify(patch.availability))
     if (patch.bookingHeadline !== undefined) push('booking_headline', patch.bookingHeadline)
     if (patch.bookingBlurb !== undefined) push('booking_blurb', patch.bookingBlurb)
+    if (patch.defaultModality !== undefined) push('default_modality', patch.defaultModality)
     if (sets.length === 0) return undefined
 
     extra.push(id)

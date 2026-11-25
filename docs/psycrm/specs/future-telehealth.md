@@ -1,6 +1,6 @@
 # Futuro (B5): telesalud
 
-**Estado:** planificado, **no construido**. Post-MVP. Recoge la conversación del 12 de noviembre de 2026.
+**Estado:** la **fase 2 (video integrado con Chime SDK) está construida**, falta darle permisos de IAM y probarla con llamadas reales: ver [`../RESULTADOS_VIDEO.md`](../RESULTADOS_VIDEO.md). La fase 1 (sala fija) no se hizo. Recoge la conversación del 12 de noviembre de 2026.
 
 ## Lo que ya existe
 - **Notas de sesión:** modalidad `in_person`, `telehealth_video` o `phone`.
