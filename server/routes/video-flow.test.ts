@@ -137,3 +137,46 @@ test('another practice\'s operator cannot open this appointment\'s room', async 
   expect((await other.request('/appointments/a1/video')).status).toBe(404)
   expect((await other.request('/appointments/a1/video/join', { method: 'POST' })).status).toBe(404)
 })
+
+test('the therapist\'s room page: signed in, one appointment, its own call-ready CSP', async () => {
+  const s = await setup()
+  const res = await s.t('GET', '/appointments/a1/room')
+  const html = await res.text()
+  expect(res.status).toBe(200)
+  expect(html).toContain('/api/loc/loc_a/video/appointments/a1')
+  expect(html).toContain('Admit to the session')
+  expect(res.headers.get('content-security-policy')).toMatch(/connect-src 'self' https:\/\/\*\.chime\.aws wss:\/\/\*\.chime\.aws/)
+  expect(res.headers.get('cache-control')).toBe('no-store')
+
+  const inPerson = await setup({ modality: 'in_person' })
+  expect((await inPerson.t('GET', '/appointments/a1/room')).status).toBe(409)
+  expect((await s.t('GET', '/appointments/nope/room')).status).toBe(404)
+})
+
+test('in the assembled app the room keeps its own CSP, needs a sign-in, and the video routes exist only when video is on', async () => {
+  const { createApp } = await import('../index')
+  const { createSession } = await import('../lib/session')
+  const secret = 's'.repeat(32)
+  const { db } = await freshDb()
+  await addLocation(db, 'loc_a')
+  await db.query("INSERT INTO operators (id, email, name, password_hash) VALUES ('op1','dra@x.com','Dra','h')")
+  await db.query("INSERT INTO operator_locations (operator_id, location_id) VALUES ('op1','loc_a')")
+  await db.query("INSERT INTO calendars (id, location_id, name) VALUES ('cal1','loc_a','S')")
+  await db.query("INSERT INTO appointments (id, location_id, calendar_id, title, starts_at, ends_at, modality) VALUES ('a1','loc_a','cal1','S',now(),now() + interval '50 minutes','telehealth_video')")
+  const cookie = `ol_session=${createSession({ operatorId: 'op1' }, secret)}`
+  const on = createApp({ db, sessionSecret: secret, webhookSecret: 'w', video: fakeVideoProvider(), revokedBefore: async () => null })
+  const off = createApp({ db, sessionSecret: secret, webhookSecret: 'w', revokedBefore: async () => null })
+  const path = '/api/loc/loc_a/video/appointments/a1/room'
+
+  const room = await on.request(path, { headers: { cookie } })
+  expect(room.status).toBe(200)
+  expect(room.headers.get('content-security-policy')).toContain('wss://*.chime.aws')
+  expect(room.headers.get('x-frame-options')).toBe('DENY')
+
+  expect((await on.request(path)).status).toBe(401) // no sign-in, no room
+  expect(await (await on.request('/api/loc/loc_a/video', { headers: { cookie } })).json()).toEqual({ enabled: true })
+  expect((await off.request('/api/loc/loc_a/video', { headers: { cookie } })).status).toBe(404)
+  expect((await off.request(`/v/${'A'.repeat(43)}`)).status).not.toBe(200) // no public page either
+  // every other app page still gets the strict policy
+  expect((await on.request('/api/loc/loc_a/calendars', { headers: { cookie } })).headers.get('content-security-policy')).toContain("script-src 'self'")
+})

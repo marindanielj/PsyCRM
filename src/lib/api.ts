@@ -3050,6 +3050,12 @@ export const api = {
   /** Front-desk check-in: scheduled/confirmed -> checked_in. A second tap is a harmless no-op. */
   checkInAppointment: (loc: string, id: string) =>
     req<{ ok: true; appointment: Appointment; changed: boolean }>(`/loc/${loc}/calendars/appointments/${id}/check-in`, { method: 'POST' }),
+  /** Whether built-in video is switched on for this deployment (the route only exists then). */
+  videoEnabled: (loc: string) =>
+    req<{ enabled: boolean }>(`/loc/${loc}/video`).then((r) => r.enabled, () => false),
+  /** The client's join link and the room's state, for the agenda's Copy link. */
+  appointmentVideo: (loc: string, id: string) =>
+    req<{ ok: true; video: { link: string; waiting: boolean; admitted: boolean; ended: boolean } }>(`/loc/${loc}/video/appointments/${id}/video`),
   setAppointmentStatus: (loc: string, id: string, status: AppointmentStatus) =>
     req<{ ok: true; appointment: Appointment }>(`/loc/${loc}/calendars/appointments/${id}`, {
       method: 'PATCH',

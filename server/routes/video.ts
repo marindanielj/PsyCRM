@@ -1,7 +1,9 @@
+import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
 import type { AppEnv } from '../app-env'
 import type { Database } from '../db/database'
 import { audit, auditContext } from '../lib/audit'
+import { renderVideoRoomPage } from '../lib/video-room-page'
 import { videoWindow } from '../lib/video-window'
 import { videoToken } from '../lib/video-token'
 import type { VideoProvider } from '../lib/video/provider'
@@ -44,6 +46,22 @@ export function videoRoute(deps: { db: Database; secret: string; provider: Video
       window: { state: w.state, opensAt: w.opensAt.toISOString(), closesAt: w.closesAt.toISOString() },
     }
   }
+
+  /** The web app asks this once to know whether to show the Join video / Copy link buttons. */
+  app.get('/', (c) => c.json({ enabled: true }))
+
+  /** The room page (opened in a new tab from the agenda). Its own CSP: the call needs Chime's hosts and blob: media. */
+  app.get('/appointments/:id/room', async (c) => {
+    const loc = c.get('locationId')
+    const r = await load(loc, c.req.param('id'))
+    if ('error' in r) return c.text(r.error === 'not found' ? 'Not found' : 'This appointment does not have a video room.', r.status)
+    const nonce = randomBytes(16).toString('base64')
+    c.header('Content-Security-Policy', `default-src 'none'; script-src 'self' 'nonce-${nonce}' blob:; style-src 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' https://*.chime.aws wss://*.chime.aws https://*.amazonaws.com wss://*.amazonaws.com; form-action 'none'; frame-ancestors 'none'; base-uri 'none'`)
+    c.header('Cache-Control', 'no-store')
+    c.header('Permissions-Policy', 'camera=(self), microphone=(self)')
+    const startsLabel = new Date(r.appt.starts_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Puerto_Rico' })
+    return c.html(renderVideoRoomPage({ title: r.appt.title, base: `/api/loc/${loc}/video/appointments/${r.appt.id}`, nonce, startsLabel }))
+  })
 
   app.get('/appointments/:id/video', async (c) => {
     const loc = c.get('locationId')

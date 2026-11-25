@@ -90,6 +90,15 @@ export function CalendarsPage() {
   const [agendaOpen, setAgendaOpen] = useState(true)
   const [view, setView] = useState<'agenda' | 'month'>('month')
   const [notice, setNotice] = useState<string | null>(null)
+  const [videoOn, setVideoOn] = useState(false)
+  useEffect(() => {
+    if (!loc) return
+    let active = true
+    void api.videoEnabled(loc).then((on) => active && setVideoOn(on))
+    return () => {
+      active = false
+    }
+  }, [loc])
 
   useEffect(() => {
     if (!loc) return
@@ -385,6 +394,8 @@ export function CalendarsPage() {
                           contactName={contactName(appt)}
                           onStatus={setStatusOf}
                           onCheckIn={checkIn}
+                          loc={loc}
+                          videoOn={videoOn}
                         />
                       ))}
                     </div>
@@ -468,13 +479,18 @@ function AppointmentRow({
   contactName,
   onStatus,
   onCheckIn,
+  loc,
+  videoOn,
 }: {
   appt: Appointment
   calendar?: Calendar
   contactName?: string
   onStatus: (id: string, next: AppointmentStatus) => void
   onCheckIn: (id: string) => void
+  loc: string
+  videoOn: boolean
 }) {
+  const [linkNote, setLinkNote] = useState<string | null>(null)
   const { current } = useTenant()
   const notesOn = moduleEnabled(current, 'session_notes')
   const color = calColor(calendar?.color ?? 'indigo')
@@ -521,6 +537,32 @@ function AppointmentRow({
           </div>
         </div>
         <div className="relative flex shrink-0 items-center gap-2 self-start">
+          {videoOn && appt.modality === 'telehealth_video' && !dimmed && appt.status !== 'completed' ? (
+            <>
+              <Button
+                size="sm"
+                onClick={() => window.open(`/api/loc/${loc}/video/appointments/${appt.id}/room`, '_blank', 'noopener')}
+              >
+                <Video className="h-3.5 w-3.5" /> Join video
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    const { video } = await api.appointmentVideo(loc, appt.id)
+                    await navigator.clipboard.writeText(new URL(video.link, window.location.origin).href)
+                    setLinkNote('Link copied')
+                  } catch {
+                    setLinkNote('Could not copy')
+                  }
+                  window.setTimeout(() => setLinkNote(null), 1600)
+                }}
+              >
+                {linkNote ?? 'Copy link'}
+              </Button>
+            </>
+          ) : null}
           {(appt.status === 'scheduled' || appt.status === 'confirmed') && appt.contact_id ? (
             <Button size="sm" variant="outline" onClick={() => onCheckIn(appt.id)}>
               Check in

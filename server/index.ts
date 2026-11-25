@@ -52,6 +52,7 @@ import { billingRoute } from './routes/billing'
 import { calendarsRoute } from './routes/calendars'
 import { chimeProvider, type VideoProvider } from './lib/video/provider'
 import { videoRoute } from './routes/video'
+import { isVideoRoomPath } from './lib/video-room-page'
 import { publicVideoRoute } from './routes/public-video'
 import { calendarFeedRoute, calendarSyncRoute } from './routes/calendar-sync'
 import { callsRoute } from './routes/calls'
@@ -220,7 +221,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }
     const strict = secureHeaders({ ...baseHeaders, contentSecurityPolicy: csp })
     const relaxed = secureHeaders({ ...baseHeaders, contentSecurityPolicy: undefined })
-    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') || c.req.path.startsWith('/d/') || c.req.path.startsWith('/b/') || c.req.path.startsWith('/v/') || c.req.path.startsWith('/i/') || c.req.path.startsWith('/p/') ? relaxed(c, next) : strict(c, next)))
+    app.use('*', (c, next) => (c.req.path.startsWith('/api/public/') || c.req.path.startsWith('/d/') || c.req.path.startsWith('/b/') || c.req.path.startsWith('/v/') || isVideoRoomPath(c.req.path) || c.req.path.startsWith('/i/') || c.req.path.startsWith('/p/') ? relaxed(c, next) : strict(c, next)))
     app.use('/api/*', async (c, next) => {
       await next()
       c.header('Cache-Control', 'no-store')
