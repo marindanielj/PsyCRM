@@ -28,6 +28,7 @@ export function renderVideoRoomPage(o: { title: string; base: string; nonce: str
   <div id="gate" class="card">
     <h1>Video session</h1>
     <p class="muted" id="state">Checking the room…</p>
+    <div id="consent" class="msg warn" hidden>This client has no signed telepsychology consent on file. You can still hold the session; consider getting it signed.</div>
     <div class="row"><button class="btn" id="open">Open the room</button><button class="btn ghost" id="copy">Copy client link</button></div>
     <div id="err" class="msg err" hidden></div>
   </div>
@@ -61,7 +62,7 @@ var call=null,link='',last=null;
 function api(m,p){return fetch(B+p,{method:m,credentials:'same-origin'}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){j._status=r.status;return j})})}
 function err(t){var e=$('err');e.textContent=t;e.hidden=!t}
 function yn(v){return v===true?'Yes':v===false?'No':'—'}
-function render(v){last=v;link=v.link;
+function render(v){last=v;link=v.link;$('consent').hidden=v.consentSigned!==false;
  var s=$('state');
  if(v.ended)s.textContent='This session has ended.';
  else if(v.window.state==='not_yet')s.textContent='The room opens at '+new Date(v.window.opensAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+'.';

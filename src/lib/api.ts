@@ -3055,7 +3055,7 @@ export const api = {
     req<{ enabled: boolean }>(`/loc/${loc}/video`).then((r) => r.enabled, () => false),
   /** The client's join link and the room's state, for the agenda's Copy link. */
   appointmentVideo: (loc: string, id: string) =>
-    req<{ ok: true; video: { link: string; waiting: boolean; admitted: boolean; ended: boolean } }>(`/loc/${loc}/video/appointments/${id}/video`),
+    req<{ ok: true; video: { link: string; waiting: boolean; admitted: boolean; ended: boolean; consentSigned: boolean | null } }>(`/loc/${loc}/video/appointments/${id}/video`),
   setAppointmentStatus: (loc: string, id: string, status: AppointmentStatus) =>
     req<{ ok: true; appointment: Appointment }>(`/loc/${loc}/calendars/appointments/${id}`, {
       method: 'PATCH',

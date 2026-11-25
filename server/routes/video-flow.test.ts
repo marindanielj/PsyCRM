@@ -180,3 +180,51 @@ test('in the assembled app the room keeps its own CSP, needs a sign-in, and the 
   // every other app page still gets the strict policy
   expect((await on.request('/api/loc/loc_a/calendars', { headers: { cookie } })).headers.get('content-security-policy')).toContain("script-src 'self'")
 })
+
+/** A signed telepsychology consent for contact c1 (foreign keys off for the insert: only the family and contact matter here). */
+async function signConsent(db: Awaited<ReturnType<typeof setup>>['db'], family = 'seed_telepsychology') {
+  await db.query('SET session_replication_role = replica')
+  await db.query(
+    `INSERT INTO document_templates (id, location_id, family_id, translation_group_id, version, status, kind, title, body_md)
+     VALUES ('t1','loc_a',$1,$1,1,'active','agreement','Consentimiento','x')`,
+    [family],
+  )
+  await db.query(
+    `INSERT INTO signed_documents (id, location_id, contact_id, request_id, signer_id, signer_role, template_id, template_title, template_version, locale, field_values, rendered_html, content_sha256, signer_name, esign_consent, signer_ip, signer_user_agent, verified_via)
+     VALUES ('sd1','loc_a','c1','r1','s1','client','t1','Consentimiento',1,'es','{}','x','h','Ana',true,'1.1.1.1','ua','email_otp')`,
+  )
+  await db.query('SET session_replication_role = DEFAULT')
+}
+
+test('the room is told when the client has no signed telepsychology consent, and stops saying so once it is signed', async () => {
+  const s = await setup()
+  const before = (await (await s.t('GET', '/appointments/a1/video')).json()).video
+  expect(before.consentSigned).toBe(false)
+  await signConsent(s.db)
+  expect((await (await s.t('GET', '/appointments/a1/video')).json()).video.consentSigned).toBe(true)
+})
+
+test('a different signed document is not a telepsychology consent', async () => {
+  const s = await setup()
+  await signConsent(s.db, 'seed_privacy')
+  expect((await (await s.t('GET', '/appointments/a1/video')).json()).video.consentSigned).toBe(false)
+})
+
+test('booking a video appointment warns, never blocks, when the consent is missing; in person and no-client bookings do not', async () => {
+  const { db } = await freshDb()
+  await addLocation(db, 'loc_a')
+  await db.query("INSERT INTO calendars (id, location_id, name) VALUES ('cal1','loc_a','S')")
+  await db.query("INSERT INTO contacts (id, location_id, name, emails) VALUES ('c1','loc_a','Ana','{}')")
+  const { calendarsRoute } = await import('./calendars')
+  const app = new Hono<AppEnv>()
+  app.use('*', async (c, next) => { c.set('operatorId', 'op1'); c.set('locationId', 'loc_a'); await next() })
+  app.route('/', calendarsRoute({ db }))
+  const book = async (hour: number, extra: Record<string, unknown>) =>
+    (await app.request('/appointments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calendarId: 'cal1', title: 'S', startsAt: `2026-06-04T${hour}:00:00Z`, endsAt: `2026-06-04T${hour}:50:00Z`, ...extra }) })).json()
+
+  expect(await book(10, { contactId: 'c1', modality: 'telehealth_video' })).toMatchObject({ ok: true, warnings: ['telepsychology_consent_missing'] })
+  expect((await book(11, { contactId: 'c1', modality: 'in_person' })).warnings).toEqual([])
+  expect((await book(12, { modality: 'telehealth_video' })).warnings).toEqual([])
+  await signConsent(db as never)
+  expect((await book(13, { contactId: 'c1', modality: 'telehealth_video' })).warnings).toEqual([])
+})

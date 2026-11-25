@@ -12,6 +12,8 @@ import {
   type NewAppointment,
   api,
 } from '../../lib/api'
+import { brandName } from '../../lib/brand'
+import { videoMessage } from '../../lib/link-messages'
 import { moduleEnabled } from '../../lib/modules'
 import { cn, dayKey, formatDayLabel, formatTime } from '../../lib/utils'
 import { useTenant } from '../../state/location'
@@ -164,7 +166,11 @@ export function CalendarsPage() {
     const r = await api.createAppointment(loc, input)
     setShowDialog(false)
     // Booking over her own personal calendar is allowed, but she should know.
-    setNotice(r.warnings?.includes('overlaps_personal_calendar') ? 'Booked. That time overlaps something in your personal calendar.' : null)
+    const notes = [
+      r.warnings?.includes('overlaps_personal_calendar') ? 'That time overlaps something in your personal calendar.' : null,
+      r.warnings?.includes('telepsychology_consent_missing') ? 'This client has no signed telepsychology consent on file yet.' : null,
+    ].filter(Boolean)
+    setNotice(notes.length ? `Booked. ${notes.join(' ')}` : null)
     await reload()
   }
 
@@ -551,15 +557,18 @@ function AppointmentRow({
                 onClick={async () => {
                   try {
                     const { video } = await api.appointmentVideo(loc, appt.id)
-                    await navigator.clipboard.writeText(new URL(video.link, window.location.origin).href)
-                    setLinkNote('Link copied')
+                    const link = new URL(video.link, window.location.origin).href
+                    await navigator.clipboard.writeText(
+                      videoMessage({ practice: brandName(current), name: contactName ?? '', link, startsAt: appt.starts_at }),
+                    )
+                    setLinkNote('Message copied')
                   } catch {
                     setLinkNote('Could not copy')
                   }
                   window.setTimeout(() => setLinkNote(null), 1600)
                 }}
               >
-                {linkNote ?? 'Copy link'}
+                {linkNote ?? 'Copy message'}
               </Button>
             </>
           ) : null}

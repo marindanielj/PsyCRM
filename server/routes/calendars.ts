@@ -9,6 +9,7 @@ import type { Database } from '../db/database'
 import type { WorkflowDispatch } from '../jobs/workflow-dispatcher'
 import { audit, auditContext } from '../lib/audit'
 import { MODALITIES } from '../lib/clinical-vocab'
+import { hasTelepsychologyConsent } from '../lib/telepsychology-consent'
 import { CalendarSyncRepo } from '../repos/calendar-sync-repo'
 import { TimelineRepo } from '../repos/timeline-repo'
 
@@ -178,7 +179,12 @@ export function calendarsRoute(deps: {
       if (appointment.contact_id) {
         await deps.dispatch?.({ locationId: loc, triggerType: 'appointment_booked', contactId: appointment.contact_id, payload: { appointmentId: appointment.id, calendarId: input.calendarId, source: 'operator' }, depth: 0 })
       }
-      return c.json({ ok: true, appointment, warnings: await warningsFor(loc, appointment.starts_at, appointment.ends_at) }, 201)
+      const warnings = await warningsFor(loc, appointment.starts_at, appointment.ends_at)
+      // A video session with no signed telepsychology consent on file: tell her, never block her.
+      if (appointment.modality === 'telehealth_video' && appointment.contact_id && !(await hasTelepsychologyConsent(deps.db, loc, appointment.contact_id))) {
+        warnings.push('telepsychology_consent_missing')
+      }
+      return c.json({ ok: true, appointment, warnings }, 201)
     } catch (err) {
       // The no-double-book index refused this calendar+instant. An honest 409,
       // not a 500 — the operator must pick another time.

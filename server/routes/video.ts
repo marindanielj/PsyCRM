@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import type { AppEnv } from '../app-env'
 import type { Database } from '../db/database'
 import { audit, auditContext } from '../lib/audit'
+import { hasTelepsychologyConsent } from '../lib/telepsychology-consent'
 import { renderVideoRoomPage } from '../lib/video-room-page'
 import { videoWindow } from '../lib/video-window'
 import { videoToken } from '../lib/video-token'
@@ -34,10 +35,13 @@ export function videoRoute(deps: { db: Database; secret: string; provider: Video
     return { appt }
   }
 
-  const shape = (m: { id: string; waiting_since: string | null; admitted_at: string | null; ended_at: string | null; client_location?: string | null; client_in_pr?: boolean | null; client_private?: boolean | null }, appt: { starts_at: string; ends_at: string }) => {
+  const consentOf = async (loc: string, contactId: string | null) => (contactId ? hasTelepsychologyConsent(deps.db, loc, contactId) : null)
+  const shape = (consentSigned: boolean | null, m: { id: string; waiting_since: string | null; admitted_at: string | null; ended_at: string | null; client_location?: string | null; client_in_pr?: boolean | null; client_private?: boolean | null }, appt: { starts_at: string; ends_at: string }) => {
     const w = videoWindow(appt.starts_at, appt.ends_at, clock())
     return {
       link: linkFor(m.id),
+      // Whether the client has signed the telepsychology consent (null: no client on the appointment). Advice only.
+      consentSigned,
       waiting: Boolean(m.waiting_since) && !m.admitted_at && !m.ended_at,
       admitted: Boolean(m.admitted_at),
       ended: Boolean(m.ended_at),
@@ -68,7 +72,7 @@ export function videoRoute(deps: { db: Database; secret: string; provider: Video
     const r = await load(loc, c.req.param('id'))
     if ('error' in r) return c.json({ error: r.error }, r.status)
     const meeting = await new VideoMeetingsRepo(deps.db, loc).ensure(r.appt.id, deps.secret)
-    return c.json({ ok: true, video: shape(meeting, r.appt) })
+    return c.json({ ok: true, video: shape(await consentOf(loc, r.appt.contact_id), meeting, r.appt) })
   })
 
   app.post('/appointments/:id/video/join', async (c) => {
@@ -93,7 +97,7 @@ export function videoRoute(deps: { db: Database; secret: string; provider: Video
     const attendee = await deps.provider.createAttendee(String((chime as { MeetingId?: string }).MeetingId), 'therapist')
     await repo.addEvent(meeting.id, 'therapist', 'joined')
     meeting = (await repo.getByAppointment(r.appt.id)) ?? meeting
-    return c.json({ ok: true, meeting: chime, attendee, video: shape(meeting, r.appt) })
+    return c.json({ ok: true, meeting: chime, attendee, video: shape(await consentOf(loc, r.appt.contact_id), meeting, r.appt) })
   })
 
   app.post('/appointments/:id/video/admit', async (c) => {
