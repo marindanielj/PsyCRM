@@ -10,12 +10,14 @@ interface MonthViewProps {
   onStatus: (id: string, next: AppointmentStatus) => void
   /** Open an appointment's details (click or Enter on its chip). */
   onOpen?: (id: string) => void
+  /** The days the grid shows (ISO start, exclusive end), so the page can load exactly those appointments. */
+  onRangeChange?: (fromISO: string, toISO: string) => void
   contactName: (a: Appointment) => string | undefined
   /** Time blocked in her personal calendar (calendar sync) for a date range. Absent when sync is off. */
   loadBusy?: (from: string, to: string) => Promise<BusyBlock[]>
 }
 
-export function MonthView({ appts, calendars, onStatus, onOpen, contactName, loadBusy }: MonthViewProps) {
+export function MonthView({ appts, calendars, onStatus, onOpen, onRangeChange, contactName, loadBusy }: MonthViewProps) {
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [busy, setBusy] = useState<BusyBlock[]>([])
   
@@ -42,6 +44,10 @@ export function MonthView({ appts, calendars, onStatus, onOpen, contactName, loa
 
   // The 6-week grid shown (42 days, well inside the server's 62-day limit).
   const gridFrom = days[0]!.date.getTime()
+  useEffect(() => {
+    const from = new Date(gridFrom)
+    onRangeChange?.(from.toISOString(), new Date(from.getFullYear(), from.getMonth(), from.getDate() + 42).toISOString())
+  }, [gridFrom, onRangeChange])
   useEffect(() => {
     if (!loadBusy) return
     let live = true

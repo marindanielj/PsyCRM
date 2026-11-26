@@ -155,7 +155,9 @@ export function calendarsRoute(deps: {
   app.get('/appointments', async (c) => {
     const loc = c.get('locationId')
     const now = new Date()
-    const from = c.req.query('from') ?? now.toISOString()
+    // From the start of today (not this moment): an appointment earlier today must not vanish when the page reloads.
+    const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+    const from = c.req.query('from') ?? startOfToday.toISOString()
     const to = c.req.query('to') ?? new Date(now.getTime() + THIRTY_DAYS_MS).toISOString()
     const appointments = await new AppointmentsRepo(deps.db, loc).listByRange(from, to)
     return c.json({ appointments })

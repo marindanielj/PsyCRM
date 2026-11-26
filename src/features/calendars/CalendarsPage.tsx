@@ -77,7 +77,11 @@ export function CalendarsPage() {
   const loc = current?.id
 
   const [calendars, setCalendars] = useState<Calendar[]>([])
+  // `appts` is what is coming up (the agenda and the counts). `monthAppts` is whatever days the month grid is showing,
+  // past ones included, so the grid is never limited to "from now on".
   const [appts, setAppts] = useState<Appointment[]>([])
+  const [monthAppts, setMonthAppts] = useState<Appointment[]>([])
+  const [monthRange, setMonthRange] = useState<{ from: string; to: string } | null>(null)
   const [contactsById, setContactsById] = useState<Record<string, Contact>>({})
   const [status, setStatus] = useState<'loading' | 'ready' | 'empty'>('loading')
   const [selectedCalId, setSelectedCalId] = useState<string | null>(null)
@@ -112,6 +116,7 @@ export function CalendarsPage() {
         if (!active) return
         setCalendars(cal.calendars)
         setAppts(appt.appointments)
+        setMonthAppts(appt.appointments) // first paint; the grid then loads exactly the days it shows
         setContactsById(Object.fromEntries(c.contacts.map((x) => [x.id, x])))
         setStatus(cal.calendars.length > 0 ? 'ready' : 'empty')
       })
@@ -137,14 +142,39 @@ export function CalendarsPage() {
     [appts, selectedCalId],
   )
   const groups = useMemo(() => groupByDay(filtered), [filtered])
+  const filteredMonth = useMemo(
+    () => (selectedCalId ? monthAppts.filter((a) => a.calendar_id === selectedCalId) : monthAppts),
+    [monthAppts, selectedCalId],
+  )
   const selectedCal = selectedCalId ? calById[selectedCalId] : undefined
   const bookingCal = bookingCalId ? calById[bookingCalId] : undefined
 
   const reload = async () => {
     if (!loc) return
-    const r = await api.appointments(loc)
-    setAppts(r.appointments)
+    const [upcoming, month] = await Promise.all([
+      api.appointments(loc),
+      monthRange ? api.appointments(loc, monthRange.from, monthRange.to) : Promise.resolve(null),
+    ])
+    setAppts(upcoming.appointments)
+    if (month) setMonthAppts(month.appointments)
   }
+
+  // Load the days the month grid shows, whenever it moves to another month.
+  useEffect(() => {
+    if (!loc || !monthRange) return
+    let active = true
+    api
+      .appointments(loc, monthRange.from, monthRange.to)
+      .then((r) => active && setMonthAppts(r.appointments))
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [loc, monthRange])
+  const onMonthRange = useCallback(
+    (from: string, to: string) => setMonthRange((prev) => (prev && prev.from === from && prev.to === to ? prev : { from, to })),
+    [],
+  )
 
   async function checkIn(id: string) {
     if (!loc) return
@@ -159,6 +189,7 @@ export function CalendarsPage() {
   function setStatusOf(id: string, next: AppointmentStatus) {
     if (!loc) return
     setAppts((prev) => prev.map((a) => (a.id === id ? { ...a, status: next } : a)))
+    setMonthAppts((prev) => prev.map((a) => (a.id === id ? { ...a, status: next } : a)))
     api.setAppointmentStatus(loc, id, next).catch(() => void reload())
   }
 
@@ -201,10 +232,11 @@ export function CalendarsPage() {
     setBookingCalId(null)
   }
 
-  const openAppt = openApptId ? appts.find((a) => a.id === openApptId) : undefined
+  const openAppt = openApptId ? (appts.find((a) => a.id === openApptId) ?? monthAppts.find((a) => a.id === openApptId)) : undefined
   // A saved edit replaces the row at once; a new time can reorder the agenda, so reload too.
   function onApptSaved(updated: Appointment, warnings: string[]) {
     setAppts((prev) => prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)))
+    setMonthAppts((prev) => prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)))
     const notes = [
       warnings.includes('overlaps_personal_calendar') ? 'That time overlaps something in your personal calendar.' : null,
       warnings.includes('telepsychology_consent_missing') ? 'This client has no signed telepsychology consent on file yet.' : null,
@@ -214,6 +246,7 @@ export function CalendarsPage() {
   }
   function onApptDeleted(id: string) {
     setAppts((prev) => prev.filter((a) => a.id !== id))
+    setMonthAppts((prev) => prev.filter((a) => a.id !== id))
     setOpenApptId(null)
     setNotice(null)
     void reload()
@@ -395,7 +428,7 @@ export function CalendarsPage() {
             </Button>
           </div>
         ) : view === 'month' ? (
-          <MonthView appts={filtered} calendars={calById} onStatus={setStatusOf} onOpen={setOpenApptId} contactName={contactName} loadBusy={loadBusy} />
+          <MonthView appts={filteredMonth} calendars={calById} onStatus={setStatusOf} onOpen={setOpenApptId} onRangeChange={onMonthRange} contactName={contactName} loadBusy={loadBusy} />
         ) : (
           <div className="ol-scroll min-h-0 flex-1 overflow-y-auto bg-slate-50 px-3 py-4 lg:px-6 lg:py-5">
             {filtered.length === 0 ? (
