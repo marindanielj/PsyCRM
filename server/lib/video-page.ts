@@ -67,6 +67,7 @@ export function renderVideoPage(b: Base & { token: string; state: VideoPageState
 </div>
 
 <div id="incall" hidden>
+  <p id="conn" class="notice">Conectando…</p>
   <div class="call"><video id="remote" autoplay playsinline></video><video id="local" autoplay playsinline muted></video></div>
   <audio id="audio" autoplay></audio>
   <div class="ctl">
@@ -95,16 +96,26 @@ $('enter').addEventListener('click',function(){$('enter').disabled=true;post('/w
  if(j._status!==200){err('e1','No pudimos continuar. Intente de nuevo.');$('enter').disabled=false;return}
  show(j.admitted?'ready':'waiting');watch()})});
 var call=null;
-$('join').addEventListener('click',function(){$('join').disabled=true;post('/join').then(function(j){
- if(j._status!==200||!window.PsyVideo){err('e2','No pudimos conectar la sesión. Intente de nuevo.');$('join').disabled=false;return}
- show('incall');
+var NORMAL={OK:1,Left:1,MeetingEnded:1};
+$('join').addEventListener('click',function(){$('join').disabled=true;$('e2').hidden=true;post('/join').then(function(j){
+ if(j._status!==200||!window.PsyVideo){
+  var m='No pudimos conectar la sesión. Intente de nuevo.';
+  if(j._status===409)m='Su terapeuta aún no abrió la sala. Espere un momento e intente de nuevo.';
+  else if(j._status===502)m='El servicio de video no está disponible ahora. Avise a su terapeuta.';
+  else if(j._status===200)m='No se pudo cargar el video en este navegador. Recargue la página o pruebe con otro navegador.';
+  err('e2',m);$('join').disabled=false;return}
+ show('incall');$('conn').hidden=false;
  window.PsyVideo.join({meeting:j.meeting,attendee:j.attendee,audioEl:$('audio'),remoteVideoEl:$('remote'),localVideoEl:$('local'),
-  onEnd:function(){call=null;show('over')},
+  onConnected:function(){$('conn').hidden=true},
+  onEnd:function(why){call=null;
+   if(NORMAL[why]){show('over');return}
+   show('ready');$('join').disabled=false;
+   err('e2',why==='ConnectTimeout'?'No pudimos establecer la conexión de video. Revise su internet e intente de nuevo.':'La llamada se interrumpió (código: '+why+'). Intente entrar de nuevo.')},
   onDeviceProblem:function(w){var d=$('dev');d.textContent=w==='camera'?'No pudimos usar su cámara. Puede continuar solo con audio.':'No pudimos usar su micrófono. Revise los permisos de su navegador.';d.hidden=false}
  }).then(function(h){call=h;var muted=false,cam=true;
   $('mute').onclick=function(){muted=!muted;h.setMuted(muted);$('mute').textContent=muted?'Activar micrófono':'Silenciar'};
   $('cam').onclick=function(){cam=!cam;h.setCamera(cam);$('cam').textContent=cam?'Apagar cámara':'Encender cámara'};
-  $('leave').onclick=function(){h.leave()}}).catch(function(){show('ready');$('join').disabled=false;err('e2','No pudimos conectar la sesión. Intente de nuevo.')})})});
+  $('leave').onclick=function(){h.leave()}}).catch(function(e){show('ready');$('join').disabled=false;err('e2','No pudimos iniciar la llamada. Revise los permisos de cámara y micrófono e intente de nuevo. ('+((e&&e.name)||'error')+')')})})});
 window.addEventListener('pagehide',function(){if(call){try{navigator.sendBeacon('/v/'+T+'/left')}catch(e){}}});
 if(S!=='lobby')watch();
 })();`

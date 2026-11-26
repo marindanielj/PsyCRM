@@ -91,7 +91,7 @@ test('join into a room that already exists does not create a second one', async 
 test('admit lets a waiting client in and is audited; with nobody waiting it is a 409', async () => {
   const ok = setup()
   ok.db.enqueue([appt()])
-  ok.db.enqueue([room({ waiting_since: '2026-06-04T14:58:00Z' })])
+  ok.db.enqueue([room({ waiting_since: '2026-06-04T14:58:00Z', chime_meeting: { MeetingId: 'chime_vm1' } })]) // the room is already open
   ok.db.enqueue([{ id: 'vm1' }]) // admit RETURNING
   ok.db.enqueue([]) // event
   expect((await post(ok.app, '/appointments/a1/video/admit')).status).toBe(200)

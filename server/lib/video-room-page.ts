@@ -41,6 +41,7 @@ export function renderVideoRoomPage(o: { title: string; base: string; nonce: str
   </div>
 
   <div id="incall" hidden>
+    <p id="conn" class="muted">Connecting…</p>
     <div class="call"><video id="remote" autoplay playsinline></video><video id="local" autoplay playsinline muted></video></div>
     <audio id="audio" autoplay></audio>
     <div class="ctl">
@@ -76,19 +77,22 @@ function render(v){last=v;link=v.link;$('consent').hidden=v.consentSigned!==fals
 function refresh(){return api('GET','/video').then(function(j){if(j.video)render(j.video)})}
 setInterval(refresh,3000);refresh();
 $('copy').onclick=function(){if(!link)return;var u=new URL(link,location.origin).href;navigator.clipboard.writeText(u).then(function(){$('copy').textContent='Copied';setTimeout(function(){$('copy').textContent='Copy client link'},1500)})};
-$('admit').onclick=function(){$('admit').disabled=true;api('POST','/video/admit').then(function(j){$('admit').disabled=false;if(j._status!==200)err('Could not admit the client: '+(j.error||'try again'));else{err('');refresh()}})};
+$('admit').onclick=function(){$('admit').disabled=true;api('POST','/video/admit').then(function(j){$('admit').disabled=false;if(j._status===502)err('The video service is not available right now, so the client was not admitted. Try again in a moment.');else if(j._status!==200)err('Could not admit the client: '+(j.error||'try again'));else{err('');refresh()}})};
+var NORMAL={OK:1,Left:1,MeetingEnded:1};
 $('open').onclick=function(){$('open').disabled=true;err('');api('POST','/video/join').then(function(j){
- if(j._status!==200||!window.PsyVideo){$('open').disabled=false;err(j.error==='not open yet'?'It is not time yet.':'Could not open the room: '+(j.error||'try again'));return}
- $('gate').hidden=true;$('incall').hidden=false;
+ if(j._status!==200||!window.PsyVideo){$('open').disabled=false;
+  err(j._status===502?'The video service is not available right now. Nothing was opened; try again in a moment.':j.error==='not open yet'?'It is not time yet.':j._status===200?'The video library did not load in this browser. Reload the page.':'Could not open the room: '+(j.error||'try again'));return}
+ $('gate').hidden=true;$('incall').hidden=false;$('conn').hidden=false;
  window.PsyVideo.join({meeting:j.meeting,attendee:j.attendee,audioEl:$('audio'),remoteVideoEl:$('remote'),localVideoEl:$('local'),
-  onEnd:function(){call=null;$('incall').hidden=true;$('gate').hidden=false;$('open').disabled=false;refresh()},
+  onConnected:function(){$('conn').hidden=true},
+  onEnd:function(why){call=null;$('incall').hidden=true;$('gate').hidden=false;$('open').disabled=false;refresh();if(!NORMAL[why])err(why==='ConnectTimeout'?'The call could not connect. Check the internet connection and open the room again.':'The call was interrupted (code: '+why+'). Open the room again to reconnect.')},
   onDeviceProblem:function(w){var d=$('dev');d.textContent=w==='camera'?'Could not use your camera. You can continue with audio only.':'Could not use your microphone. Check the browser permission.';d.hidden=false}
  }).then(function(h){call=h;var m=false,c=true;
   $('mute').onclick=function(){m=!m;h.setMuted(m);$('mute').textContent=m?'Unmute':'Mute'};
   $('cam').onclick=function(){c=!c;h.setCamera(c);$('cam').textContent=c?'Camera off':'Camera on'};
   $('leave').onclick=function(){h.leave()};
   $('end').onclick=function(){if(!confirm('End the session for everyone? The client will not be able to rejoin.'))return;api('POST','/video/end').then(function(){h.leave()})}
- }).catch(function(){$('incall').hidden=true;$('gate').hidden=false;$('open').disabled=false;err('Could not connect the call. Try again.')})})};
+ }).catch(function(e){$('incall').hidden=true;$('gate').hidden=false;$('open').disabled=false;err('Could not start the call. Check the camera and microphone permissions and try again. ('+((e&&e.name)||'error')+')')})})};
 })();`
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer"><title>${escText(o.title)}</title><style>:root{--brand:#4f46e5}${PAGE_STYLE}</style></head><body>${body}<script nonce="${escAttr(o.nonce)}">${script}</script></body></html>`
 }

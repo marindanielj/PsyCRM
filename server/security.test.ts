@@ -83,6 +83,7 @@ test('every console call in the server logs a code or a fixed message, never a r
   )
   const allowed = [
     /console\.error\('(workflow audit write failed|workflow step failed|loop audit write failed|request failed)'/, // fixed text + a database error CODE (and the HTTP method)
+    /console\.error\('video provider failed', operation, reason\)/, // lib/video/errors.ts: one of three fixed call names + Amazon's error NAME/code/status, sanitised to [A-Za-z0-9._-] (never message text)
     /console\.log\(`psycrm api listening on :\$\{config\.PORT\}`\)/,
     /console\.log\(`integrations enabled: /,
     /console\.error\(err\)$/, // process start-up failure (configuration / connection), before any request exists
