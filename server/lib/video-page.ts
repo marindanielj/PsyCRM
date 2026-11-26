@@ -18,6 +18,7 @@ const STYLE = `
 #local{position:absolute;right:10px;bottom:10px;width:28%;max-width:160px;border-radius:10px;border:2px solid #fff;background:#1e293b;object-fit:cover;transform:scaleX(-1)}
 .ctl{display:flex;gap:10px;justify-content:center;margin-top:12px;flex-wrap:wrap}
 .btn.leave{background:#be123c}
+.peerwait{position:absolute;inset:0;display:grid;place-items:center;padding:16px;text-align:center;color:#cbd5e1;font-size:.95rem;pointer-events:none}
 .notice{margin:.6em 0;padding:10px 12px;border-radius:8px;background:#f1f5f9;color:#334155;font-size:.92rem}
 `
 
@@ -68,7 +69,7 @@ export function renderVideoPage(b: Base & { token: string; state: VideoPageState
 
 <div id="incall" hidden>
   <p id="conn" class="notice">Conectando…</p>
-  <div class="call"><video id="remote" autoplay playsinline></video><video id="local" autoplay playsinline muted></video></div>
+  <div class="call"><video id="remote" autoplay playsinline></video><video id="local" autoplay playsinline muted></video><div id="peer" class="peerwait">Esperando a su terapeuta…</div></div>
   <audio id="audio" autoplay></audio>
   <div class="ctl">
     <button class="btn ghost" id="mute">Silenciar</button>
@@ -90,32 +91,36 @@ function check(){var ok=$('loc').value.trim().length>1&&$('priv').checked;$('ent
 ['loc','pr','priv'].forEach(function(i){$(i).addEventListener(i==='loc'?'input':'change',check)});
 var poll=null;
 function watch(){if(poll)return;poll=setInterval(function(){fetch('/v/'+T+'/status',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(j){
- if(j.state!=='open'||j.ended){clearInterval(poll);poll=null;if(!call)show('over');return}
- if(j.admitted&&!call){show('ready')}}).catch(function(){})},3000)}
+ if(j.state!=='open'||j.ended){clearInterval(poll);poll=null;if(!call&&!busy)show('over');return}
+ if(j.admitted&&!call&&!busy){show('ready')}}).catch(function(){})},3000)}
 $('enter').addEventListener('click',function(){$('enter').disabled=true;post('/wait',{location:$('loc').value.trim(),inPuertoRico:$('pr').checked,privatePlace:$('priv').checked}).then(function(j){
  if(j._status!==200){err('e1','No pudimos continuar. Intente de nuevo.');$('enter').disabled=false;return}
  show(j.admitted?'ready':'waiting');watch()})});
-var call=null;
+// busy is true from pressing Entrar until the call is up or has failed. The 3-second status check must not touch the screen
+// meanwhile: while the browser waits for the person to click Allow there is no call object yet, and the check used to
+// flip the page back to the waiting card for good.
+var call=null,busy=false;
 var NORMAL={OK:1,Left:1,MeetingEnded:1};
-$('join').addEventListener('click',function(){$('join').disabled=true;$('e2').hidden=true;post('/join').then(function(j){
+$('join').addEventListener('click',function(){busy=true;$('join').disabled=true;$('e2').hidden=true;post('/join').then(function(j){
  if(j._status!==200||!window.PsyVideo){
   var m='No pudimos conectar la sesión. Intente de nuevo.';
   if(j._status===409)m='Su terapeuta aún no abrió la sala. Espere un momento e intente de nuevo.';
   else if(j._status===502)m='El servicio de video no está disponible ahora. Avise a su terapeuta.';
   else if(j._status===200)m='No se pudo cargar el video en este navegador. Recargue la página o pruebe con otro navegador.';
-  err('e2',m);$('join').disabled=false;return}
- show('incall');$('conn').hidden=false;
+  err('e2',m);$('join').disabled=false;busy=false;return}
+ show('incall');$('conn').hidden=false;$('peer').hidden=false;
  window.PsyVideo.join({meeting:j.meeting,attendee:j.attendee,audioEl:$('audio'),remoteVideoEl:$('remote'),localVideoEl:$('local'),
   onConnected:function(){$('conn').hidden=true},
+  onPeer:function(p){$('peer').hidden=p},
   onEnd:function(why){call=null;
    if(NORMAL[why]){show('over');return}
-   show('ready');$('join').disabled=false;
+   show('ready');$('join').disabled=false;busy=false;
    err('e2',why==='ConnectTimeout'?'No pudimos establecer la conexión de video. Revise su internet e intente de nuevo.':'La llamada se interrumpió (código: '+why+'). Intente entrar de nuevo.')},
   onDeviceProblem:function(w){var d=$('dev');d.textContent=w==='camera'?'No pudimos usar su cámara. Puede continuar solo con audio.':'No pudimos usar su micrófono. Revise los permisos de su navegador.';d.hidden=false}
  }).then(function(h){call=h;var muted=false,cam=true;
   $('mute').onclick=function(){muted=!muted;h.setMuted(muted);$('mute').textContent=muted?'Activar micrófono':'Silenciar'};
   $('cam').onclick=function(){cam=!cam;h.setCamera(cam);$('cam').textContent=cam?'Apagar cámara':'Encender cámara'};
-  $('leave').onclick=function(){h.leave()}}).catch(function(e){show('ready');$('join').disabled=false;err('e2','No pudimos iniciar la llamada. Revise los permisos de cámara y micrófono e intente de nuevo. ('+((e&&e.name)||'error')+')')})})});
+  $('leave').onclick=function(){h.leave()}}).catch(function(e){show('ready');$('join').disabled=false;busy=false;err('e2','No pudimos iniciar la llamada. Revise los permisos de cámara y micrófono e intente de nuevo. ('+((e&&e.name)||'error')+')')})})});
 window.addEventListener('pagehide',function(){if(call){try{navigator.sendBeacon('/v/'+T+'/left')}catch(e){}}});
 if(S!=='lobby')watch();
 })();`
