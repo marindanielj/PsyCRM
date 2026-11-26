@@ -69,6 +69,7 @@ export function renderVideoPage(b: Base & { token: string; state: VideoPageState
 
 <div id="incall" hidden>
   <p id="conn" class="notice">Conectando…</p>
+  <div id="net" class="msg warn" hidden><span id="nettext"></span> <button class="btn ghost" id="netcam" hidden>Apagar mi video</button></div>
   <div class="call"><video id="remote" autoplay playsinline></video><video id="local" autoplay playsinline muted></video><div id="peer" class="peerwait">Esperando a su terapeuta…</div></div>
   <audio id="audio" autoplay></audio>
   <div class="ctl">
@@ -99,9 +100,11 @@ $('enter').addEventListener('click',function(){$('enter').disabled=true;post('/w
 // busy is true from pressing Entrar until the call is up or has failed. The 3-second status check must not touch the screen
 // meanwhile: while the browser waits for the person to click Allow there is no call object yet, and the check used to
 // flip the page back to the waiting card for good.
-var call=null,busy=false;
+var call=null,busy=false,camOn=true;
+function setCam(on){camOn=on;if(call)call.setCamera(on);$('cam').textContent=on?'Apagar cámara':'Encender cámara';if(!on)$('netcam').hidden=true}
+var POOR='Su conexión está inestable. Si se corta el audio, apague su cámara.';
 var NORMAL={OK:1,Left:1,MeetingEnded:1};
-$('join').addEventListener('click',function(){busy=true;$('join').disabled=true;$('e2').hidden=true;post('/join').then(function(j){
+$('join').addEventListener('click',function(){busy=true;camOn=true;$('cam').textContent='Apagar cámara';$('net').hidden=true;$('netcam').hidden=true;$('join').disabled=true;$('e2').hidden=true;post('/join').then(function(j){
  if(j._status!==200||!window.PsyVideo){
   var m='No pudimos conectar la sesión. Intente de nuevo.';
   if(j._status===409)m='Su terapeuta aún no abrió la sala. Espere un momento e intente de nuevo.';
@@ -112,14 +115,17 @@ $('join').addEventListener('click',function(){busy=true;$('join').disabled=true;
  window.PsyVideo.join({meeting:j.meeting,attendee:j.attendee,audioEl:$('audio'),remoteVideoEl:$('remote'),localVideoEl:$('local'),
   onConnected:function(){$('conn').hidden=true},
   onPeer:function(p){$('peer').hidden=p},
+  onConnection:function(st){var n=$('net');if(st==='good'){n.hidden=true;$('netcam').hidden=true;return}n.hidden=false;$('nettext').textContent=st==='reconnecting'?'Reconectando… su conexión se interrumpió un momento. Espere unos segundos.':POOR},
+  onSuggestStopVideo:function(){if(!camOn)return;$('net').hidden=false;$('nettext').textContent=POOR;$('netcam').hidden=false},
   onEnd:function(why){call=null;
    if(NORMAL[why]){show('over');return}
    show('ready');$('join').disabled=false;busy=false;
    err('e2',why==='ConnectTimeout'?'No pudimos establecer la conexión de video. Revise su internet e intente de nuevo.':'La llamada se interrumpió (código: '+why+'). Intente entrar de nuevo.')},
   onDeviceProblem:function(w){var d=$('dev');d.textContent=w==='camera'?'No pudimos usar su cámara. Puede continuar solo con audio.':'No pudimos usar su micrófono. Revise los permisos de su navegador.';d.hidden=false}
- }).then(function(h){call=h;var muted=false,cam=true;
+ }).then(function(h){call=h;var muted=false;
   $('mute').onclick=function(){muted=!muted;h.setMuted(muted);$('mute').textContent=muted?'Activar micrófono':'Silenciar'};
-  $('cam').onclick=function(){cam=!cam;h.setCamera(cam);$('cam').textContent=cam?'Apagar cámara':'Encender cámara'};
+  $('cam').onclick=function(){setCam(!camOn)};
+  $('netcam').onclick=function(){setCam(false)};
   $('leave').onclick=function(){h.leave()}}).catch(function(e){show('ready');$('join').disabled=false;busy=false;err('e2','No pudimos iniciar la llamada. Revise los permisos de cámara y micrófono e intente de nuevo. ('+((e&&e.name)||'error')+')')})})});
 window.addEventListener('pagehide',function(){if(call){try{navigator.sendBeacon('/v/'+T+'/left')}catch(e){}}});
 if(S!=='lobby')watch();
