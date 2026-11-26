@@ -20,6 +20,14 @@ export interface JoinOptions {
   onConnected?: () => void
   /** Whether anyone besides us is in the room (true/false as people come and go). */
   onPeer?: (present: boolean) => void
+  /**
+   * How the connection is doing, after the call came up. `poor`: the SDK sees trouble (slow or lossy network).
+   * `reconnecting`: it lost the signalling heartbeat and is reconnecting by itself (usually 1-2 seconds).
+   * `good`: back to normal. Without this the person sees frozen video and no explanation.
+   */
+  onConnection?: (state: 'good' | 'poor' | 'reconnecting') => void
+  /** The connection has been poor for a while: sending video is likely what is starving the audio. The page may offer to turn the camera off. */
+  onSuggestStopVideo?: () => void
   /** No camera or microphone could be used (permission denied, none present). */
   onDeviceProblem?: (what: 'camera' | 'microphone') => void
 }
@@ -72,11 +80,25 @@ async function startCall(o: JoinOptions): Promise<CallHandle> {
   // which left the therapist's own panel black.
   const others = new Set<string>()
   av.addObserver({
+    audioVideoDidStartConnecting(reconnecting) {
+      if (reconnecting && connected) o.onConnection?.('reconnecting')
+    },
     audioVideoDidStart() {
+      const wasReconnecting = connected
       connected = true
       clearTimeout(timer)
       if (cameraOn) av.startLocalVideoTile() // now there is a call to send the picture into
       o.onConnected?.()
+      if (wasReconnecting) o.onConnection?.('good')
+    },
+    connectionDidBecomePoor() {
+      o.onConnection?.('poor')
+    },
+    connectionDidBecomeGood() {
+      o.onConnection?.('good')
+    },
+    connectionDidSuggestStopVideo() {
+      if (cameraOn) o.onSuggestStopVideo?.()
     },
     videoTileDidUpdate(tile) {
       // Only the OTHER person's picture goes in the big panel; our own preview comes straight from the camera below.

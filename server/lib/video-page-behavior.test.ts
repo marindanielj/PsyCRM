@@ -107,3 +107,75 @@ test('the therapist\'s Open the room button is not re-enabled by the refresh whi
   expect(h.el('open').disabled).toBe(false)
   expect(h.el('err').textContent).toContain('TaskFailed')
 })
+
+// ---- connection trouble: the page says so, and offers to turn the camera off ----------------------------------------
+
+async function startedClient() {
+  const h = harness(scriptOf(clientHtml), CLIENT_REPLIES)
+  h.el('join').handlers.click!()
+  await tick()
+  const cameraCalls: boolean[] = []
+  h.joinCalls[0]!.resolve({ leave() {}, setMuted() {}, setCamera: async (on: boolean) => { cameraCalls.push(on) } })
+  await tick()
+  return { h, opts: h.joinCalls[0]!.opts, cameraCalls }
+}
+
+test('the client page says when the connection is unstable or reconnecting, and clears the message when it recovers', async () => {
+  const { h, opts } = await startedClient()
+  expect(h.el('net').hidden).toBe(true)
+  opts.onConnection!('reconnecting')
+  expect(h.el('net').hidden).toBe(false)
+  expect(h.el('nettext').textContent).toContain('Reconectando')
+  opts.onConnection!('poor')
+  expect(h.el('nettext').textContent).toContain('inestable')
+  opts.onConnection!('good')
+  expect(h.el('net').hidden).toBe(true)
+})
+
+test('when the connection stays poor the client is offered a button that turns their video off, once', async () => {
+  const { h, opts, cameraCalls } = await startedClient()
+  expect(h.el('netcam').hidden).toBe(true)
+  opts.onSuggestStopVideo!()
+  expect(h.el('net').hidden).toBe(false)
+  expect(h.el('netcam').hidden).toBe(false)
+  h.el('netcam').onclick!()
+  expect(cameraCalls).toEqual([false])
+  expect(h.el('cam').textContent).toBe('Encender cámara') // the ordinary camera button now offers to turn it back on
+  expect(h.el('netcam').hidden).toBe(true)
+  opts.onSuggestStopVideo!() // the camera is already off: nothing more to suggest
+  expect(h.el('netcam').hidden).toBe(true)
+  h.el('cam').onclick!()
+  expect(cameraCalls).toEqual([false, true])
+})
+
+test('the suggestion goes away when the connection recovers, and a new call starts with the camera on and no message', async () => {
+  const { h, opts } = await startedClient()
+  opts.onSuggestStopVideo!()
+  opts.onConnection!('good')
+  expect(h.el('net').hidden).toBe(true)
+  expect(h.el('netcam').hidden).toBe(true)
+})
+
+test('the therapist\'s room says the same in English, with the same turn-video-off button', async () => {
+  const html = renderVideoRoomPage({ title: 'T', base: '/api/loc/l/video/appointments/a', nonce: 'n', startsLabel: 'x' })
+  const VIDEO = { link: '/v/x', waiting: false, admitted: false, ended: false, consentSigned: true, clientConfirmation: null, window: { state: 'open', opensAt: new Date().toISOString(), closesAt: new Date().toISOString() } }
+  const h = harness(scriptOf(html), (url) => (url.endsWith('/video/join') ? { ok: true, meeting: {}, attendee: {} } : { ok: true, video: VIDEO }))
+  await tick()
+  h.el('open').onclick!()
+  await tick()
+  const cameraCalls: boolean[] = []
+  h.joinCalls[0]!.resolve({ leave() {}, setMuted() {}, setCamera: async (on: boolean) => { cameraCalls.push(on) }, })
+  await tick()
+  const opts = h.joinCalls[0]!.opts
+  opts.onConnection!('reconnecting')
+  expect(h.el('nettext').textContent).toContain('Reconnecting')
+  opts.onConnection!('poor')
+  expect(h.el('nettext').textContent).toContain('unstable')
+  opts.onSuggestStopVideo!()
+  expect(h.el('netcam').hidden).toBe(false)
+  h.el('netcam').onclick!()
+  expect(cameraCalls).toEqual([false])
+  expect(h.el('cam').textContent).toBe('Camera on')
+  opts.onConnection!('good')
+  expect(h.el('net').hidden).toBe(true)
+})
