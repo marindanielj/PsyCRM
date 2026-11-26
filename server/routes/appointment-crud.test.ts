@@ -155,3 +155,22 @@ test('a charge made from the appointment does not stop its deletion, and is left
   expect((await u.del()).status).toBe(200)
   expect((await u.db.query<{ appointment_id: string }>("SELECT appointment_id FROM charges WHERE id='ch1'"))[0]?.appointment_id).toBe('a1')
 })
+
+test('the default list starts at the beginning of today: an appointment earlier today stays, yesterday\'s does not, an explicit range overrides', async () => {
+  const s = await setup()
+  const now = new Date()
+  const startOfToday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  const at = (ms: number) => new Date(ms).toISOString()
+  const insert = (id: string, startMs: number) =>
+    s.db.query("INSERT INTO appointments (id, location_id, calendar_id, title, starts_at, ends_at) VALUES ($1,'loc_a','cal1',$1,$2,$3)", [id, at(startMs), at(startMs + 50 * 60_000)])
+  await insert('earlier-today', startOfToday + 60_000) // 00:01 UTC today: already past for most of the day
+  await insert('yesterday', startOfToday - 3 * 3600_000)
+  await insert('next-week', startOfToday + 7 * 86_400_000)
+
+  const ids = async (qs = '') => (await (await s.app.request(`/appointments${qs}`)).json()).appointments.map((a: { id: string }) => a.id).sort()
+  expect(await ids()).toEqual(expect.arrayContaining(['earlier-today', 'next-week']))
+  expect(await ids()).not.toContain('yesterday')
+  const yest = encodeURIComponent(at(startOfToday - 6 * 3600_000))
+  const today = encodeURIComponent(at(startOfToday))
+  expect(await ids(`?from=${yest}&to=${today}`)).toEqual(['yesterday']) // the month grid asks for its own days
+})
