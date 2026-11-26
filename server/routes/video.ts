@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import type { AppEnv } from '../app-env'
 import type { Database } from '../db/database'
 import { audit, auditContext } from '../lib/audit'
 import { hasTelepsychologyConsent } from '../lib/telepsychology-consent'
+import { videoErrorHandler, viaProvider } from '../lib/video/errors'
 import { renderVideoRoomPage } from '../lib/video-room-page'
 import { videoWindow } from '../lib/video-window'
 import { videoToken } from '../lib/video-token'
@@ -24,6 +25,7 @@ import { VideoMeetingsRepo } from '../repos/video-meetings-repo'
  */
 export function videoRoute(deps: { db: Database; secret: string; provider: VideoProvider; publicBaseUrl?: string; now?: () => Date }): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
+  app.onError(videoErrorHandler)
   const clock = () => deps.now?.() ?? new Date()
   const linkFor = (meetingId: string) => `${deps.publicBaseUrl ?? ''}/v/${videoToken(meetingId, deps.secret)}`
 
@@ -49,6 +51,26 @@ export function videoRoute(deps: { db: Database; secret: string; provider: Video
       clientConfirmation: m.waiting_since ? { location: m.client_location ?? null, inPuertoRico: m.client_in_pr ?? null, privatePlace: m.client_private ?? null } : null,
       window: { state: w.state, opensAt: w.opensAt.toISOString(), closesAt: w.closesAt.toISOString() },
     }
+  }
+
+  /**
+   * The room's Chime meeting, made the first time anyone needs it: the therapist opening the room, or admitting a waiting
+   * client (so a client can never be let into a room that does not exist yet). Our meeting id is the request token, so
+   * two callers racing each other get the same room back.
+   */
+  async function ensureChimeRoom(
+    c: Context<AppEnv>,
+    loc: string,
+    appt: { id: string; contact_id: string | null },
+    meeting: { id: string; chime_meeting: Record<string, unknown> | null },
+  ): Promise<Record<string, unknown>> {
+    if (meeting.chime_meeting) return meeting.chime_meeting
+    const created = (await viaProvider('createMeeting', () => deps.provider.createMeeting(meeting.id))) as unknown as Record<string, unknown>
+    await deps.db.transaction(async (tx) => {
+      await new VideoMeetingsRepo(tx, loc).setChimeMeeting(meeting.id, created)
+      await audit(tx, loc, { action: 'appointment.video_started', entityType: 'appointment', entityId: appt.id, contactId: appt.contact_id ?? null, details: {}, ...auditContext(c) })
+    })
+    return created
   }
 
   /** The room page (opened in a new tab from the agenda). Its own CSP: the call needs Chime's hosts and blob: media. */
@@ -82,16 +104,8 @@ export function videoRoute(deps: { db: Database; secret: string; provider: Video
     const repo = new VideoMeetingsRepo(deps.db, loc)
     let meeting = await repo.ensure(r.appt.id, deps.secret)
     if (meeting.ended_at) return c.json({ error: 'session has ended' }, 409)
-    let chime = meeting.chime_meeting
-    if (!chime) {
-      // The request token is our meeting id, so a second caller racing this one gets the same room back.
-      chime = (await deps.provider.createMeeting(meeting.id)) as unknown as Record<string, unknown>
-      await deps.db.transaction(async (tx) => {
-        await new VideoMeetingsRepo(tx, loc).setChimeMeeting(meeting.id, chime!)
-        await audit(tx, loc, { action: 'appointment.video_started', entityType: 'appointment', entityId: r.appt.id, contactId: r.appt.contact_id ?? null, details: {}, ...auditContext(c) })
-      })
-    }
-    const attendee = await deps.provider.createAttendee(String((chime as { MeetingId?: string }).MeetingId), 'therapist')
+    const chime = await ensureChimeRoom(c, loc, r.appt, meeting)
+    const attendee = await viaProvider('createAttendee', () => deps.provider.createAttendee(String((chime as { MeetingId?: string }).MeetingId), 'therapist'))
     await repo.addEvent(meeting.id, 'therapist', 'joined')
     meeting = (await repo.getByAppointment(r.appt.id)) ?? meeting
     return c.json({ ok: true, meeting: chime, attendee, video: shape(await consentOf(loc, r.appt.contact_id), meeting, r.appt) })
@@ -104,6 +118,9 @@ export function videoRoute(deps: { db: Database; secret: string; provider: Video
     const repo = new VideoMeetingsRepo(deps.db, loc)
     const meeting = await repo.getByAppointment(r.appt.id)
     if (!meeting) return c.json({ error: 'nobody is waiting' }, 409)
+    if (meeting.ended_at) return c.json({ error: 'session has ended' }, 409)
+    // Open the room before letting her in, so the client's "enter" always finds it. If it cannot be opened, nobody is admitted.
+    if (meeting.waiting_since) await ensureChimeRoom(c, loc, r.appt, meeting)
     const ok = await deps.db.transaction(async (tx) => {
       const txRepo = new VideoMeetingsRepo(tx, loc)
       if (!(await txRepo.admit(meeting.id))) return false
@@ -123,7 +140,7 @@ export function videoRoute(deps: { db: Database; secret: string; provider: Video
     const meeting = await repo.getByAppointment(r.appt.id)
     if (!meeting) return c.json({ error: 'no video room' }, 404)
     const chimeId = (meeting.chime_meeting as { MeetingId?: string } | null)?.MeetingId
-    if (chimeId) await deps.provider.endMeeting(chimeId)
+    if (chimeId) await viaProvider('endMeeting', () => deps.provider.endMeeting(chimeId))
     await deps.db.transaction(async (tx) => {
       await new VideoMeetingsRepo(tx, loc).end(meeting.id)
       await audit(tx, loc, { action: 'appointment.video_ended', entityType: 'appointment', entityId: r.appt.id, contactId: r.appt.contact_id ?? null, details: {}, ...auditContext(c) })

@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { AppEnv } from '../app-env'
-import { fakeVideoProvider } from '../lib/video/provider'
+import { fakeVideoProvider, type VideoProvider } from '../lib/video/provider'
 import { addLocation, freshDb } from '../test-utils/pglite'
 import { publicVideoRoute } from './public-video'
 import { videoRoute } from './video'
@@ -8,7 +8,7 @@ import { videoRoute } from './video'
 const START = new Date('2026-06-04T15:00:00Z')
 const SECRET = 'test-secret'
 
-async function setup(opts: { modality?: string; status?: string } = {}) {
+async function setup(opts: { modality?: string; status?: string; provider?: VideoProvider } = {}) {
   const { db } = await freshDb()
   const loc = await addLocation(db, 'loc_a')
   await addLocation(db, 'loc_b')
@@ -19,7 +19,7 @@ async function setup(opts: { modality?: string; status?: string } = {}) {
      VALUES ('a1',$1,'cal1','c1','Sesión','2026-06-04T15:00:00Z','2026-06-04T15:50:00Z',$2,$3)`,
     [loc, opts.modality ?? 'telehealth_video', opts.status ?? 'scheduled'],
   )
-  const provider = fakeVideoProvider()
+  const provider = (opts.provider ?? fakeVideoProvider()) as ReturnType<typeof fakeVideoProvider>
   let now = START
   const clock = () => now
   const therapist = new Hono<AppEnv>()
@@ -229,4 +229,76 @@ test('booking a video appointment warns, never blocks, when the consent is missi
   expect((await book(12, { modality: 'telehealth_video' })).warnings).toEqual([])
   await signConsent(db as never)
   expect((await book(13, { contactId: 'c1', modality: 'telehealth_video' })).warnings).toEqual([])
+})
+
+
+test('admitting a waiting client opens the room, so they can enter straight away without the therapist pressing Open first', async () => {
+  const s = await setup()
+  const token = await s.tokenOf()
+  await s.v('POST', `/${token}/wait`, CONFIRM)
+  expect((await s.t('POST', '/appointments/a1/video/admit')).status).toBe(200) // no join before it
+  expect(s.provider.meetings).toHaveLength(1)
+  const join = await s.v('POST', `/${token}/join`)
+  expect(join.status).toBe(200)
+  expect((await join.json()).attendee.JoinToken).toBeTruthy()
+  const a = (await s.db.query<{ action: string }>("SELECT action FROM audit_log WHERE entity_id='a1' ORDER BY id")).map((x) => x.action)
+  expect(a).toEqual(['appointment.video_started', 'appointment.video_admitted'])
+})
+
+const refusing = (over: Partial<VideoProvider>): VideoProvider => ({
+  ...fakeVideoProvider(),
+  ...over,
+})
+const denied = () => Object.assign(new Error('User: arn:aws:sts::450549238631:assumed-role/psycrm-task/abc is not authorized (Ana Rivera)'), { name: 'AccessDeniedException', $metadata: { httpStatusCode: 403 } })
+
+test('when Chime refuses to open the room nobody is admitted, the therapist gets a clear 502, and the log names the call and the error but nothing else', async () => {
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  try {
+    const s = await setup({ provider: refusing({ createMeeting: async () => { throw denied() } }) })
+    const token = await s.tokenOf()
+    await s.v('POST', `/${token}/wait`, CONFIRM)
+
+    const admit = await s.t('POST', '/appointments/a1/video/admit')
+    expect(admit.status).toBe(502)
+    expect(await admit.json()).toEqual({ error: 'video_unavailable' })
+    expect((await s.db.query<{ admitted_at: string | null }>('SELECT admitted_at FROM video_meetings'))[0]!.admitted_at).toBeNull()
+    expect((await s.t('POST', '/appointments/a1/video/join')).status).toBe(502)
+    expect((await s.v('POST', `/${token}/join`)).status).toBe(409) // not admitted, no room: still a clean answer
+
+    const logged = JSON.stringify(spy.mock.calls)
+    expect(logged).toContain('video provider failed')
+    expect(logged).toContain('createMeeting')
+    expect(logged).toContain('AccessDeniedException')
+    expect(logged).not.toMatch(/Ana Rivera|450549238631|assumed-role|a1|vm/) // no message text, account, role or ids
+  } finally {
+    spy.mockRestore()
+  }
+})
+
+test('when Chime refuses an attendee the client and the therapist get a 502 they can be told about, not a 500', async () => {
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  try {
+    const s = await setup({ provider: refusing({ createAttendee: async () => { throw denied() } }) })
+    const token = await s.tokenOf()
+    await s.v('POST', `/${token}/wait`, CONFIRM)
+    expect((await s.t('POST', '/appointments/a1/video/admit')).status).toBe(200)
+    const client = await s.v('POST', `/${token}/join`)
+    expect(client.status).toBe(502)
+    expect(await client.json()).toEqual({ error: 'video_unavailable' })
+    expect((await s.t('POST', '/appointments/a1/video/join')).status).toBe(502)
+    expect(JSON.stringify(spy.mock.calls)).toContain('createAttendee')
+  } finally {
+    spy.mockRestore()
+  }
+})
+
+test('the inline scripts of both pages are valid JavaScript (a typo there fails silently in the browser)', async () => {
+  const s = await setup()
+  const token = await s.tokenOf()
+  const scripts = (html: string) => [...html.matchAll(/<script nonce="[^"]+">([\s\S]*?)<\/script>/g)].map((m) => m[1]!)
+  for (const html of [await (await s.v('GET', `/${token}`)).text(), await (await s.t('GET', '/appointments/a1/room')).text()]) {
+    const found = scripts(html)
+    expect(found.length).toBeGreaterThan(0)
+    for (const code of found) expect(() => new Function(code)).not.toThrow()
+  }
 })

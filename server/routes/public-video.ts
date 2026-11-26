@@ -8,6 +8,7 @@ import { logoUrl, normalizeBranding, readableBrand } from '../lib/branding'
 import { clientIp } from '../lib/client-ip'
 import { looksLikeToken } from '../lib/document-tokens'
 import { SlidingWindowRateLimiter } from '../lib/rate-limit'
+import { videoErrorHandler, viaProvider } from '../lib/video/errors'
 import { renderVideoClosedPage, renderVideoInvalidPage, renderVideoPage, type VideoPageState } from '../lib/video-page'
 import { videoTokenHash } from '../lib/video-token'
 import { videoWindow } from '../lib/video-window'
@@ -35,6 +36,7 @@ const waitSchema = z.object({
  */
 export function publicVideoRoute(deps: { db: Database; provider: VideoProvider; now?: () => Date }): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
+  app.onError(videoErrorHandler)
   const clock = () => deps.now?.() ?? new Date()
   const perIp = new SlidingWindowRateLimiter(120, 10 * 60_000)
   // A waiting client polls every 3 s (200 per 10 min), so status has its own, higher, allowance.
@@ -128,7 +130,7 @@ export function publicVideoRoute(deps: { db: Database; provider: VideoProvider; 
     // Never before the therapist let her in, and never into a room the therapist has not opened.
     const chime = ctx.meeting.chime_meeting as { MeetingId?: string } | null
     if (!ctx.meeting.admitted_at || !chime?.MeetingId) return c.json({ error: 'not_admitted' }, 409)
-    const attendee = await deps.provider.createAttendee(chime.MeetingId, 'client')
+    const attendee = await viaProvider('createAttendee', () => deps.provider.createAttendee(chime.MeetingId!, 'client'))
     await new VideoMeetingsRepo(deps.db, ctx.locationId).addEvent(ctx.meeting.id, 'client', 'joined')
     return c.json({ ok: true, meeting: chime, attendee })
   })

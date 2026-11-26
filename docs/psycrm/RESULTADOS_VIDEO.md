@@ -33,6 +33,17 @@ Pedido el mismo día: no había forma de abrir una cita para ver sus detalles ni
 - **Bitácora:** `appointment.updated` (solo **nombres** de campos, nunca el texto; la modalidad con de/a), y por fin se usa `appointment.deleted`.
 - **Cliente:** el cliente de una cita tiene que ser de esta práctica, al agendar y al editar (antes, agendar aceptaba el id de un cliente de otra práctica).
 
+## Primera llamada real (26 de noviembre de 2026): no conectó
+
+La primera prueba con Chime real falló en los dos lados con "No pudimos conectar la sesión". Causas y arreglos:
+
+1. **`ReferenceError: global is not defined`** (la causa de que ningún lado conectara). El código de Chime en el navegador espera el objeto `global` de Node y el modo biblioteca de Vite no lo define; la llamada moría al empezar. Arreglo: `define: { global: 'globalThis', 'process.env.NODE_ENV': … }` en `vite.video.config.ts`, con una prueba que lo vigila. Las pruebas anteriores con un Chime simulado nunca llegaban a iniciar una llamada, por eso no lo vieron.
+2. **Admitir antes de abrir la sala dejaba al cliente sin sala.** Ahora **Admit abre la sala** (si Chime no la puede abrir, no se admite a nadie y la terapeuta ve el motivo).
+3. **Un solo mensaje genérico para todo.** Ahora cada fallo dice qué pasó: sala aún no abierta, servicio de video no disponible (502), librería no cargada, permisos de cámara/micrófono, o "la llamada se interrumpió (código: …)" con el estado del SDK de Chime. Una llamada que no conecta en **25 segundos** se declara fallida en vez de quedarse en negro, y mientras tanto se ve "Conectando…".
+4. **La bitácora del servidor no decía nada** (`request failed … unknown`). Ahora un fallo de Chime registra la **llamada** (`createMeeting`, `createAttendee`, `endMeeting`) y el **nombre del error** de Amazon (por ejemplo `AccessDeniedException`), sin ids, nombres ni texto del mensaje.
+
+Para probarlo en local sin Chime real: `npm run build` y luego `DEV_FAKE_VIDEO=1 npm run dev:local` (sirve el paquete de la llamada; no conecta ninguna llamada).
+
 ## Falta antes de usarlo con clientes
 
 1. **IAM y región (hecho en el código, falta desplegar):** `infra/` tiene ahora el ajuste `enableVideo`, **apagado por defecto**. Encendido (`-c enableVideo=true`), el rol de la tarea recibe **solo** `chime:CreateMeeting`, `chime:CreateAttendee` y `chime:DeleteMeeting` (nombres confirmados en la [referencia de autorización de servicio de AWS](https://docs.aws.amazon.com/service-authorization/latest/reference/list_chime.html)) y la app recibe `CHIME_REGION` (= la región del despliegue, `us-east-1`). Chime no admite limitar `CreateMeeting` a un recurso, así que la declaración va con `Resource: *`; las otras dos quedan igual, porque el formato del ARN de una reunión no se pudo probar antes de un despliegue.
